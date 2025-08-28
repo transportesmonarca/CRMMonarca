@@ -6,6 +6,8 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { getLoginImageByTime, getGreetingByTime } from "@/lib/login-images"
+import { isAuthenticated } from "@/lib/auth"
+import { useRouter } from "next/navigation"
 
 export default function LoginPage() {
   const [backgroundImage, setBackgroundImage] = useState("")
@@ -13,8 +15,15 @@ export default function LoginPage() {
   const [tagline, setTagline] = useState("")
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
+  const router = useRouter()
 
   useEffect(() => {
+    // Si ya está autenticado, redirigir a la página principal
+    if (isAuthenticated()) {
+      router.push("/")
+      return
+    }
+
     const updateContent = () => {
       setBackgroundImage(getLoginImageByTime())
       setGreeting(getGreetingByTime())
@@ -41,7 +50,7 @@ export default function LoginPage() {
     const interval = setInterval(updateContent, 300000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [router])
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -101,7 +110,8 @@ export default function LoginPage() {
               <img
                 src="https://hebbkx1anhila5yf.public.blob.vercel-storage.com/LOGO%20MONARCA-Qr7vd747xwSM8JxAy9kmgezl3mcHRh.png"
                 alt="Transportes Internacionales Monarca"
-                className="w-16 h-16 mx-auto mb-4"
+                // Oculto en móviles, visible en pantallas grandes para evitar duplicado
+                className="w-16 h-16 mx-auto mb-4 hidden lg:block"
               />
               <h2 className="text-3xl font-bold text-gray-900 mb-2">Iniciar Sesión</h2>
               <p className="text-gray-600">Ingresa tus credenciales para acceder al sistema</p>

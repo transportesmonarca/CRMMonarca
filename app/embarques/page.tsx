@@ -2899,18 +2899,7 @@ export default function EmbarquesPage() {
                     <CardTitle className="text-lg">
                       Información Básica
                     </CardTitle>
-                    {!embarqueEditando && (
-                      <div className="flex items-center gap-2">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          className="bg-blue-50 text-blue-700 hover:bg-blue-100"
-                          onClick={handleFillAllFields}
-                        >
-                          Llenar todos los campos
-                        </Button>
-                      </div>
-                    )}
+                    {/* Botón de prellenado eliminado por requerimiento */}
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">

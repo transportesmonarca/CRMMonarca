@@ -92,3 +92,65 @@ export const limpiarLogsAntiguos = (diasRetencion = 30) => {
     return 0
   }
 }
+
+// Función para limpiar registros de audit_logs en Supabase (cada 6 meses)
+export const limpiarAuditLogsAntiguos = async (mesesRetencion = 6) => {
+  try {
+    const fechaLimite = new Date()
+    fechaLimite.setMonth(fechaLimite.getMonth() - mesesRetencion)
+    const fechaLimiteISO = fechaLimite.toISOString()
+
+    // Obtener cantidad de registros antes de eliminar
+    const { count: totalAntes, error: countError } = await supabase
+      .from("audit_logs")
+      .select("*", { count: "exact", head: true })
+
+    if (countError) {
+      console.error("Error obteniendo conteo de audit_logs:", countError)
+      return { success: false, error: countError.message, eliminados: 0 }
+    }
+
+    // Eliminar registros antiguos
+    const { error } = await supabase
+      .from("audit_logs")
+      .delete()
+      .lt("fecha_creacion", fechaLimiteISO)
+
+    if (error) {
+      console.error("Error eliminando audit_logs antiguos:", error)
+      return { success: false, error: error.message, eliminados: 0 }
+    }
+
+    // Obtener cantidad después de eliminar
+    const { count: totalDespues, error: countError2 } = await supabase
+      .from("audit_logs")
+      .select("*", { count: "exact", head: true })
+
+    if (countError2) {
+      console.error("Error obteniendo conteo después de eliminación:", countError2)
+      return { success: false, error: countError2.message, eliminados: 0 }
+    }
+
+    const eliminados = (totalAntes || 0) - (totalDespues || 0)
+
+    // Registrar la limpieza en audit_logs
+    const currentUser = getCurrentUser()
+    const usuario = currentUser?.nombre || "Sistema"
+    const detalles = `Limpieza automática de audit_logs: ${eliminados} registros eliminados (antiguos de ${mesesRetencion} meses)`
+
+    await supabase.from("audit_logs").insert({
+      usuario,
+      accion: "ELIMINAR",
+      modulo: "Sistema",
+      detalles,
+      ip: "127.0.0.1",
+      fecha_creacion: new Date().toISOString(),
+    })
+
+    console.log(`Limpieza de audit_logs completada: ${eliminados} registros eliminados`)
+    return { success: true, eliminados, error: null }
+  } catch (error) {
+    console.error("Error en limpieza de audit_logs:", error)
+    return { success: false, error: (error as Error).message, eliminados: 0 }
+  }
+}

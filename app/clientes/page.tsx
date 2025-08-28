@@ -832,7 +832,8 @@ export default function ClientesPage() {
     <MainLayout>
       <div className="space-y-6">
         <div className="flex justify-between items-center">
-          <div>
+          {/* ocultar título/descripcion en móvil, mostrar en md+ */}
+          <div className="hidden md:block">
             <h1 className="text-3xl font-bold text-gray-900">
               Gestión de Clientes
             </h1>
@@ -860,21 +861,32 @@ export default function ClientesPage() {
                 </Button>
               </DialogTrigger>
 
-              <DialogContent
-                className={`max-w-5xl md:w-[1100px] w-full ${
-                  activeTab === "contactos" && contactos.length > 0
-                    ? "h-[75vh]"
-                    : "h-[65vh]"
-                } flex flex-col`}
-              >
-                <DialogHeader>
-                  <DialogTitle>
-                    {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Completa la información del cliente
-                  </DialogDescription>
-                </DialogHeader>
+                <DialogContent
+                  className={`w-full h-screen md:h-auto md:max-w-5xl md:w-[1100px] ${
+                    activeTab === "contactos" && contactos.length > 0
+                      ? "md:h-[75vh]"
+                      : "md:h-[65vh]"
+                  } md:rounded-lg md:mx-auto flex flex-col overflow-hidden`}
+                >
+                  {/* Mobile compact header: visible only on small screens */}
+                  <div className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-white">
+                    <h2 className="text-lg font-semibold">
+                      {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
+                    </h2>
+                    <Button variant="ghost" size="icon" onClick={() => setShowForm(false)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Desktop header: keep original header for md+ */}
+                  <DialogHeader className="hidden md:block">
+                    <DialogTitle>
+                      {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
+                    </DialogTitle>
+                    <DialogDescription>
+                      Completa la información del cliente
+                    </DialogDescription>
+                  </DialogHeader>
 
                 
 
@@ -1352,7 +1364,7 @@ export default function ClientesPage() {
         </Card>
 
         {/* Lista de clientes (paginada) */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-h-[40vh] md:max-h-none overflow-y-auto md:overflow-visible" style={{ WebkitOverflowScrolling: 'touch' }}>
           {clientesPaginados.map((cliente) => (
             <Card key={cliente.id}>
               <CardHeader>
@@ -1407,6 +1419,13 @@ export default function ClientesPage() {
               </CardHeader>
 
               <CardContent className="space-y-4">
+                {/* Mobile-only compact header to show client name (since CardHeader is hidden on mobile) */}
+                <div className="md:hidden border-b pb-2 mb-2">
+                  <div className="text-lg font-semibold text-gray-900">{cliente.nombre}</div>
+                  {cliente.rfc && (
+                    <div className="text-xs text-gray-500">RFC: {cliente.rfc}</div>
+                  )}
+                </div>
                 {/* Información Principal */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-3">

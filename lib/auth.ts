@@ -160,8 +160,10 @@ export async function login(username: string, password: string): Promise<User | 
         .single()
       const ttl = (sec2?.session_timeout_minutes ?? 30) * 60_000
       const session = { user, exp: Date.now() + ttl }
-      localStorage.setItem("user", JSON.stringify(user))
-      localStorage.setItem("session_exp", String(session.exp))
+      if (typeof window !== "undefined" && window?.localStorage) {
+        localStorage.setItem("user", JSON.stringify(user))
+        localStorage.setItem("session_exp", String(session.exp))
+      }
 
       // Audit: LOGIN (no usar agregarAuditLog para evitar ciclo de imports)
       try {
@@ -185,8 +187,10 @@ export async function login(username: string, password: string): Promise<User | 
     if (!user) return null
     const expectedPassword = testPasswords[user.username]
     if (expectedPassword !== password) return null
-    localStorage.setItem("user", JSON.stringify(user))
-    localStorage.setItem("session_exp", String(Date.now() + 30 * 60_000))
+    if (typeof window !== "undefined" && window?.localStorage) {
+      localStorage.setItem("user", JSON.stringify(user))
+      localStorage.setItem("session_exp", String(Date.now() + 30 * 60_000))
+    }
     try {
       await supabase.from("audit_logs").insert({
         usuario: user.nombre || user.username,
@@ -226,27 +230,33 @@ export function logout(): void {
       })()
     }
   } finally {
-    localStorage.removeItem("user")
-    localStorage.removeItem("session_exp")
+    if (typeof window !== "undefined" && window?.localStorage) {
+      localStorage.removeItem("user")
+      localStorage.removeItem("session_exp")
+    }
     console.log("Usuario deslogueado")
   }
 }
 
 export function getCurrentUser(): User | null {
   try {
+    if (typeof window === "undefined" || !window?.localStorage) return null
     const userStr = localStorage.getItem("user")
     if (!userStr) return null
 
     const expStr = localStorage.getItem("session_exp")
     if (expStr && Date.now() > Number(expStr)) {
-      // Expiró la sesión
+      // Expir f3 la sesi f3n
       localStorage.removeItem("user")
       localStorage.removeItem("session_exp")
       return null
     }
 
     const user = JSON.parse(userStr)
-    console.log("Usuario actual obtenido:", user)
+    // Avoid noisy logs on server builds
+    try {
+      console.log("Usuario actual obtenido:", user)
+    } catch {}
     return user
   } catch (error) {
     console.error("Error obteniendo usuario:", error)
@@ -255,9 +265,16 @@ export function getCurrentUser(): User | null {
 }
 
 export function isAuthenticated(): boolean {
-  const authenticated = getCurrentUser() !== null
-  console.log("Usuario autenticado:", authenticated)
-  return authenticated
+  if (typeof window === "undefined") return false
+  try {
+    const authenticated = getCurrentUser() !== null
+    try {
+      console.log("Usuario autenticado:", authenticated)
+    } catch {}
+    return authenticated
+  } catch {
+    return false
+  }
 }
 
 export function hasRole(requiredRole: User["role"]): boolean {

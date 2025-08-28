@@ -50,6 +50,20 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
   const pathname = usePathname()
   const [currentUser, setCurrentUser] = useState<any>(null)
 
+  // Evitar scroll del body cuando el sidebar está abierto en móvil
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    const isMobile = window.innerWidth < 1024
+    if (isOpen && isMobile) {
+      const prev = document.body.style.overflow
+      document.body.style.overflow = "hidden"
+      return () => {
+        document.body.style.overflow = prev || ""
+      }
+    }
+    return
+  }, [isOpen])
+
   useEffect(() => {
     const user = getCurrentUser()
     setCurrentUser(user)
@@ -59,19 +73,27 @@ export function Sidebar({ isOpen, onClose }: SidebarProps) {
 
   return (
     <>
-      {/* Overlay para móvil */}
-      {isOpen && <div className="fixed inset-0 z-40 bg-black bg-opacity-50 lg:hidden" onClick={onClose} />}
+  {/* Overlay para móvil (detrás del sidebar) */}
+  {isOpen && <div className="fixed inset-0 z-30 bg-black bg-opacity-50 lg:hidden" onClick={onClose} />}
 
       {/* Sidebar */}
       <aside
         className={cn(
-          "fixed top-20 left-0 z-40 h-[calc(100vh-5rem)] w-64 bg-white border-r border-gray-200 transition-transform duration-300 ease-in-out shadow-lg",
+          "fixed top-20 left-0 z-50 h-[calc(100vh-5rem)] w-64 bg-white border-r border-gray-200 transition-transform duration-300 ease-in-out shadow-lg",
           isOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
         )}
       >
         <div className="flex flex-col h-full">
           {/* Navegación */}
-          <nav className="flex-1 px-4 pb-4 pt-4">
+          {/*
+            Enable vertical touch scrolling on mobile/iPad: `overflow-y-auto` + `touch-pan-y`.
+            Keep desktop behavior unchanged with `lg:overflow-y-visible`.
+            Add WebKit momentum scrolling via inline style for iOS.
+          */}
+          <nav
+            className="flex-1 px-4 pb-4 pt-4 overflow-y-auto lg:overflow-y-visible"
+            style={{ WebkitOverflowScrolling: "touch", touchAction: "pan-y" }}
+          >
             <div className="space-y-2">
               {menuItems.map((item) => {
                 const Icon = item.icon

@@ -49,12 +49,14 @@ import { useState, useEffect, useMemo } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   supabase,
+  obtenerTiposServicio,
   type Embarque,
   type Operador,
   type Camion,
   type Remolque,
   type FotoEmbarque,
   type ContactoCliente,
+  type TipoServicio,
 } from "@/lib/supabase";
 import { getAlertThresholds, calcularNivelAlerta } from "@/lib/alert-thresholds";
 import { agregarAuditLog } from "@/lib/audit";
@@ -187,6 +189,22 @@ export default function AsignarOperadoresPage() {
   }, [completadosSearch, completadosTipoServicio, completadosPeriodo, completadosPageSize]);
 
   const getServiceDisplayName = (id: string) => {
+    // Intentar resolver desde la lista cargada de tipos de servicio (soporta UUID o slug)
+    try {
+      const found = (tiposServicio || []).find((t: TipoServicio | any) => {
+        if (!t) return false;
+        if (t.id === id) return true; // UUID match
+        // Algunos registros usan slug/clave en el campo tipo_servicio_id
+        if ((t as any).slug && (t as any).slug === id) return true;
+        // También intentar normalizar nombre al slug por seguridad
+        return false;
+      });
+      if (found) return found.nombre || String(id);
+    } catch (e) {
+      // ignore and fallback
+    }
+
+    // Fallback a nombres hardcodeados (slugs legibles antiguos)
     switch (id) {
       case "exportacion-cargada-caja-seca-240":
         return "EXP. CARGADA - CAJA SECA 240";
@@ -341,6 +359,7 @@ export default function AsignarOperadoresPage() {
 
   // Estados para los datos
   const [embarques, setEmbarques] = useState<Embarque[]>([]);
+  const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([]);
   const [camiones, setCamiones] = useState<Camion[]>([]);
   const [remolques, setRemolques] = useState<Remolque[]>([]);
   const [contactosClientes, setContactosClientes] = useState<ContactoCliente[]>(
@@ -384,6 +403,8 @@ export default function AsignarOperadoresPage() {
   const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [fotosEmbarque, setFotosEmbarque] = useState<FotoEmbarque[]>([]);
   const [loadingFotos, setLoadingFotos] = useState(false);
+  const [fotosCount, setFotosCount] = useState<{[embarqueId: string]: number}>({});
+  const [loadingFotosCount, setLoadingFotosCount] = useState<Set<string>>(new Set());
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const cancelarEmbarque = async () => {
@@ -522,6 +543,14 @@ export default function AsignarOperadoresPage() {
         setContactosClientes([]);
       } else {
         setContactosClientes(contactosData || []);
+      }
+      // Cargar tipos de servicio activos (no crítico si falla)
+      try {
+        const tipos = await obtenerTiposServicio();
+        setTiposServicio(tipos || []);
+      } catch (e) {
+        console.warn("No se pudieron cargar tipos de servicio:", e);
+        setTiposServicio([]);
       }
     } catch (error) {
       console.error("Error general:", error);
@@ -670,9 +699,47 @@ export default function AsignarOperadoresPage() {
     }
   };
 
+  const contarFotosEmbarque = async (embarqueId: string) => {
+    if (!embarqueId) return;
+    setLoadingFotosCount(prev => new Set(prev).add(embarqueId));
+    try {
+      const { count, error } = await supabase
+        .from("fotos_embarques")
+        .select("*", { count: "exact", head: true })
+        .eq("embarque_id", embarqueId);
+
+      if (error) {
+        console.error("Error contando fotos:", error);
+        setFotosCount(prev => ({ ...prev, [embarqueId]: 0 }));
+      } else {
+        setFotosCount(prev => ({ ...prev, [embarqueId]: count || 0 }));
+      }
+    } catch (error) {
+      console.error("Error general contando fotos:", error);
+      setFotosCount(prev => ({ ...prev, [embarqueId]: 0 }));
+    } finally {
+      setLoadingFotosCount(prev => {
+        const newSet = new Set(prev);
+        newSet.delete(embarqueId);
+        return newSet;
+      });
+    }
+  };
+
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  useEffect(() => {
+    // Contar fotos para todos los embarques cuando se cargan
+    if (embarques.length > 0) {
+      embarques.forEach(embarque => {
+        if ((embarque.estado === "asignado" || embarque.modificado) && !(embarque.id in fotosCount)) {
+          contarFotosEmbarque(embarque.id);
+        }
+      });
+    }
+  }, [embarques]);
 
   const asignarRecursos = async (embarqueId: string) => {
     const asignacion = asignaciones[embarqueId];
@@ -736,6 +803,8 @@ export default function AsignarOperadoresPage() {
         delete newAsignaciones[embarqueId];
         return newAsignaciones;
       });
+      // Actualizar conteo de fotos para el embarque asignado
+      contarFotosEmbarque(embarqueId);
     } catch (error) {
       console.error("Error:", error);
       alert("Error al asignar recursos");
@@ -2087,6 +2156,7 @@ export default function AsignarOperadoresPage() {
                           setSelectedImage(null);
                           setShowDetailsModal(true);
                           cargarFotosEmbarque(embarque.id);
+                          contarFotosEmbarque(embarque.id);
                         }}
                       >
                         <Eye className="h-4 w-4 mr-1" />
@@ -2112,12 +2182,13 @@ export default function AsignarOperadoresPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() =>
+                          className={fotosCount[embarque.id] > 0 ? "border-green-500 bg-green-50 text-green-700 hover:bg-green-100" : ""}
+                          onClick={() => {
                             window.open(
                               `/subir-fotos-embarque/${embarque.id}`,
                               "_blank"
-                            )
-                          }
+                            );
+                          }}
                         >
                           <Camera className="h-4 w-4 mr-1" />
                           Fotos
@@ -2302,52 +2373,9 @@ export default function AsignarOperadoresPage() {
                           <div className="border rounded-lg p-3 bg-white/60">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Tipo de Servicio</label>
                             {(() => {
-                              const desc = embarque.tipo_servicio_id
-                                ? embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-240"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-larmex-240"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA (LARMEX) 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-thermo-agricultura-240"
-                                  ? "EXPORTACIÓN CARGADA - THERMO (AGRICULTURA) 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-240"
-                                  ? "EXPORTACIÓN CARGADA - PLATAFORMA 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-240"
-                                  ? "IMPORTACIÓN CARGADA - CAJA SECA 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-plataforma-240"
-                                  ? "IMPORTACIÓN CARGADA - PLATAFORMA 240"
-                                  : embarque.tipo_servicio_id === "importacion-vacia-caja-seca-thermo-240"
-                                  ? "IMPORTACIÓN VACÍA - CAJA SECA/THERMO 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-plataforma-amarre-240"
-                                  ? "IMPORTACIÓN CARGADA - PLATAFORMA CON AMARRE 240"
-                                  : embarque.tipo_servicio_id === "importacion-en-tractor-240"
-                                  ? "IMPORTACIÓN - EN TRACTOR 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-800"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "exportacion-vacia-caja-seca-800"
-                                  ? "EXPORTACIÓN VACÍA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "exportacion-en-tractor-800"
-                                  ? "EXPORTACIÓN - EN TRACTOR 800"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-800"
-                                  ? "EXPORTACIÓN CARGADA - PLATAFORMA 800"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-800"
-                                  ? "IMPORTACIÓN CARGADA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "importacion-vacia-plataforma-800"
-                                  ? "IMPORTACIÓN VACÍA - PLATAFORMA 800"
-                                  : embarque.tipo_servicio_id === "pagos-extras"
-                                  ? "PAGOS EXTRAS"
-                                  : embarque.tipo_servicio_id === "horas-rojo-amarillo"
-                                  ? "HORAS ROJO/AMARILLO"
-                                  : embarque.tipo_servicio_id === "cargas-descargas"
-                                  ? "CARGAS/DESCARGAS"
-                                  : embarque.tipo_servicio_id === "movimientos-en-falso"
-                                  ? "MOVIMIENTOS EN FALSO"
-                                  : embarque.tipo_servicio_id === "movimientos-locales"
-                                  ? "MOVIMIENTOS LOCALES"
-                                  : embarque.tipo_servicio_id === "otro"
-                                  ? "OTRO"
-                                  : embarque.tipo_servicio_id
-                                : "No especificado";
-                              const [l1, l2] = desc.split(" - ");
+                              // Mostrar la etiqueta derivada de tipo_servicio_id usando la función centralizada
+                              const desc = getServiceDisplayName(embarque.tipo_servicio_id || "") || "No especificado";
+                              const [l1, l2] = (desc || "").split(" - ");
                               return (
                                 <p className="text-sm text-gray-700 mt-1 leading-tight">
                                   <span className="block">{l1}</span>
@@ -2423,51 +2451,7 @@ export default function AsignarOperadoresPage() {
                           <div className="border rounded-lg p-3 bg-white/60">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Tipo de Servicio</label>
                             {(() => {
-                              const desc = embarque.tipo_servicio_id
-                                ? embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-240"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-larmex-240"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA (LARMEX) 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-thermo-agricultura-240"
-                                  ? "EXPORTACIÓN CARGADA - THERMO (AGRICULTURA) 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-240"
-                                  ? "EXPORTACIÓN CARGADA - PLATAFORMA 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-240"
-                                  ? "IMPORTACIÓN CARGADA - CAJA SECA 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-plataforma-240"
-                                  ? "IMPORTACIÓN CARGADA - PLATAFORMA 240"
-                                  : embarque.tipo_servicio_id === "importacion-vacia-caja-seca-thermo-240"
-                                  ? "IMPORTACIÓN VACÍA - CAJA SECA/THERMO 240"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-plataforma-amarre-240"
-                                  ? "IMPORTACIÓN CARGADA - PLATAFORMA CON AMARRE 240"
-                                  : embarque.tipo_servicio_id === "importacion-en-tractor-240"
-                                  ? "IMPORTACIÓN - EN TRACTOR 240"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-800"
-                                  ? "EXPORTACIÓN CARGADA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "exportacion-vacia-caja-seca-800"
-                                  ? "EXPORTACIÓN VACÍA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "exportacion-en-tractor-800"
-                                  ? "EXPORTACIÓN - EN TRACTOR 800"
-                                  : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-800"
-                                  ? "EXPORTACIÓN CARGADA - PLATAFORMA 800"
-                                  : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-800"
-                                  ? "IMPORTACIÓN CARGADA - CAJA SECA 800"
-                                  : embarque.tipo_servicio_id === "importacion-vacia-plataforma-800"
-                                  ? "IMPORTACIÓN VACÍA - PLATAFORMA 800"
-                                  : embarque.tipo_servicio_id === "pagos-extras"
-                                  ? "PAGOS EXTRAS"
-                                  : embarque.tipo_servicio_id === "horas-rojo-amarillo"
-                                  ? "HORAS ROJO/AMARILLO"
-                                  : embarque.tipo_servicio_id === "cargas-descargas"
-                                  ? "CARGAS/DESCARGAS"
-                                  : embarque.tipo_servicio_id === "movimientos-en-falso"
-                                  ? "MOVIMIENTOS EN FALSO"
-                                  : embarque.tipo_servicio_id === "movimientos-locales"
-                                  ? "MOVIMIENTOS LOCALES"
-                                  : embarque.tipo_servicio_id === "otro"
-                                  ? "OTRO"
-                                  : embarque.tipo_servicio_id
-                                : "No especificado";
+                              const desc = getServiceDisplayName(embarque.tipo_servicio_id || "");
                               const [l1, l2] = desc.split(" - ");
                               return (
                                 <p className="text-sm text-gray-900 mt-1 leading-tight">
@@ -2553,51 +2537,7 @@ export default function AsignarOperadoresPage() {
                           Tipo de Servicio
                         </label>
                         {(() => {
-                          const desc = embarque.tipo_servicio_id
-                            ? embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-240"
-                              ? "EXPORTACIÓN CARGADA - CAJA SECA 240"
-                              : embarque.tipo_servicio_id === "exportacion-cargada-larmex-240"
-                              ? "EXPORTACIÓN CARGADA - CAJA SECA (LARMEX) 240"
-                              : embarque.tipo_servicio_id === "exportacion-cargada-thermo-agricultura-240"
-                              ? "EXPORTACIÓN CARGADA - THERMO (AGRICULTURA) 240"
-                              : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-240"
-                              ? "EXPORTACIÓN CARGADA - PLATAFORMA 240"
-                              : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-240"
-                              ? "IMPORTACIÓN CARGADA - CAJA SECA 240"
-                              : embarque.tipo_servicio_id === "importacion-cargada-plataforma-240"
-                              ? "IMPORTACIÓN CARGADA - PLATAFORMA 240"
-                              : embarque.tipo_servicio_id === "importacion-vacia-caja-seca-thermo-240"
-                              ? "IMPORTACIÓN VACÍA - CAJA SECA/THERMO 240"
-                              : embarque.tipo_servicio_id === "importacion-cargada-plataforma-amarre-240"
-                              ? "IMPORTACIÓN CARGADA - PLATAFORMA CON AMARRE 240"
-                              : embarque.tipo_servicio_id === "importacion-en-tractor-240"
-                              ? "IMPORTACIÓN - EN TRACTOR 240"
-                              : embarque.tipo_servicio_id === "exportacion-cargada-caja-seca-800"
-                              ? "EXPORTACIÓN CARGADA - CAJA SECA 800"
-                              : embarque.tipo_servicio_id === "exportacion-vacia-caja-seca-800"
-                              ? "EXPORTACIÓN VACÍA - CAJA SECA 800"
-                              : embarque.tipo_servicio_id === "exportacion-en-tractor-800"
-                              ? "EXPORTACIÓN - EN TRACTOR 800"
-                              : embarque.tipo_servicio_id === "exportacion-cargada-plataforma-800"
-                              ? "EXPORTACIÓN CARGADA - PLATAFORMA 800"
-                              : embarque.tipo_servicio_id === "importacion-cargada-caja-seca-800"
-                              ? "IMPORTACIÓN CARGADA - CAJA SECA 800"
-                              : embarque.tipo_servicio_id === "importacion-vacia-plataforma-800"
-                              ? "IMPORTACIÓN VACÍA - PLATAFORMA 800"
-                              : embarque.tipo_servicio_id === "pagos-extras"
-                              ? "PAGOS EXTRAS"
-                              : embarque.tipo_servicio_id === "horas-rojo-amarillo"
-                              ? "HORAS ROJO/AMARILLO"
-                              : embarque.tipo_servicio_id === "cargas-descargas"
-                              ? "CARGAS/DESCARGAS"
-                              : embarque.tipo_servicio_id === "movimientos-en-falso"
-                              ? "MOVIMIENTOS EN FALSO"
-                              : embarque.tipo_servicio_id === "movimientos-locales"
-                              ? "MOVIMIENTOS LOCALES"
-                              : embarque.tipo_servicio_id === "otro"
-                              ? "OTRO"
-                              : embarque.tipo_servicio_id
-                            : "No especificado";
+                          const desc = getServiceDisplayName(embarque.tipo_servicio_id || "");
                           const [l1, l2] = desc.split(" - ");
                           return (
                             <p className="text-sm text-gray-700 max-w-xs whitespace-normal break-words leading-tight">

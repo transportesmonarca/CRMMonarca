@@ -2176,18 +2176,6 @@ export default function OperadoresPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {!editingId && (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    className="border-dashed"
-                    title="Autocompletar aleatorio (temporal)"
-                    onClick={autocompletarAleatorio}
-                  >
-                    Autocompletar aleatorio
-                  </Button>
-                )}
                 <Button
                   onClick={() => setShowModal(false)}
                   variant="outline"

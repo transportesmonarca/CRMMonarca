@@ -251,14 +251,6 @@ export default function SubirFotosEmbarquePage() {
     try {
       setUploading(true)
       setError("")
-      {
-        success && (
-          <Alert>
-            <CheckCircle className="h-4 w-4" />
-            <AlertDescription>{success}</AlertDescription>
-          </Alert>
-        )
-      }
 
       let archivosSubidos = 0
 
@@ -508,30 +500,7 @@ export default function SubirFotosEmbarquePage() {
             <CardDescription>Selecciona las fotos o documentos relacionados con este embarque</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Geolocalización */}
-            <div className="p-3 rounded-md border bg-blue-50">
-              <div className="flex items-center justify-between">
-                <div className="text-sm">
-                  <p className="font-medium text-blue-900">Ubicación del operador</p>
-                  {geoStatus === "ok" && latitud != null && longitud != null ? (
-                    <p className="text-blue-800">Lat: {latitud.toFixed(6)}, Lng: {longitud.toFixed(6)}</p>
-                  ) : geoStatus === "solicitando" ? (
-                    <p className="text-blue-700">Solicitando permiso de ubicación…</p>
-                  ) : (
-                    <p className="text-blue-700">Activa tu ubicación para continuar con la subida.</p>
-                  )}
-                </div>
-                <Button
-                  type="button"
-                  variant="default"
-                  onClick={() => solicitarUbicacion(true)}
-                  disabled={geoStatus === "solicitando"}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {geoStatus === "solicitando" ? "Activando…" : "Activar ubicación"}
-                </Button>
-              </div>
-            </div>
+            {/* Ubicación del operador (ocultada por solicitud) */}
             {/* Confirmación del operador */}
             <div className="space-y-2">
               <Label htmlFor="operador">Nombre del Operador *</Label>

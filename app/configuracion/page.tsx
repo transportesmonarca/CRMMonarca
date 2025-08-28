@@ -94,15 +94,21 @@ export default function ConfiguracionPage() {
   const [retencionRunning, setRetencionRunning] = useState(false)
   const [retencionNextRun, setRetencionNextRun] = useState<string | null>(null)
   const [retencionWarning, setRetencionWarning] = useState<string | null>(null)
-  // Limpieza total: dialogs y estados
-  const [limpiezaDialog1Open, setLimpiezaDialog1Open] = useState(false)
-  const [limpiezaDialog2Open, setLimpiezaDialog2Open] = useState(false)
-  const [limpiezaPwd1, setLimpiezaPwd1] = useState("")
-  const [limpiezaPwd2, setLimpiezaPwd2] = useState("")
+  // Limpieza de audit logs
+  const [auditLimpiezaDialogOpen, setAuditLimpiezaDialogOpen] = useState(false)
+  const [auditLimpiezaRunning, setAuditLimpiezaRunning] = useState(false)
+  const [auditLimpiezaResult, setAuditLimpiezaResult] = useState<string | null>(null)
+  const [auditLimpiezaError, setAuditLimpiezaError] = useState<string | null>(null)
+  const [auditStats, setAuditStats] = useState<{ totalRegistros: number; registrosAntiguos: number; registrosActivos: number } | null>(null)
   const [limpiezaFinalOpen, setLimpiezaFinalOpen] = useState(false)
   const [limpiezaRunning, setLimpiezaRunning] = useState(false)
   const [limpiezaMsg, setLimpiezaMsg] = useState<string | null>(null)
   const [limpiezaErr, setLimpiezaErr] = useState<string | null>(null)
+  // Variables faltantes para doble confirmación de limpieza
+  const [limpiezaPwd1, setLimpiezaPwd1] = useState("")
+  const [limpiezaPwd2, setLimpiezaPwd2] = useState("")
+  const [limpiezaDialog1Open, setLimpiezaDialog1Open] = useState(false)
+  const [limpiezaDialog2Open, setLimpiezaDialog2Open] = useState(false)
   // Limpieza manual de Blob
   const [blobRunning, setBlobRunning] = useState(false)
   const [blobResult, setBlobResult] = useState<string | null>(null)
@@ -1070,6 +1076,64 @@ export default function ConfiguracionPage() {
                   }}
                 >
                   Ejecutar limpieza total (Irreversible)
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Limpieza automática de Audit Logs */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center space-x-2">
+                  <Trash2 className="h-5 w-5 text-orange-600" />
+                  <span>Limpieza automática de Audit Logs</span>
+                </CardTitle>
+                <CardDescription>
+                  Elimina registros de auditoría antiguos (más de 6 meses) para mantener el rendimiento del sistema.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="p-3 border border-orange-300 bg-orange-50 text-orange-900 rounded text-sm">
+                  <div className="font-semibold">Información</div>
+                  <div>Esta operación eliminará automáticamente todos los registros de auditoría con más de 6 meses de antigüedad.</div>
+                </div>
+                {auditLimpiezaResult && (
+                  <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm whitespace-pre-wrap">{auditLimpiezaResult}</div>
+                )}
+                {auditLimpiezaError && (
+                  <div className="p-2 rounded border border-red-300 bg-red-50 text-red-800 text-sm">{auditLimpiezaError}</div>
+                )}
+                <Button
+                  className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700"
+                  disabled={auditLimpiezaRunning}
+                  onClick={async () => {
+                    if (!currentUser || currentUser.role !== 'admin') {
+                      setAuditLimpiezaError('Solo el administrador puede ejecutar esta limpieza.');
+                      return;
+                    }
+                    setAuditLimpiezaError(null);
+                    setAuditLimpiezaResult(null);
+                    setAuditLimpiezaRunning(true);
+                    try {
+                      const response = await fetch('/api/limpiar-audit-logs', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ confirm: true })
+                      });
+                      const data = await response.json();
+                      if (!response.ok || data.error) {
+                        throw new Error(data.error || 'Error al limpiar audit logs');
+                      }
+                      setAuditLimpiezaResult(`Limpieza completada exitosamente:\n• Registros eliminados: ${data.eliminados}\n• Registros restantes: ${data.registrosRestantes || 'N/A'}`);
+                      // Recargar los logs después de la limpieza
+                      await cargarAuditLogs();
+                    } catch (error: any) {
+                      setAuditLimpiezaError(error.message || 'Error desconocido');
+                    } finally {
+                      setAuditLimpiezaRunning(false);
+                    }
+                  }}
+                >
+                  {auditLimpiezaRunning ? 'Ejecutando limpieza...' : 'Limpiar Audit Logs antiguos (>6 meses)'}
                 </Button>
               </CardContent>
             </Card>
