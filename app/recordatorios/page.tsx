@@ -189,8 +189,6 @@ export default function RecordatoriosPage() {
         tipo: formData.tipo || null,
         prioridad: formData.prioridad,
         estado: formData.estado,
-        operador_id: formData.operador_id || null,
-        camion_id: formData.camion_id || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -225,20 +223,12 @@ export default function RecordatoriosPage() {
           alert("Error al crear recordatorio");
           return;
         }
-        // Audit: creación de recordatorio
+        // Audit: creación de recordatorio (sin operador/camión)
         try {
-          const op = formData.operador_id
-            ? operadores.find((o) => o.id === formData.operador_id)
-            : undefined;
-          const cam = formData.camion_id
-            ? camiones.find((c) => c.id === formData.camion_id)
-            : undefined;
           const partes: string[] = [
             `"${formData.titulo}"`,
             `vence: ${formData.fecha_vencimiento}`,
           ];
-          if (op) partes.push(`operador: ${op.nombre} ${op.apellidos}`);
-          if (cam) partes.push(`camión: ${cam.numero_economico}`);
           agregarAuditLog("CREAR", "Recordatorios", `Creó recordatorio ${partes.join(", ")}`);
         } catch {}
       }
@@ -267,8 +257,8 @@ export default function RecordatoriosPage() {
       tipo: recordatorio.tipo || "",
       prioridad: recordatorio.prioridad,
       estado: recordatorio.estado,
-      operador_id: recordatorio.operador_id || "",
-      camion_id: recordatorio.camion_id || "",
+  operador_id: recordatorio.operador_id || "",
+  camion_id: recordatorio.camion_id || "",
     });
     setEditingRecordatorio(recordatorio);
     setShowForm(true);
@@ -612,51 +602,7 @@ export default function RecordatoriosPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="operador_id">Operador (Opcional)</Label>
-                      <Select
-                        value={formData.operador_id}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, operador_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar operador" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Sin asignar</SelectItem>
-                          {operadores.map((operador) => (
-                            <SelectItem key={operador.id} value={operador.id}>
-                              {operador.nombre} {operador.apellidos}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="camion_id">Camión (Opcional)</Label>
-                      <Select
-                        value={formData.camion_id}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, camion_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar camión" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Sin asignar</SelectItem>
-                          {camiones.map((camion) => (
-                            <SelectItem key={camion.id} value={camion.id}>
-                              {camion.numero_economico} - {camion.marca}{" "}
-                              {camion.modelo}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+                  {/* Operador y Camión removidos del formulario por solicitud */}
 
                   <div className="flex justify-end space-x-2">
                     <Button
@@ -666,7 +612,7 @@ export default function RecordatoriosPage() {
                     >
                       Cancelar
                     </Button>
-                    <Button onClick={guardarRecordatorio} disabled={saving}>
+                    <Button onClick={guardarRecordatorio} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white">
                       {saving ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>

@@ -2572,9 +2572,7 @@ export default function FacturacionCobranzaPage() {
           } as any);
         }
 
-        alert("¡Registro de facturación guardado exitosamente en Supabase!");
-
-        setShowFacturacionModal(false);
+  setShowFacturacionModal(false);
         setEmbarqueFacturacion(null);
 
         setFacturacionData({
@@ -2652,30 +2650,137 @@ export default function FacturacionCobranzaPage() {
 
   const generarReporteExcel = () => {
     try {
-      const datosReporte = {
-        periodo: `${filtroFecha || "Inicio"} - ${filtroFechaHasta || "Fin"}`,
-        operador:
-          filtroOperador === "todos" ? "Todos los operadores" : filtroOperador,
-        totalEmbarques: embarquesFiltrados.length,
-        montoTotal: embarquesFiltrados.reduce((sum, e) => sum + getMontoContable(e), 0),
-        embarques: embarquesFiltrados.map((e) => ({
-          folio: e.folio,
-          cliente: e.clienteNombre,
-          operador: e.operadorAsignado.nombre,
-          camion: `${e.camionAsignado.marca} ${e.camionAsignado.modelo} (${e.camionAsignado.numeroEconomico})`,
-          fechaAsignacion: e.fechaAsignacion,
-          montoFacturado: getMontoContable(e),
-          moneda: e.moneda_flete || "MXN",
-          pagado: e.pagado ? "Sí" : "No",
-          estado: e.estado_facturacion || "pendiente_facturacion",
-        })),
-      };
+      // Excluir embarques archivados
+      const listaNoArchivados = (embarquesFiltrados || []).filter(
+        (e: any) => !(e.estado_facturacion === "archivado" || archivadosIds.includes(e.id))
+      );
 
-      console.log("Generando reporte Excel:", datosReporte);
+      if (!listaNoArchivados.length) {
+        alert("No hay embarques no archivados para exportar");
+        return;
+      }
 
-      alert("Reporte Excel generado exitosamente (simulado)");
+      const headers = [
+        "ID",
+        "Cliente",
+  "Nombre Operador",
+  "Tipo Servicio",
+  "Monto Flete",
+  "Descuento QuickPaid",
+  "Precio QuickPaid",
+  "Fecha/Hora Recolección",
+  "Tracto",
+  "Remolque",
+        "Load",
+        "Carta Porte",
+        "Dirección Entrega",
+        "Recolecta Hora",
+        "Observaciones",
+        "Fecha Asignación",
+        "Monto Facturado",
+        "Moneda",
+        "Pagado",
+        "Estado Facturación",
+        "Folio Factura 1",
+        "Folio Factura 2",
+        "Folio Factura 3",
+        "Folio Factura 4",
+        "Observaciones Facturación",
+      ];
+
+      const rows = listaNoArchivados.map((e: any) => {
+        const operador =
+          e.operadorAsignado?.nombre || e.operadorNombre || e.operador || "";
+        const tipoServicio = e.tipoServicioNombre || e.tipo_servicio_nombre || (e.tipo_servicio_id ? (tiposServicio.find((t:any)=>t.id===e.tipo_servicio_id)?.nombre) : "") || "";
+        const tracto =
+          (e.tracto && (e.tracto.numero_economico || e.tracto.placas)) ||
+          e.tractoNumero ||
+          e.tractor ||
+          e.tracto ||
+          "";
+        const remolque =
+          (e.remolque && (e.remolque.numero_economico || e.remolque.placas)) ||
+          e.remolqueNumero ||
+          e.remolque ||
+          "";
+        const load = e.load_number || e.load || e.loadNumber || e.numero_carga || "";
+        const cartaPorte = e.carta_porte || e.cartaPorte || e.carta || "";
+        const direccionEntrega =
+          e.direccion_entrega || e.direccionEntrega || e.direccion || "";
+        const recolectaHora =
+          e.recolecta_hora || e.hora_recolecta || e.recolectaHora || "";
+        const observaciones =
+          e.observaciones || e.observaciones_entrega || e.observacionesFacturacion || e.observaciones_facturacion || "";
+        const operadorNombre = operador;
+        const camion = e.camionAsignado
+          ? `${e.camionAsignado.marca || ""} ${e.camionAsignado.modelo || ""} (${e.camionAsignado.numeroEconomico || e.camionAsignado.numero_economico || ""})`
+          : e.camionNombre || "";
+        const monto = getMontoContable(e) || 0;
+        // QuickPaid breakdown (if present)
+        const descuentoQuick = (e.quickpaid_descuento != null ? e.quickpaid_descuento : (e.quickpaidDescuento || 0)) || 0;
+        const precioQuick = (e.precio_quickpaid != null ? e.precio_quickpaid : (e.precioQuickPaid || 0)) || 0;
+        const recolectaQuick = (e.recoleccion_quickpaid_datetime || e.recolecta_quickpaid || e.recolectaHora || e.hora_recolecta) || "";
+        return [
+          e.id,
+          e.clienteNombre || e.cliente || "",
+          operadorNombre,
+          tipoServicio,
+          monto,
+          descuentoQuick,
+          precioQuick,
+          recolectaQuick,
+          tracto,
+          remolque,
+          load,
+          cartaPorte,
+          direccionEntrega,
+          recolectaHora,
+          observaciones,
+          e.fechaAsignacion || e.fecha_creacion || e.updated_at || "",
+          monto,
+          e.moneda_flete || "MXN",
+          e.pagado ? "Sí" : "No",
+          e.estado_facturacion || "",
+          e.foliosFactura?.folio1 || e.folio_factura_1 || e.numero_factura_1 || "",
+          e.foliosFactura?.folio2 || e.folio_factura_2 || e.numero_factura_2 || "",
+          e.foliosFactura?.folio3 || e.folio_factura_3 || e.numero_factura_3 || "",
+          e.foliosFactura?.folio4 || e.folio_factura_4 || e.numero_factura_4 || "",
+          e.observacionesFacturacion || e.observaciones_facturacion || "",
+        ];
+      });
+
+      // Build CSV (prefix cells with apostrophe so Excel treats them as text -> left-aligned)
+      const csvLines = [headers.join(",")];
+      rows.forEach((r) => {
+        const escaped = r.map((cell) => {
+          if (cell === null || cell === undefined) return "";
+          const s = String(cell);
+          // prefix with apostrophe to force Excel left-align (Excel hides the apostrophe)
+          const withQuotePrefix = "'" + s;
+          // Escape quotes for CSV
+          return `"${withQuotePrefix.replace(/"/g, '""')}"`;
+        });
+        csvLines.push(escaped.join(","));
+      });
+
+      const blob = new Blob([csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      const now = new Date();
+      const fechaArchivo = now.toISOString().split("T")[0];
+      link.download = `facturacion_report_${fechaArchivo}.csv`;
+      link.click();
+      URL.revokeObjectURL(link.href);
+
+      try {
+        agregarAuditLog(
+          "EXPORTAR",
+          "Facturación",
+          `Exportó reporte de embarques (no archivados) - ${listaNoArchivados.length} registros`,
+        );
+      } catch {}
     } catch (error) {
-      console.error("Error al generar reporte Excel:", error);
+      console.error("Error al generar el reporte Excel:", error);
       alert("Error al generar el reporte Excel");
     }
   };
@@ -2685,10 +2790,26 @@ export default function FacturacionCobranzaPage() {
   setActiveDetailTab("general");
 
     setFacturacionFormData({
-      folio1: embarque.numero_factura_1 || "",
-      folio2: embarque.numero_factura_2 || "",
-      folio3: embarque.numero_factura_3 || "",
-      folio4: embarque.numero_factura_4 || "",
+      folio1:
+        embarque?.foliosFactura?.folio1 ||
+        (embarque as any).folio_factura_1 ||
+        (embarque as any).numero_factura_1 ||
+        "",
+      folio2:
+        embarque?.foliosFactura?.folio2 ||
+        (embarque as any).folio_factura_2 ||
+        (embarque as any).numero_factura_2 ||
+        "",
+      folio3:
+        embarque?.foliosFactura?.folio3 ||
+        (embarque as any).folio_factura_3 ||
+        (embarque as any).numero_factura_3 ||
+        "",
+      folio4:
+        embarque?.foliosFactura?.folio4 ||
+        (embarque as any).folio_factura_4 ||
+        (embarque as any).numero_factura_4 ||
+        "",
       cantidadFinalFacturada:
         embarque.cantidad_final_facturada || embarque.precioFlete || 0,
       observacionesFacturacion: embarque.observacionesFacturacion || "",
@@ -2733,10 +2854,17 @@ export default function FacturacionCobranzaPage() {
                 folio3: facturacionFormData.folio3,
                 folio4: facturacionFormData.folio4,
               },
+              // also set top-level snake_case fields so other UI paths reading those see the update
+              folio_factura_1: facturacionFormData.folio1 || null,
+              folio_factura_2: facturacionFormData.folio2 || null,
+              folio_factura_3: facturacionFormData.folio3 || null,
+              folio_factura_4: facturacionFormData.folio4 || null,
               cantidadFinalFacturada:
                 facturacionFormData.cantidadFinalFacturada,
               observacionesFacturacion:
                 facturacionFormData.observacionesFacturacion,
+              cantidad_final_facturada: facturacionFormData.cantidadFinalFacturada || null,
+              observaciones_facturacion: facturacionFormData.observacionesFacturacion || null,
             }
           : embarque
       );
@@ -2756,14 +2884,19 @@ export default function FacturacionCobranzaPage() {
             folio3: facturacionFormData.folio3,
             folio4: facturacionFormData.folio4,
           },
+          // keep both camelCase and snake_case properties in memory for UI consistency
           cantidadFinalFacturada: facturacionFormData.cantidadFinalFacturada,
-          observacionesFacturacion:
-            facturacionFormData.observacionesFacturacion,
+          observacionesFacturacion: facturacionFormData.observacionesFacturacion,
+          cantidad_final_facturada: facturacionFormData.cantidadFinalFacturada || null,
+          observaciones_facturacion: facturacionFormData.observacionesFacturacion || null,
+          folio_factura_1: facturacionFormData.folio1 || null,
+          folio_factura_2: facturacionFormData.folio2 || null,
+          folio_factura_3: facturacionFormData.folio3 || null,
+          folio_factura_4: facturacionFormData.folio4 || null,
         });
 
         setShowFacturacionEditModal(false);
       }
-      alert("Información de facturación actualizada exitosamente");
     } catch (error) {
       console.error("Error:", error);
       alert("Error al guardar la información de facturación");

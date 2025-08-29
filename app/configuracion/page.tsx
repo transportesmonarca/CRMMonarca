@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Settings, Shield, Bell, FileText, User, Trash2, Download, Filter, AlertTriangle, Edit2, Save } from "lucide-react";
-import { getCurrentUser, verifyAuditPassword, listUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser } from "@/lib/auth";
+import { getCurrentUser, verifyAuditPassword, listUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser, setUserActive, deleteUser } from "@/lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
@@ -88,6 +88,14 @@ export default function ConfiguracionPage() {
   const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
   const [resetPwd1, setResetPwd1] = useState("")
   const [resetPwd2, setResetPwd2] = useState("")
+  // Admin action dialog (used for activate/deactivate and delete)
+  const [adminActionOpen, setAdminActionOpen] = useState(false)
+  const [adminActionType, setAdminActionType] = useState<"toggle" | "delete" | null>(null)
+  const [adminActionUser, setAdminActionUser] = useState<{ id: string; username: string } | null>(null)
+  const [adminActionPendingActive, setAdminActionPendingActive] = useState<boolean | null>(null)
+  const [adminActionPassword, setAdminActionPassword] = useState("")
+  const [adminActionLoading, setAdminActionLoading] = useState(false)
+  const [adminActionError, setAdminActionError] = useState<string | null>(null)
   // Retención de datos (solo Embarques)
   const [retencionConfirmOpen, setRetencionConfirmOpen] = useState(false)
   const [retencionFinalOpen, setRetencionFinalOpen] = useState(false)
@@ -503,13 +511,13 @@ export default function ConfiguracionPage() {
         <TabsContent value="alertas" className="space-y-4">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <AlertTriangle className="h-5 w-5 text-yellow-600" />
-                <span>Configuración de Alertas de Vencimiento</span>
-              </CardTitle>
-              <CardDescription>
-                Define con cuánta anticipación se mostrarán las alertas roja, amarilla y verde para cada campo de vencimiento.
-              </CardDescription>
+              <div className="flex items-center gap-3">
+                <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0" />
+                <div>
+                  <CardTitle className="m-0">Configuración de Alertas de Vencimiento</CardTitle>
+                  <CardDescription>Define con cuánta anticipación se mostrarán las alertas roja, amarilla y verde para cada campo de vencimiento.</CardDescription>
+                </div>
+              </div>
             </CardHeader>
             <CardContent>
               {loadingThresholds ? (
@@ -576,13 +584,15 @@ export default function ConfiguracionPage() {
 
           <TabsContent value="general" className="space-y-4">
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Settings className="h-5 w-5" />
-                  <span>Configuración General</span>
-                </CardTitle>
-                <CardDescription>Configuraciones básicas del sistema</CardDescription>
-              </CardHeader>
+                <CardHeader>
+                  <div className="flex items-center gap-3">
+                    <Settings className="h-5 w-5 flex-shrink-0" />
+                    <div>
+                      <CardTitle className="m-0">Configuración General</CardTitle>
+                      <CardDescription>Configuraciones básicas del sistema</CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
               <CardContent className="space-y-6">
                 {/* Advertencia de retención pendiente */}
                 {retencionWarning && (
@@ -762,21 +772,34 @@ export default function ConfiguracionPage() {
                                 setResetDialogOpen(true)
                               }}>Resetear contraseña</Button>
                             </td>
-                            <td className="px-2 py-1 border text-center">
+                            <td className="px-2 py-1 border text-center space-x-2">
+                              {/* Toggle active/inactive with admin confirmation */}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => {
+                                  if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede cambiar el estado del usuario.'); return }
+                                  setAdminActionType('toggle')
+                                  setAdminActionUser({ id: u.id, username: u.username })
+                                  setAdminActionPendingActive(!u.active)
+                                  setAdminActionPassword('')
+                                  setAdminActionError(null)
+                                  setAdminActionOpen(true)
+                                }}
+                              >
+                                {u.active? 'Desactivar':'Activar'}
+                              </Button>
+                              {/* Permanent delete with admin confirmation */}
                               <Button
                                 size="sm"
                                 className="bg-red-600 hover:bg-red-700 text-white border-red-700"
-                                onClick={async () => {
+                                onClick={() => {
                                   if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede eliminar usuarios.'); return }
-                                  const ok = confirm(`¿Eliminar al usuario \"${u.username}\"? Esta acción no afectará documentos pasados; solo desactiva al usuario hacia futuro.`)
-                                  if (!ok) return
-                                  try {
-                                    await deactivateUser(u.id)
-                                    await cargarUsuarios()
-                                    try { await agregarAuditLog('ELIMINAR','Seguridad',`Usuario desactivado: ${u.username}`) } catch {}
-                                  } catch (e:any) {
-                                    alert('No se pudo eliminar: '+(e.message||e))
-                                  }
+                                  setAdminActionType('delete')
+                                  setAdminActionUser({ id: u.id, username: u.username })
+                                  setAdminActionPassword('')
+                                  setAdminActionError(null)
+                                  setAdminActionOpen(true)
                                 }}
                               >
                                 Eliminar
@@ -819,6 +842,76 @@ export default function ConfiguracionPage() {
                         setPendingCreate(null)
                       }catch(e:any){ alert('Error creando usuario: '+(e.message||e)) }
                     }}>Confirmar y crear</Button>
+                  </DialogFooter>
+                </DialogContent>
+              </Dialog>
+
+              {/* Dialogo: Admin action (activate/deactivate or delete) */}
+              <Dialog open={adminActionOpen} onOpenChange={setAdminActionOpen}>
+                <DialogContent>
+                  <DialogHeader>
+                    <DialogTitle>{adminActionType === 'delete' ? 'Eliminar usuario (administrador)' : 'Confirmar cambio de estado (administrador)'}</DialogTitle>
+                  </DialogHeader>
+                  <div className="space-y-3">
+                    <p className="text-sm text-gray-600">{adminActionType === 'delete' ? `Vas a eliminar permanentemente al usuario "${adminActionUser?.username}". Esta acción es irreversible.` : `Vas a ${adminActionPendingActive ? 'activar' : 'desactivar'} al usuario "${adminActionUser?.username}".`}</p>
+                    <div>
+                      <Label>Contraseña de administrador</Label>
+                      <Input type="password" placeholder="Contraseña admin" value={adminActionPassword} onChange={e=>setAdminActionPassword(e.target.value)} />
+                      {adminActionError && <div className="text-red-700 text-sm mt-2">{adminActionError}</div>}
+                    </div>
+                  </div>
+                    <DialogFooter>
+                    <Button variant="outline" onClick={() => { setAdminActionOpen(false); setAdminActionType(null); setAdminActionUser(null); setAdminActionPassword(''); setAdminActionError(null); }}>Cancelar</Button>
+                    <Button className="bg-red-600 hover:bg-red-700 text-white border-red-700" onClick={async()=>{
+                      setAdminActionError(null)
+                      if (!adminActionUser) { setAdminActionError('Usuario inválido'); return }
+                      if (!adminActionPassword) { setAdminActionError('Ingresa la contraseña de administrador'); return }
+                      setAdminActionLoading(true)
+                      try {
+                        const ok = await verifyCurrentUserPassword(adminActionPassword)
+                        if (!ok) { setAdminActionError('Contraseña admin incorrecta'); return }
+                        let removedId: string | null = null
+                        if (adminActionType === 'toggle') {
+                          await setUserActive(adminActionUser.id, !!adminActionPendingActive)
+                          await agregarAuditLog('ACTUALIZAR','Seguridad', `Usuario ${adminActionUser.username} ${adminActionPendingActive? 'activado':'desactivado'}`)
+                        } else if (adminActionType === 'delete') {
+                          try {
+                            await deleteUser(adminActionUser.id)
+                            // Remover del listado local inmediatamente para feedback UX
+                            setUsers((prev) => prev.filter((x) => x.id !== adminActionUser.id))
+                            removedId = adminActionUser.id
+                            await agregarAuditLog('ELIMINAR','Seguridad', `Usuario eliminado permanentemente: ${adminActionUser.username}`)
+                          } catch (delErr:any) {
+                            // Si la eliminación física falla (p. ej. integridad referencial), desactivar y remover de la lista en UI
+                            console.warn('deleteUser falló, aplicando fallback deactivateUser:', delErr)
+                            try {
+                              await deactivateUser(adminActionUser.id)
+                              // Remover del listado local para que "desaparezca" inmediatamente
+                              setUsers((prev) => prev.filter((x) => x.id !== adminActionUser.id))
+                              removedId = adminActionUser.id
+                              await agregarAuditLog('ACTUALIZAR','Seguridad', `Usuario desactivado (no pudo eliminarse): ${adminActionUser.username}`)
+                            } catch (fbErr:any) {
+                              // Re-lanzar para ser capturado por el catch exterior
+                              throw fbErr
+                            }
+                          }
+                        }
+                        // Refrescar listado (si deleteUser funcionó server-side, recargamos; otherwise we'll re-filter to keep row gone)
+                        try { await cargarUsuarios() } catch {}
+                        if (removedId) {
+                          setUsers((prev) => prev.filter((x) => x.id !== removedId))
+                        }
+                        setAdminActionOpen(false)
+                        setAdminActionType(null)
+                        setAdminActionUser(null)
+                        setAdminActionPassword('')
+                        setAdminActionError(null)
+                      } catch (e:any) {
+                        setAdminActionError(e?.message || 'Error ejecutando la acción')
+                      } finally {
+                        setAdminActionLoading(false)
+                      }
+                    }}>{adminActionType === 'delete' ? 'Eliminar' : (adminActionPendingActive? 'Activar':'Desactivar')}</Button>
                   </DialogFooter>
                 </DialogContent>
               </Dialog>
@@ -890,6 +983,15 @@ export default function ConfiguracionPage() {
                               setSavingSec(true)
                               await setSecuritySettings(secSettings as any)
                               await agregarAuditLog('ACTUALIZAR','Seguridad','Políticas actualizadas')
+                              // Si cambió el tiempo de sesión, actualizar la expiración de la sesión actual en el cliente
+                              try {
+                                const minutes = Number(secSettings.session_timeout_minutes) || 60
+                                const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString()
+                                if (typeof window !== 'undefined' && window.localStorage) {
+                                  const u = localStorage.getItem('user')
+                                  if (u) localStorage.setItem('user_expires_at', expiresAt)
+                                }
+                              } catch (e) {}
                               setSecConfirmOpen(false)
                             }catch(e:any){
                               alert('Error guardando políticas: '+(e.message||e))
