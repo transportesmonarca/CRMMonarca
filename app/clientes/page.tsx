@@ -46,15 +46,19 @@ import {
   Calendar,
   FileText,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   supabase,
   type Cliente,
   obtenerContactosCliente,
   guardarContactosCliente,
   type ContactoCliente,
+  obtenerFormasFacturacion,
+  guardarFormasFacturacion,
+  obtenerRepresentantesCliente,
 } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
 
 interface FormaFacturacion {
   id: string;
@@ -118,7 +122,39 @@ export default function ClientesPage() {
     descripcion: "",
   });
 
+  // Generador simple de UUID v4 (sin dependencias)
+  const uuidv4 = () => {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = (Math.random() * 16) | 0,
+        v = c == 'x' ? r : (r & 0x3) | 0x8;
+      return v.toString(16);
+    });
+  };
+
+  // Estados temporales para edición de formas de facturación desde el modal
+  const [editingFormas, setEditingFormas] = useState<FormaFacturacion[]>([]);
+  useEffect(() => {
+    // al abrir el diálogo de configuración, inicializar la copia editable
+    if (showFacturacionConfig) setEditingFormas(formasFacturacion);
+  }, [showFacturacionConfig]);
+
+  // Cargar formas de facturación desde la BD al montar
+  useEffect(() => {
+    const cargarFormas = async () => {
+      const formas = await obtenerFormasFacturacion();
+      if (formas && formas.length > 0) {
+        setFormasFacturacion(formas.map((f) => ({ id: f.id, nombre: f.nombre, descripcion: f.descripcion || "" })));
+      }
+    };
+    cargarFormas();
+  }, []);
+
   const [clientes, setClientes] = useState<Cliente[]>([]);
+  const [eliminadosAnio, setEliminadosAnio] = useState<number>(0);
+  // Para evitar que la consulta al servidor reescriba inmediatamente el conteo
+  // cuando ya lo incrementamos localmente, registramos la hora del último
+  // incremento local y usamos Math.max(serverCount, localCount) al actualizar.
+  const lastLocalIncrementRef = useRef<number | null>(null);
 
   // Función para truncar texto
   const truncateText = (text: string, maxLength: number): string => {
@@ -138,14 +174,14 @@ export default function ClientesPage() {
 
       if (error) {
         console.error("Error cargando clientes:", error);
-        alert("Error al cargar clientes");
+        toast({ title: "Error al cargar clientes", variant: "destructive" });
         return;
       }
 
       setClientes(data || []);
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al cargar clientes");
+  toast({ title: "Error al cargar clientes", variant: "destructive" });
     } finally {
       setLoading(false);
     }
@@ -154,6 +190,61 @@ export default function ClientesPage() {
   useEffect(() => {
     cargarClientes();
   }, []);
+
+  // Contador preciso de clientes eliminados en el año actual (consulta directa a la DB)
+  useEffect(() => {
+    const fetchEliminados = async () => {
+      try {
+        const hoy = new Date();
+        const y = hoy.getFullYear();
+        const desde = `${y}-01-01`;
+        const hasta = `${y + 1}-01-01`;
+
+        // Estados que consideramos como 'eliminado' o equivalentes
+        const deletionStates = ['eliminado', 'baja', 'borrado', 'deleted'];
+
+        const { count, error } = await supabase
+          .from('clientes')
+          .select('id', { count: 'exact', head: true })
+          .in('estado', deletionStates)
+          .gte('updated_at', desde)
+          .lt('updated_at', hasta);
+
+        if (!error && typeof count === 'number') {
+          // Si hemos incrementado localmente recientemente, evitar que el conteo
+          // del servidor lo sobrescriba con un valor menor. Permitimos que el
+          // servidor actualice después de un breve periodo.
+          const now = Date.now();
+          const lastLocal = lastLocalIncrementRef.current;
+          const allowOverwrite = !lastLocal || now - lastLocal > 3000; // 3s
+          if (allowOverwrite) {
+            setEliminadosAnio((prev) => Math.max(typeof prev === 'number' ? prev : 0, count || 0));
+          } else {
+            // Mantener el mayor de ambos valores
+            setEliminadosAnio((prev) => Math.max(typeof prev === 'number' ? prev : 0, count || 0));
+          }
+        } else {
+          // Fallback: quizá la consulta no devuelve filas por políticas o updated_at no se setea.
+          console.warn('No se obtuvo conteo exacto desde Supabase, haciendo fallback local. Error:', error);
+          const fallback = clientes.filter((c) => {
+            try {
+              // @ts-ignore
+              if (!deletionStates.includes(c.estado)) return false;
+              const u = new Date((c as any).updated_at || c.fecha_registro);
+              return u.getFullYear() === y;
+            } catch {
+              return false;
+            }
+          }).length;
+          setEliminadosAnio((prev) => Math.max(typeof prev === 'number' ? prev : 0, fallback));
+        }
+      } catch (e) {
+        console.error('Excepción consultando eliminados del año:', e);
+      }
+    };
+
+    fetchEliminados();
+  }, [clientes]);
 
   
 
@@ -259,7 +350,7 @@ export default function ClientesPage() {
   const agregarFormaFacturacion = () => {
     if (nuevaFormaFacturacion.nombre.trim()) {
       const nuevaForma: FormaFacturacion = {
-        id: Date.now().toString(),
+        id: uuidv4(),
         nombre: nuevaFormaFacturacion.nombre,
         descripcion: nuevaFormaFacturacion.descripcion,
       };
@@ -275,45 +366,33 @@ export default function ClientesPage() {
   const guardarCliente = async () => {
     // Validar campos obligatorios
     if (!formData.nombre_comercial.trim() || !formData.rfc.trim()) {
-      alert(
-        "Por favor completa los campos obligatorios: Nombre Comercial y RFC"
-      );
+  toast({ title: "Por favor completa los campos obligatorios: Nombre Comercial y RFC", variant: "destructive" });
       return;
     }
 
     // Validar longitud de campos con mensajes más específicos
     if (formData.nombre_comercial.length > 100) {
-      alert(
-        `El nombre comercial es demasiado largo (${formData.nombre_comercial.length} caracteres). Máximo permitido: 100 caracteres`
-      );
+  toast({ title: `El nombre comercial es demasiado largo (${formData.nombre_comercial.length} caracteres). Máximo permitido: 100 caracteres`, variant: "destructive" });
       return;
     }
 
     if (formData.rfc.length > 13) {
-      alert(
-        `El RFC es demasiado largo (${formData.rfc.length} caracteres). Máximo permitido: 13 caracteres`
-      );
+  toast({ title: `El RFC es demasiado largo (${formData.rfc.length} caracteres). Máximo permitido: 13 caracteres`, variant: "destructive" });
       return;
     }
 
     if (formData.direccion && formData.direccion.length > 200) {
-      alert(
-        `La dirección es demasiado larga (${formData.direccion.length} caracteres). Máximo permitido: 200 caracteres`
-      );
+  toast({ title: `La dirección es demasiado larga (${formData.direccion.length} caracteres). Máximo permitido: 200 caracteres`, variant: "destructive" });
       return;
     }
 
     if (formData.correo_contacto && formData.correo_contacto.length > 100) {
-      alert(
-        `El correo es demasiado largo (${formData.correo_contacto.length} caracteres). Máximo permitido: 100 caracteres`
-      );
+  toast({ title: `El correo es demasiado largo (${formData.correo_contacto.length} caracteres). Máximo permitido: 100 caracteres`, variant: "destructive" });
       return;
     }
 
     if (formData.telefono && formData.telefono.length > 15) {
-      alert(
-        `El teléfono es demasiado largo (${formData.telefono.length} caracteres). Máximo permitido: 15 caracteres`
-      );
+  toast({ title: `El teléfono es demasiado largo (${formData.telefono.length} caracteres). Máximo permitido: 15 caracteres`, variant: "destructive" });
       return;
     }
 
@@ -326,7 +405,7 @@ export default function ClientesPage() {
         c.notas?.trim()
     );
     if (contactosValidos.length === 0) {
-      alert("Por favor agrega al menos un contacto con información");
+      toast({ title: "Por favor agrega al menos un contacto con información", variant: "destructive" });
       return;
     }
 
@@ -362,7 +441,7 @@ export default function ClientesPage() {
 
         if (error) {
           console.error("Error actualizando cliente:", error);
-          alert("Error al actualizar cliente");
+          toast({ title: "Error al actualizar cliente", variant: "destructive" });
           return;
         }
 
@@ -381,9 +460,7 @@ export default function ClientesPage() {
           contactos
         );
         if (!contactosGuardados) {
-          alert(
-            "Cliente actualizado, pero hubo un error guardando los contactos"
-          );
+          toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "default" });
         }
       } else {
         // Crear nuevo cliente
@@ -398,7 +475,7 @@ export default function ClientesPage() {
 
         if (error) {
           console.error("Error creando cliente:", error);
-          alert("Error al crear cliente");
+          toast({ title: "Error al crear cliente", variant: "destructive" });
           return;
         }
 
@@ -417,21 +494,17 @@ export default function ClientesPage() {
           contactos
         );
         if (!contactosGuardados) {
-          alert("Cliente creado, pero hubo un error guardando los contactos");
+          toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "default" });
         }
       }
 
-      alert(
-        editingClient
-          ? "Cliente actualizado exitosamente"
-          : "Cliente creado exitosamente"
-      );
+  toast({ title: editingClient ? "Cliente actualizado exitosamente" : "Cliente creado exitosamente", variant: "success" });
       limpiarFormulario();
       setShowForm(false);
       await cargarClientes();
     } catch (error) {
       console.error("Error guardando cliente:", error);
-      alert("Error al guardar cliente");
+  toast({ title: "Error al guardar cliente", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -510,6 +583,7 @@ export default function ClientesPage() {
   };
 
   const eliminarCliente = async (id: string) => {
+    // New flow: this function will be called only after user confirmed in the dialog
     try {
       setDeleteLoading(true);
 
@@ -522,20 +596,20 @@ export default function ClientesPage() {
 
       if (errorClienteEstado) {
         console.error("Error obteniendo estado del cliente:", errorClienteEstado);
-        alert("Error al verificar estado del cliente");
+        setClientNotificationMessage("Error al verificar estado del cliente");
+        setClientNotificationVariant("destructive");
+        setClientNotificationOpen(true);
         return;
       }
 
       if (!clienteEstado || clienteEstado.estado !== "inactivo") {
-        alert(
-          "Para eliminar el cliente primero debes cambiarlo a estado INACTIVO. Luego intenta nuevamente."
-        );
+        setClientNotificationMessage("Para eliminar el cliente primero debes cambiarlo a estado INACTIVO. Luego intenta nuevamente.");
+        setClientNotificationVariant("destructive");
+        setClientNotificationOpen(true);
         return;
       }
 
-  // 1) Bloqueo: si existen embarques ACTIVOS del cliente, no permitir eliminar
-      //    Nueva definición de ACTIVO: cualquier embarque cuyo estado NO sea 'archivado' NI 'cancelado'.
-      //    (Incluye estados en proceso, asignados, finalizados, etc. mientras no estén archivados o cancelados.)
+      // 1) Bloqueo: si existen embarques ACTIVOS del cliente, no permitir eliminar
       const { data: embarquesActivos, error: errorActivos } = await supabase
         .from("embarques")
         .select("id, folio, estado")
@@ -545,32 +619,22 @@ export default function ClientesPage() {
 
       if (errorActivos) {
         console.error("Error verificando embarques activos:", errorActivos);
-        alert("Error al verificar embarques activos del cliente");
+        setClientNotificationMessage("Error al verificar embarques activos del cliente");
+        setClientNotificationVariant("destructive");
+        setClientNotificationOpen(true);
         return;
       }
 
-  if (embarquesActivos && embarquesActivos.length > 0) {
+      if (embarquesActivos && embarquesActivos.length > 0) {
         const listaFolios = embarquesActivos
           .map((e) => `${e.folio || e.id} (${e.estado})`)
           .join("\n • ");
-        alert(
-          `❌ No se puede eliminar el cliente\n\n` +
-            `Tiene ${embarquesActivos.length} embarque(s) aún activos (no archivados ni cancelados).\n` +
-            `Debes ARCHIVAR o CANCELAR todos los embarques de este cliente (Crear Embarques / Asignación / Facturación y Cobranza) antes de eliminarlo.\n\n` +
-            (listaFolios ? `Referencias:\n • ${listaFolios}` : "")
+        setClientNotificationMessage(
+          `❌ No se puede eliminar el cliente\n\nTiene ${embarquesActivos.length} embarque(s) aún activos (no archivados ni cancelados).\nDebes ARCHIVAR o CANCELAR todos los embarques de este cliente antes de eliminarlo.\n\n${listaFolios ? `Referencias:\n • ${listaFolios}` : ""}`
         );
+        setClientNotificationVariant("destructive");
+        setClientNotificationOpen(true);
         return;
-      }
-
-      // 2) Confirmación antes de eliminar (ya está inactivo y sin embarques activos)
-      const confirmado = window.confirm(
-        "¿Confirmas eliminar este cliente?\n\n" +
-          "Si el cliente tiene embarques históricos se marcará como 'eliminado' (soft delete) para conservar el histórico.\n" +
-          "Si no tiene embarques se eliminará definitivamente.\n\n" +
-          "Esta acción no se puede deshacer."
-      );
-      if (!confirmado) {
-        return; // Se aborta, finally limpiará loading
       }
 
       const { data: embarquesAsociados, error: errorConsulta } = await supabase
@@ -581,11 +645,13 @@ export default function ClientesPage() {
 
       if (errorConsulta) {
         console.error("Error verificando embarques asociados:", errorConsulta);
-        alert("Error al verificar embarques asociados");
+        setClientNotificationMessage("Error al verificar embarques asociados");
+        setClientNotificationVariant("destructive");
+        setClientNotificationOpen(true);
         return;
       }
 
-  if (embarquesAsociados && embarquesAsociados.length > 0) {
+      if (embarquesAsociados && embarquesAsociados.length > 0) {
         const { error: errorUpdate } = await supabase
           .from("clientes")
           .update({
@@ -596,15 +662,21 @@ export default function ClientesPage() {
 
         if (errorUpdate) {
           console.error("Error marcando cliente como eliminado:", errorUpdate);
-          alert("Error al eliminar cliente");
+          setClientNotificationMessage("Error al eliminar cliente");
+          setClientNotificationVariant("destructive");
+          setClientNotificationOpen(true);
           return;
         }
 
-        alert(
-          "Cliente marcado como eliminado. No se puede eliminar completamente porque tiene embarques asociados."
-        );
+  setClientNotificationMessage("Cliente marcado como eliminado. No se puede eliminar completamente porque tiene embarques asociados.");
+  setClientNotificationVariant("destructive");
+  setClientNotificationOpen(true);
+  // Mostrar toast destructivo en la parte inferior (consistente con camiones/remolques)
+  toast({ title: "Cliente marcado como eliminado", variant: "destructive" });
+  // Incrementar contador de eliminados en el header inmediatamente para feedback UX
+  setEliminadosAnio((v) => (typeof v === 'number' ? v + 1 : 1));
+  lastLocalIncrementRef.current = Date.now();
 
-        // Audit log: marcado como eliminado (soft delete)
         try {
           agregarAuditLog(
             "ELIMINAR",
@@ -620,13 +692,20 @@ export default function ClientesPage() {
 
         if (errorDelete) {
           console.error("Error eliminando cliente:", errorDelete);
-          alert("Error al eliminar cliente");
+          setClientNotificationMessage("Error al eliminar cliente");
+          setClientNotificationVariant("destructive");
+          setClientNotificationOpen(true);
           return;
         }
 
-        alert("Cliente eliminado exitosamente");
+  // Mostrar notificación y toast destructivo para eliminar cliente (estilo rojo/white como en otras secciones)
+  setClientNotificationMessage("Cliente eliminado exitosamente");
+  setClientNotificationVariant("destructive");
+  toast({ title: "Cliente eliminado exitosamente", variant: "destructive" });
+  // Incrementar contador de eliminados en el header inmediatamente para feedback UX
+  setEliminadosAnio((v) => (typeof v === 'number' ? v + 1 : 1));
+  lastLocalIncrementRef.current = Date.now();
 
-        // Audit log: eliminación definitiva
         try {
           agregarAuditLog(
             "ELIMINAR",
@@ -639,10 +718,28 @@ export default function ClientesPage() {
       await cargarClientes();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al procesar la eliminación del cliente");
+      setClientNotificationMessage("Error al procesar la eliminación del cliente");
+      setClientNotificationVariant("destructive");
+      setClientNotificationOpen(true);
     } finally {
       setDeleteLoading(false);
     }
+  };
+
+  // States for delete confirm dialog
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+
+  const confirmDeleteCliente = (id: string) => {
+    setDeleteConfirmId(id);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDoDelete = async () => {
+    if (!deleteConfirmId) return;
+    setDeleteConfirmOpen(false);
+    await eliminarCliente(deleteConfirmId);
+    setDeleteConfirmId(null);
   };
 
   const cambiarEstadoCliente = async (id: string, nuevoEstado: string) => {
@@ -657,8 +754,10 @@ export default function ClientesPage() {
 
       if (error) {
         console.error("Error cambiando estado del cliente:", error);
-        alert("Error al cambiar estado del cliente");
-        return;
+  setClientNotificationMessage("Error al cambiar estado del cliente");
+  setClientNotificationVariant("destructive");
+  setClientNotificationOpen(true);
+  return false;
       }
 
       // Audit log: cambio de estado
@@ -671,10 +770,40 @@ export default function ClientesPage() {
       } catch {}
 
       await cargarClientes();
+      return true;
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al cambiar estado del cliente");
+      setClientNotificationMessage("Error al cambiar estado del cliente");
+      setClientNotificationVariant("destructive");
+      setClientNotificationOpen(true);
+      return false;
     }
+  };
+
+  // Estados para confirmación y notificaciones reutilizables
+  const [clientConfirmId, setClientConfirmId] = useState<string | null>(null);
+  const [clientConfirmOpen, setClientConfirmOpen] = useState(false);
+  const [clientPendingEstado, setClientPendingEstado] = useState<string | null>(null);
+  const [clientNotificationOpen, setClientNotificationOpen] = useState(false);
+  const [clientNotificationMessage, setClientNotificationMessage] = useState("");
+  const [clientNotificationVariant, setClientNotificationVariant] = useState<"default" | "success" | "destructive">("default");
+
+  const handleConfirmChangeEstado = async () => {
+    if (!clientConfirmId || !clientPendingEstado) {
+      setClientConfirmOpen(false);
+      return;
+    }
+    setClientConfirmOpen(false);
+    const ok = await cambiarEstadoCliente(clientConfirmId, clientPendingEstado);
+    if (ok) {
+      setClientNotificationMessage(
+        `Cliente ${clientPendingEstado === "activo" ? "activado" : "desactivado"} exitosamente`
+      );
+      setClientNotificationVariant("success");
+    }
+    setClientNotificationOpen(true);
+    setClientConfirmId(null);
+    setClientPendingEstado(null);
   };
 
   const clientesFiltrados = clientes.filter(
@@ -705,20 +834,37 @@ export default function ClientesPage() {
     }
 
     // Obtener contactos principales de todos los clientes en una sola consulta
-    let contactosPrincipales: Record<string, { nombre: string; telefono: string | null }> = {};
+  let contactosPrincipales: Record<string, { nombre: string; telefono: string | null; puesto?: string; email?: string; notas?: string }> = {};
     try {
       const ids = clientes.map(c => c.id);
       const { data: contactosData, error: contactosError } = await supabase
         .from("contactos_clientes")
-        .select("cliente_id, nombre, telefono, es_principal")
+        .select("cliente_id, nombre, telefono, puesto, email, notas, es_principal")
         .in("cliente_id", ids)
-        .eq("activo", true)
-        .eq("es_principal", true);
+        .eq("activo", true);
       if (!contactosError && contactosData) {
-        contactosPrincipales = contactosData.reduce((acc: any, c: any) => {
-          acc[c.cliente_id] = { nombre: c.nombre || '', telefono: c.telefono || '' };
-            return acc;
+        // Group contacts per client
+        const grouped: Record<string, any[]> = contactosData.reduce((acc: any, c: any) => {
+          acc[c.cliente_id] = acc[c.cliente_id] || [];
+          acc[c.cliente_id].push(c);
+          return acc;
         }, {});
+
+        // For each client choose the es_principal contact if exists, otherwise first available
+        contactosPrincipales = Object.keys(grouped).reduce((acc: any, clienteId: string) => {
+          const list = grouped[clienteId] || [];
+          const principal = list.find((x: any) => x.es_principal) || list[0];
+          if (principal) {
+            acc[clienteId] = {
+              nombre: principal.nombre || '',
+              telefono: principal.telefono || '',
+              puesto: principal.puesto || '',
+              email: principal.email || '',
+              notas: principal.notas || ''
+            };
+          }
+          return acc;
+        }, {} as any);
       }
     } catch (e) {
       console.error('Error obteniendo contactos principales para exportación', e);
@@ -733,7 +879,10 @@ export default function ClientesPage() {
       'Dirección',
       'Estado',
       'Contacto Principal',
+      'Puesto Contacto',
+      'Correo Contacto',
       'Teléfono Contacto',
+      'Notas Contacto',
       'Divisa Pago Preferida',
       'Empresa Facturadora',
       'Forma Facturación'
@@ -747,7 +896,7 @@ export default function ClientesPage() {
     };
 
     const rows = clientes.map(cliente => {
-      const contacto = contactosPrincipales[cliente.id] || { nombre: '', telefono: '' };
+      const contacto = contactosPrincipales[cliente.id] || { nombre: '', telefono: '', puesto: '', email: '', notas: '' };
       return [
         escapeCSV(cliente.nombre),
         escapeCSV(cliente.rfc || ''),
@@ -756,7 +905,10 @@ export default function ClientesPage() {
         escapeCSV(cliente.direccion || ''),
         escapeCSV(cliente.estado),
         escapeCSV(contacto.nombre),
+        escapeCSV(contacto.puesto || ''),
+        escapeCSV(contacto.email || ''),
         escapeCSV(contacto.telefono || ''),
+        escapeCSV(contacto.notas || ''),
         escapeCSV(cliente.divisa_pago || ''),
         escapeCSV(cliente.empresa_facturadora || ''),
         escapeCSV(cliente.forma_facturacion || ''),
@@ -798,6 +950,79 @@ export default function ClientesPage() {
         `Descargó reporte general de clientes (${clientes.length})`
       );
     } catch {}
+  };
+
+  // Descargar todos los datos de un cliente específico (detalles + contactos + representantes)
+  const descargarDetalleClienteExcel = async (clienteId: string | undefined) => {
+    if (!clienteId) return;
+    try {
+      // Obtener cliente (desde memoria)
+      const cliente = clientes.find((c) => c.id === clienteId) || selectedClient;
+
+      // Contactos y representantes desde la API
+      const contactos = await obtenerContactosCliente(clienteId);
+      const representantes = await obtenerRepresentantesCliente(clienteId);
+
+      const escape = (v: any) => `"\t${(v ?? "").toString().replace(/"/g, '""')}"`;
+
+      const lines: string[] = [];
+      lines.push(`"DETALLE COMPLETO CLIENTE"`);
+      lines.push(`"ID","${cliente?.id || ''}"`);
+      lines.push(`"Nombre Comercial",${escape(cliente?.nombre || '')}`);
+      lines.push(`"RFC",${escape(cliente?.rfc || '')}`);
+      lines.push(`"Teléfono",${escape(cliente?.telefono || '')}`);
+      lines.push(`"Email",${escape(cliente?.email || '')}`);
+      lines.push(`"Dirección",${escape(cliente?.direccion || '')}`);
+      lines.push(`"Estado",${escape(cliente?.estado || '')}`);
+      lines.push(`"Divisa Pago",${escape(cliente?.divisa_pago || '')}`);
+      lines.push(`"Empresa Facturadora",${escape(cliente?.empresa_facturadora || '')}`);
+      lines.push(`"Forma Facturación",${escape(cliente?.forma_facturacion || '')}`);
+      lines.push('');
+
+      // Contactos
+      lines.push('"CONTACTOS"');
+      lines.push('"Nombre","Puesto","Teléfono","Email","Notas","Principal"');
+      contactos.forEach((c) => {
+        lines.push([
+          escape(c.nombre || ''),
+          escape(c.puesto || ''),
+          escape(c.telefono || ''),
+          escape(c.email || ''),
+          escape((c as any).notas || ''),
+          escape(c.es_principal ? 'Sí' : 'No'),
+        ].join(','));
+      });
+      lines.push('');
+
+      // Representantes
+      lines.push('"REPRESENTANTES"');
+      lines.push('"Nombre","Apellidos","Teléfono","Email","Puesto"');
+      representantes.forEach((r) => {
+        lines.push([
+          escape(r.nombre || ''),
+          escape((r as any).apellidos || ''),
+          escape(r.telefono || ''),
+          escape(r.email || ''),
+          escape(r.puesto || ''),
+        ].join(','));
+      });
+
+      const csv = lines.join('\n');
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Cliente_${(cliente?.nombre || 'detalle').replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().slice(0,10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      try { agregarAuditLog('EXPORTAR', 'ClienteDetalle', `Exportó detalle de cliente ${cliente?.id}`); } catch {}
+    } catch (error) {
+      console.error('Error exportando detalle cliente', error);
+      toast({ title: 'Error al exportar detalle del cliente', variant: 'destructive' });
+    }
   };
 
   const verDetallesCliente = async (cliente: Cliente) => {
@@ -864,7 +1089,7 @@ export default function ClientesPage() {
                 <DialogContent
                   className={`w-full h-screen md:h-auto md:max-w-5xl md:w-[1100px] ${
                     activeTab === "contactos" && contactos.length > 0
-                      ? "md:h-[75vh]"
+                      ? "md:h-[80vh]"
                       : "md:h-[65vh]"
                   } md:rounded-lg md:mx-auto flex flex-col overflow-hidden`}
                 >
@@ -1089,7 +1314,7 @@ export default function ClientesPage() {
                         </div>
                         <div>
                           <h4 className="text-md font-semibold mb-2">Contactos Registrados</h4>
-                          <div className="overflow-x-auto max-h-48 overflow-y-auto border rounded">
+                          <div className="overflow-x-auto max-h-64 overflow-y-auto border rounded">
                             <table className="min-w-full text-sm">
                               <thead className="bg-gray-100">
                                 <tr>
@@ -1098,7 +1323,6 @@ export default function ClientesPage() {
                                   <th className="px-2 py-1 text-left">Teléfono</th>
                                   <th className="px-2 py-1 text-left">Correo</th>
                                   <th className="px-2 py-1 text-left">Notas</th>
-                                  <th className="px-2 py-1 text-left">Principal</th>
                                   <th className="px-2 py-1 text-left">Acciones</th>
                                 </tr>
                               </thead>
@@ -1110,7 +1334,6 @@ export default function ClientesPage() {
                                     <td className="px-2 py-1">{c.telefono}</td>
                                     <td className="px-2 py-1">{c.email}</td>
                                     <td className="px-2 py-1">{truncateText(c.notas || "", 40)}</td>
-                                    <td className="px-2 py-1">{c.es_principal ? <Badge className="text-xs">Sí</Badge> : ""}</td>
                                     <td className="px-2 py-1">
                                       {contactos.length > 1 && (
                                         <Button
@@ -1127,7 +1350,7 @@ export default function ClientesPage() {
                                 ))}
                                 {contactos.length === 0 && (
                                   <tr>
-                                    <td className="px-2 py-4 text-center text-gray-500" colSpan={7}>
+                                    <td className="px-2 py-4 text-center text-gray-500" colSpan={6}>
                                       Sin contactos aún
                                     </td>
                                   </tr>
@@ -1158,19 +1381,28 @@ export default function ClientesPage() {
                           </div>
                           <div className="space-y-1">
                             <Label className="text-sm font-medium flex items-center"><Settings className="h-4 w-4 mr-2" /> Forma de Facturación</Label>
-                            <Select value={formData.forma_facturacion} onValueChange={(value) => setFormData({ ...formData, forma_facturacion: value })}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Seleccionar" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {formasFacturacion.map((forma) => (
-                                  <SelectItem key={forma.id} value={forma.nombre}>{forma.nombre} - {forma.descripcion}</SelectItem>
-                                ))}
-                                {formasFacturacion.length === 0 && (
-                                  <SelectItem value="GLOBAL">Global</SelectItem>
-                                )}
-                              </SelectContent>
-                            </Select>
+                              <div className="flex items-center space-x-2">
+                                <div className="flex-1">
+                                  <Select value={formData.forma_facturacion} onValueChange={(value) => setFormData({ ...formData, forma_facturacion: value })}>
+                                    <SelectTrigger>
+                                      <SelectValue placeholder="Seleccionar" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      {formasFacturacion.map((forma) => (
+                                        <SelectItem key={forma.id} value={forma.nombre}>{forma.nombre} - {forma.descripcion}</SelectItem>
+                                      ))}
+                                      {formasFacturacion.length === 0 && (
+                                        <SelectItem value="GLOBAL">Global</SelectItem>
+                                      )}
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                                <div>
+                                  <Button size="sm" variant="outline" onClick={() => setShowFacturacionConfig(true)}>
+                                    Gestionar
+                                  </Button>
+                                </div>
+                              </div>
                           </div>
                         </div>
                         <div className="space-y-2 mt-10 md:mt-12 border-t pt-6">
@@ -1188,6 +1420,81 @@ export default function ClientesPage() {
                         <p className="text-xs text-gray-500">Solo selecciona las opciones necesarias. Puedes configurar más formas después.</p>
                       </div>
                     )}
+
+                    {/* Dialog para gestionar formas de facturación (desde el modal Nuevo Cliente) */}
+                    <Dialog open={showFacturacionConfig} onOpenChange={setShowFacturacionConfig}>
+                      <DialogContent className="max-w-xl w-full">
+                        <DialogHeader>
+                          <DialogTitle>Gestionar Formas de Facturación</DialogTitle>
+                          <DialogDescription>Agrega, edita o elimina las formas que luego aparecerán en el menú desplegable.</DialogDescription>
+                        </DialogHeader>
+
+                        <div className="space-y-4 mt-4">
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium">Formas actuales</h4>
+                            <div className="space-y-2 max-h-48 overflow-y-auto border rounded p-2">
+                              {editingFormas.map((f) => (
+                                <div key={f.id} className="flex items-center gap-2">
+                                  <Input value={f.nombre} onChange={(e) => setEditingFormas(editingFormas.map(x => x.id === f.id ? { ...x, nombre: e.target.value } : x))} className="flex-1" />
+                                  <Input value={f.descripcion} onChange={(e) => setEditingFormas(editingFormas.map(x => x.id === f.id ? { ...x, descripcion: e.target.value } : x))} className="flex-1" />
+                                  <Button size="sm" variant="ghost" onClick={() => setEditingFormas(editingFormas.filter(x => x.id !== f.id))}>
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </div>
+                              ))}
+                              {editingFormas.length === 0 && (
+                                <div className="text-sm text-gray-500">No hay formas registradas.</div>
+                              )}
+                            </div>
+                          </div>
+
+                          <div className="space-y-2">
+                            <h4 className="text-sm font-medium">Agregar nueva forma</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                              <Input placeholder="Nombre" value={nuevaFormaFacturacion.nombre} onChange={(e) => setNuevaFormaFacturacion({ ...nuevaFormaFacturacion, nombre: e.target.value })} />
+                              <Input placeholder="Descripción" value={nuevaFormaFacturacion.descripcion} onChange={(e) => setNuevaFormaFacturacion({ ...nuevaFormaFacturacion, descripcion: e.target.value })} />
+                            </div>
+                            <div className="flex justify-end">
+                              <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={() => {
+                                if (!nuevaFormaFacturacion.nombre.trim()) return;
+                                const nueva: FormaFacturacion = { id: Date.now().toString(), nombre: nuevaFormaFacturacion.nombre.trim(), descripcion: nuevaFormaFacturacion.descripcion.trim() };
+                                setEditingFormas([...editingFormas, nueva]);
+                                setFormasFacturacion([...formasFacturacion, nueva]);
+                                setNuevaFormaFacturacion({ nombre: '', descripcion: '' });
+                              }}>
+                                Agregar
+                              </Button>
+                            </div>
+                          </div>
+
+                            <div className="flex justify-end space-x-2 pt-4">
+                            <Button variant="outline" onClick={() => { setShowFacturacionConfig(false); setEditingFormas([]); }}>
+                              Cerrar
+                            </Button>
+                            <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={async () => {
+                              // Intentar persistir en Supabase
+                              const ok = await guardarFormasFacturacion(editingFormas.map(f => ({ id: f.id, nombre: f.nombre, descripcion: f.descripcion })));
+                              if (ok) {
+                                setFormasFacturacion(editingFormas);
+                                setShowFacturacionConfig(false);
+                                try {
+                                  agregarAuditLog(
+                                    "ACTUALIZAR",
+                                    "FormasFacturacion",
+                                    `Formas de facturación actualizadas: ${editingFormas.map(f=>f.nombre).join(", ")}`
+                                  );
+                                } catch {}
+                                toast({ title: 'Formas de facturación actualizadas', variant: 'default' });
+                              } else {
+                                toast({ title: 'No se pudo guardar en la base de datos. Los cambios se mantienen en memoria.', variant: 'destructive' });
+                              }
+                            }}>
+                              Guardar cambios
+                            </Button>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
                   </div>
 
                   <div className="flex justify-end space-x-2 pt-6 border-t mt-6">
@@ -1233,17 +1540,10 @@ export default function ClientesPage() {
               return false;
             }
           }).length;
-          // Eliminados del año (estado 'eliminado' y updated_at del año actual)
-          const eliminadosAnio = clientes.filter((c) => {
-            try {
-              // @ts-ignore
-              if (c.estado !== "eliminado") return false;
-              const u = new Date((c as any).updated_at || c.fecha_registro);
-              return u.getFullYear() === y;
-            } catch {
-              return false;
-            }
-          }).length;
+          // Eliminados del año: usar el estado `eliminadosAnio` (DB-backed + UI increment).
+          // Evitamos redeclarar `eliminadosAnio` para que las llamadas a
+          // setEliminadosAnio(...) se reflejen inmediatamente en el header.
+          const eliminadosEsteAnio = eliminadosAnio;
 
           return (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
@@ -1288,7 +1588,7 @@ export default function ClientesPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="text-sm text-gray-600">Eliminados este año</div>
-                    <div className="text-2xl font-bold text-red-600">{eliminadosAnio}</div>
+                    <div className="text-2xl font-bold text-red-600">{eliminadosEsteAnio}</div>
                   </div>
                   <Trash2 className="h-8 w-8 text-red-600" />
                 </div>
@@ -1405,7 +1705,7 @@ export default function ClientesPage() {
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => eliminarCliente(cliente.id)}
+                      onClick={() => confirmDeleteCliente(cliente.id)}
                       disabled={deleteLoading}
                     >
                       {deleteLoading ? (
@@ -1810,17 +2110,13 @@ export default function ClientesPage() {
                         <div>
                           <span className="block text-xs text-gray-500 mb-1">Estado</span>
                           <div className="mt-1">
-                            <Badge
-                              variant={
-                                selectedClient.estado === "activo"
-                                  ? "default"
-                                  : selectedClient.estado === "inactivo"
-                                  ? "secondary"
-                                  : "outline"
-                              }
-                            >
-                              {selectedClient.estado}
-                            </Badge>
+                            {selectedClient.estado === "activo" ? (
+                              <Badge className="bg-green-100 text-green-800">{selectedClient.estado}</Badge>
+                            ) : selectedClient.estado === "inactivo" ? (
+                              <Badge variant="secondary">{selectedClient.estado}</Badge>
+                            ) : (
+                              <Badge variant="outline">{selectedClient.estado}</Badge>
+                            )}
                           </div>
                         </div>
                         <div>
@@ -1989,7 +2285,11 @@ export default function ClientesPage() {
                   >
                     Cerrar
                   </Button>
-                  <div className="flex space-x-2">
+                  <div className="flex space-x-2 items-center">
+                    <Button size="sm" variant="outline" onClick={() => descargarDetalleClienteExcel(selectedClient?.id)}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Descargar Excel
+                    </Button>
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -2029,6 +2329,51 @@ export default function ClientesPage() {
                 </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+        {/* Delete confirmation dialog */}
+        <Dialog open={deleteConfirmOpen} onOpenChange={setDeleteConfirmOpen}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Confirmar eliminación</DialogTitle>
+              <DialogDescription>¿Confirmas que deseas eliminar este cliente? Esta acción puede marcarlo como 'eliminado' si tiene historial.</DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 flex justify-end space-x-2">
+              <Button variant="outline" onClick={() => { setDeleteConfirmOpen(false); setDeleteConfirmId(null); }}>Cancelar</Button>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={handleDoDelete}>
+                Eliminar cliente
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Notification dialog (used for errors/success) */}
+        <Dialog open={clientNotificationOpen} onOpenChange={setClientNotificationOpen}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle>
+                {clientNotificationVariant === "destructive"
+                  ? clientNotificationMessage && clientNotificationMessage.includes("Para eliminar el cliente primero")
+                    ? "Aviso"
+                    : "Error"
+                  : "Notificación"}
+              </DialogTitle>
+              <DialogDescription>
+                {clientNotificationMessage}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="mt-4 flex justify-end">
+              <Button
+                onClick={() => setClientNotificationOpen(false)}
+                className={
+                  clientNotificationVariant === "destructive"
+                    ? "bg-red-600 hover:bg-red-700 text-white"
+                    : "bg-[#16A34A] hover:bg-[#12813a] text-white"
+                }
+              >
+                Aceptar
+              </Button>
+            </div>
           </DialogContent>
         </Dialog>
       </div>

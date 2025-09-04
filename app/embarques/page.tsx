@@ -46,7 +46,8 @@ import {
   Copy,
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { useToast } from "@/components/ui/use-toast";
+import { useToast } from "@/hooks/use-toast";
+import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
 import { agregarAuditLog } from "@/lib/audit";
 import {
@@ -86,10 +87,16 @@ export default function EmbarquesPage() {
   const [embarqueDetalle, setEmbarqueDetalle] = useState<Embarque | null>(null);
   const [showServicesModal, setShowServicesModal] = useState(false);
   const [showArchivosModal, setShowArchivosModal] = useState(false);
+  const [showEliminarArchivadoDialog, setShowEliminarArchivadoDialog] = useState(false);
+  const [embarqueAEliminar, setEmbarqueAEliminar] = useState<Embarque | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelingEmbarque, setCancelingEmbarque] = useState<Embarque | null>(
     null
   );
+  const [showArchivarDialog, setShowArchivarDialog] = useState(false);
+  const [embarqueAArchivar, setEmbarqueAArchivar] = useState<Embarque | null>(null);
+  const [showCompletarDialog, setShowCompletarDialog] = useState(false);
+  const [embarqueACompletar, setEmbarqueACompletar] = useState<Embarque | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [proximoFolio, setProximoFolio] = useState("");
   const [showLinkModal, setShowLinkModal] = useState(false);
@@ -120,6 +127,9 @@ export default function EmbarquesPage() {
     representante_cliente: "",
     carta_porte: "",
     tipo_servicio_id: "",
+  camion_manual: false,
+  camion_numero_economico: "",
+  camion_placa: "",
     remolque_manual: false,
     remolque_numero_economico: "",
     remolque_placa: "",
@@ -476,6 +486,9 @@ export default function EmbarquesPage() {
       representante_cliente: "",
       carta_porte: "",
       tipo_servicio_id: "",
+  camion_manual: false,
+  camion_numero_economico: "",
+  camion_placa: "",
       remolque_manual: false,
       remolque_numero_economico: "",
       remolque_placa: "",
@@ -535,7 +548,7 @@ export default function EmbarquesPage() {
       remolque_manual: useManualRemolque,
       remolque_id: useManualRemolque ? "" : sampleRemolqueId,
       remolque_numero_economico: useManualRemolque ? "RM-001" : "",
-      remolque_placa: useManualRemolque ? "XYZ-123-45" : "",
+  remolque_placa: useManualRemolque ? "XYZ-123-45" : "",
     }));
 
     // Si hay cliente, intenta preseleccionar el primer contacto disponible
@@ -583,6 +596,9 @@ export default function EmbarquesPage() {
           : false,
       remolque_numero_economico: embarque.remolque_numero_economico || "",
       remolque_placa: embarque.remolque_placa || "",
+  camion_manual: !(embarque as any).camion_id && ((embarque as any).camion_numero_economico || (embarque as any).camion_placa) ? true : false,
+  camion_numero_economico: (embarque as any).camion_numero_economico || "",
+  camion_placa: (embarque as any).camion_placa || "",
   // remolque_sello_fiscal removido (no se usa)
     });
 
@@ -595,19 +611,43 @@ export default function EmbarquesPage() {
   };
 
   const handleSave = async () => {
+    // Validación: fecha_recolecta no puede ser después de fecha_entrega
+    try {
+      if (formData.fecha_recolecta && formData.fecha_entrega) {
+        const fr = new Date(formData.fecha_recolecta);
+        const fe = new Date(formData.fecha_entrega);
+        // comparar solo fechas (sin hora)
+        fr.setHours(0,0,0,0);
+        fe.setHours(0,0,0,0);
+        if (fr.getTime() > fe.getTime()) {
+          toast({
+            title: "Fechas inconsistentes",
+            description: "La fecha de recolecta no puede ser posterior a la fecha de entrega.",
+            variant: "destructive",
+          });
+          return;
+        }
+      }
+    } catch (e) {
+      // si el parse falla, dejar que las validaciones posteriores manejen el caso
+    }
     if (!formData.direccion_recolecta || !formData.direccion_entrega) {
-      alert(
-        "Por favor completa los campos obligatorios (dirección de recolecta y dirección de entrega)"
-      );
+      toast({
+        title: "Campos obligatorios",
+        description: "Completa dirección de recolecta y dirección de entrega",
+        variant: "destructive",
+      });
       return;
     }
 
     // Validación específica para creación: requiere Cliente y Remolque (o captura manual)
     if (!embarqueEditando) {
       if (!isClienteSelected || !isRemolqueValid) {
-        alert(
-          "Para crear un embarque debes seleccionar un cliente y un remolque o capturarlo manualmente."
-        );
+        toast({
+          title: "Datos incompletos",
+          description: "Selecciona cliente y remolque (o captura remolque manual)",
+          variant: "destructive",
+        });
         return;
       }
     }
@@ -618,9 +658,11 @@ export default function EmbarquesPage() {
       !formData.remolque_numero_economico.trim() &&
       !formData.remolque_placa.trim()
     ) {
-      alert(
-        "Captura al menos el número económico o la placa del remolque no registrado"
-      );
+      toast({
+        title: "Remolque incompleto",
+        description: "Captura número económico o placa para remolque no registrado",
+        variant: "destructive",
+      });
       return;
     }
 
@@ -696,6 +738,14 @@ export default function EmbarquesPage() {
             ? formData.tipo_servicio_id
             : null,
         updated_at: new Date().toISOString(),
+        // camion manual fields
+        camion_numero_economico: formData.camion_manual
+          ? formData.camion_numero_economico
+          : null,
+        camion_placa: formData.camion_manual
+          ? formData.camion_placa
+          : null,
+        // remolque manual fields
         remolque_numero_economico: formData.remolque_manual
           ? formData.remolque_numero_economico
           : null,
@@ -716,32 +766,53 @@ export default function EmbarquesPage() {
 
       console.log("Datos a guardar:", embarqueData);
 
-      if (embarqueEditando) {
-        const { error } = await supabase
-          .from("embarques")
-          .update(embarqueData)
-          .eq("id", embarqueEditando.id);
-        if (error) {
-          console.error("Error actualizando embarque:", error);
-          alert(`Error al actualizar embarque: ${error.message}`);
-          return;
-        }
-        agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
-      } else {
-        const { error } = await supabase.from("embarques").insert(embarqueData);
-        if (error) {
-          console.error("Error creando embarque:", error);
-          alert(`Error al crear embarque: ${error.message}`);
-          return;
-        }
-        agregarAuditLog("CREAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
+      // Clean payload: some deployments may not have legacy columns (e.g. camion_numero_economico)
+      const payloadToSend: any = { ...embarqueData };
+      // Remove camion manual legacy columns if present on payload to avoid PGRST204 errors
+      if (payloadToSend.hasOwnProperty("camion_numero_economico")) {
+        try { delete payloadToSend.camion_numero_economico; console.log('Removed payload field: camion_numero_economico'); } catch {}
+      }
+      if (payloadToSend.hasOwnProperty("camion_placa")) {
+        try { delete payloadToSend.camion_placa; console.log('Removed payload field: camion_placa'); } catch {}
       }
 
-      alert(
-        embarqueEditando
-          ? "Embarque actualizado exitosamente"
-          : "Embarque creado exitosamente"
-      );
+      if (embarqueEditando) {
+        const { data: updateData, error } = await supabase
+          .from("embarques")
+          .update(payloadToSend)
+          .eq("id", embarqueEditando.id)
+          .select();
+        if (error) {
+          console.error("Error actualizando embarque:", error);
+          console.error("Error details:", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+          toast({ title: "Error al actualizar embarque", description: (error as any)?.message || (error as any)?.details || "Revisa la consola para más detalles", variant: "destructive" });
+          return;
+        }
+        try { agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
+      } else {
+        // Try insert and request select to get inserted row; improve logging on error
+        const { data: insertData, error } = await supabase.from("embarques").insert(payloadToSend).select();
+        if (error) {
+          // Log full error object and payload to help debugging (e.g., constraint violations when remolque manual)
+          try {
+            console.error("Error creando embarque:", error);
+            console.error("Error (stringified):", JSON.stringify(error, Object.getOwnPropertyNames(error)));
+            console.error("Payload used for insert:", JSON.stringify(embarqueData));
+          } catch (e) {
+            console.error("Error creando embarque (no se pudo serializar):", error);
+          }
+          const friendly = (error as any)?.message || (error as any)?.details || (error as any)?.hint || JSON.stringify(error) || "Error desconocido al crear embarque";
+          toast({ title: "Error al crear embarque", description: friendly, variant: "destructive" });
+          return;
+        }
+        try { agregarAuditLog("CREAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
+      }
+
+      if (embarqueEditando) {
+        toast({ title: "Embarque actualizado", description: `Folio: ${folio}` });
+      } else {
+        toast({ title: "Embarque creado exitosamente", description: `Folio: ${folio}`, variant: "success" });
+      }
       resetForm();
       setShowCreateModal(false);
       setShowEditModal(false);
@@ -749,7 +820,7 @@ export default function EmbarquesPage() {
     } catch (error) {
       console.error("Error guardando embarque:", error);
       const msg = (error as any)?.message || String(error);
-      alert(`Error al guardar embarque: ${msg}`);
+      toast({ title: "Error al guardar embarque", description: msg, variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -764,11 +835,11 @@ export default function EmbarquesPage() {
 
       if (error) {
         console.error("Error eliminando embarque:", error);
-        alert("Error al eliminar embarque");
+        toast({ title: "Error al eliminar embarque", variant: "destructive" });
         return;
       }
 
-      alert("Embarque eliminado exitosamente");
+      toast({ title: "Embarque eliminado exitosamente", variant: "success" });
       try {
         agregarAuditLog(
           "ELIMINAR",
@@ -779,7 +850,7 @@ export default function EmbarquesPage() {
       await loadEmbarques();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al eliminar embarque");
+      toast({ title: "Error al eliminar embarque", variant: "destructive" });
     }
   };
 
@@ -812,7 +883,7 @@ export default function EmbarquesPage() {
     );
   }
     if (!cancelingEmbarque || !cancelReason.trim()) {
-      alert("Por favor ingresa una justificación para la cancelación");
+      toast({ title: "Justificación requerida", description: "Por favor ingresa una justificación para la cancelación", variant: "destructive" });
       return;
     }
 
@@ -842,12 +913,7 @@ export default function EmbarquesPage() {
 
       if (baseError) {
         console.error("Error cancelando embarque (base):", baseError);
-        alert(
-          `Error al cancelar embarque: ${
-            // @ts-ignore
-            baseError?.message || JSON.stringify(baseError) || "Desconocido"
-          }`
-        );
+        toast({ title: "Error al cancelar embarque", description: (baseError as any)?.message || JSON.stringify(baseError) || "Desconocido", variant: "destructive" });
         return;
       }
 
@@ -875,14 +941,14 @@ export default function EmbarquesPage() {
         console.warn("Excepción guardando metadata de cancelación:", e);
       }
 
-      alert("Embarque cancelado exitosamente");
+  toast({ title: "Embarque cancelado exitosamente", variant: "destructive", className: "bg-red-600 text-white" });
       setShowCancelModal(false);
       setCancelingEmbarque(null);
       setCancelReason("");
       await loadEmbarques();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al cancelar embarque");
+      toast({ title: "Error al cancelar embarque", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -945,7 +1011,7 @@ export default function EmbarquesPage() {
 
       if (error) {
         console.error("Error updating estado:", error);
-        alert("Error al actualizar el estado");
+        toast({ title: "Error al actualizar el estado", description: error.message, variant: "destructive" });
         return;
       }
 
@@ -959,22 +1025,24 @@ export default function EmbarquesPage() {
       } catch {}
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al actualizar el estado");
+      toast({ title: "Error al actualizar el estado", variant: "destructive" });
     }
   };
 
-  const marcarComoCompletado = async (embarque: Embarque) => {
-  const confirmar = window.confirm(
-    `¿Deseas completar y enviar el embarque ${embarque.folio} a Asignación?\n\n` +
-      "Esta acción cambiará su estado a 'listo-para-asignar'."
-  );
-  if (!confirmar) {
-    return;
-  }
-  agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
+  // Abre diálogo de confirmación para completar y enviar el embarque a asignación
+  const marcarComoCompletado = (embarque: Embarque) => {
+    setEmbarqueACompletar(embarque);
+    setShowCompletarDialog(true);
+  };
+
+  // Ejecuta la acción cuando el usuario confirma en el diálogo
+  const confirmarCompletar = async () => {
+    const embarque = embarqueACompletar;
+    if (!embarque) return;
     try {
       setSaving(true);
-
+      setShowCompletarDialog(false);
+      agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
       const { error } = await supabase
         .from("embarques")
         .update({
@@ -985,15 +1053,16 @@ export default function EmbarquesPage() {
 
       if (error) {
         console.error("Error actualizando embarque:", error);
-        alert("Error al marcar como completado");
+        toast({ title: "Error al marcar como completado", description: error.message, variant: "destructive" });
         return;
       }
 
-      alert("Embarque marcado como completado y enviado a asignación");
+      toast({ title: "Embarque marcado como completado", description: `Folio: ${embarque.folio}`, variant: "success" });
+      setEmbarqueACompletar(null);
       await loadEmbarques();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al marcar como completado");
+      toast({ title: "Error al marcar como completado", variant: "destructive" });
     } finally {
       setSaving(false);
     }
@@ -1213,128 +1282,132 @@ export default function EmbarquesPage() {
 
   const imprimirDetalle = () => {
     if (!embarqueDetalle) return;
-    const clienteNombre = embarqueDetalle.cliente?.nombre || "";
-    const camionTexto = embarqueDetalle.camion
-      ? `${embarqueDetalle.camion.numero_economico || ""}`
-      : (embarqueDetalle as any).camion_numero_economico || "";
-    const remolqueTexto = embarqueDetalle.remolque
-      ? `${embarqueDetalle.remolque.numero_economico || "Sin económico"} | ${embarqueDetalle.remolque.marca || "Sin marca"} | Placas: ${embarqueDetalle.remolque.placas || "Sin placas"}`
-      : embarqueDetalle.remolque_numero_economico
-      ? `${embarqueDetalle.remolque_numero_economico}${embarqueDetalle.remolque_placa ? ` | Placas: ${embarqueDetalle.remolque_placa}` : ""}`
-      : "";
+  const clienteNombre = embarqueDetalle.cliente?.nombre || "";
+  // Tractocamión: soportar tanto objeto anidado como campos legacy
+  const camionNumero = embarqueDetalle.camion?.numero_economico || (embarqueDetalle as any).camion_numero_economico || "";
+  const camionMarca = embarqueDetalle.camion?.marca || (embarqueDetalle as any).camion_marca || "";
+  const camionPlacas = embarqueDetalle.camion?.placas || (embarqueDetalle as any).camion_placas || "";
+  const camionTexto = `${camionNumero}${camionMarca ? ` | Marca: ${camionMarca}` : ""}${camionPlacas ? ` | Placas: ${camionPlacas}` : ""}`;
+
+  // Remolque: soportar objeto anidado y campos legacy
+  const remolqueNumero = embarqueDetalle.remolque?.numero_economico || embarqueDetalle.remolque_numero_economico || "";
+  const remolqueMarca = embarqueDetalle.remolque?.marca || (embarqueDetalle as any).remolque_marca || "";
+  const remolquePlacas = embarqueDetalle.remolque?.placas || embarqueDetalle.remolque_placa || "";
+  const remolqueTexto = `${remolqueNumero ? remolqueNumero : "Sin económico"}${remolqueMarca ? ` | Marca: ${remolqueMarca}` : ""}${remolquePlacas ? ` | Placas: ${remolquePlacas}` : ""}`;
 
     const printContent = `
       <html>
         <head>
           <title>Embarque ${embarqueDetalle.folio}</title>
           <style>
-            @page { size: A4 portrait; margin: 10mm; }
+            /* Target A4 and make content larger and more spaced so it occupies ~half page */
+            @page { size: A4 portrait; margin: 12mm; }
             html, body { width: 210mm; height: 297mm; }
-            body { font-family: Arial, sans-serif; margin: 0; font-size: 11px; line-height: 1.25; }
-            .container { padding: 6mm 8mm; }
-            .header { text-align: center; margin-bottom: 8mm; }
-            .section { margin-bottom: 5mm; }
-            .field { margin-bottom: 2mm; }
-            .label { font-weight: bold; margin-right: 4px; }
-            .value { border-bottom: 1px solid #000; display: inline-block; min-width: 120px; }
-            .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4mm; }
-            .full-width { grid-column: 1 / -1; }
-            h1 { font-size: 16px; margin: 0 0 2mm; }
-            h2 { font-size: 14px; margin: 0 0 2mm; }
-            h3 { font-size: 12px; margin: 0 0 2mm; }
-            .sig { margin-top: 6mm; display: grid; grid-template-columns: 1fr 1fr; gap: 8mm; }
-            .sig div { text-align: center; }
-            .sig-line { border-top: 1px solid #000; margin-top: 6mm; padding-top: 2mm; }
+            body { font-family: Arial, Helvetica, sans-serif; margin: 0; font-size: 14px; line-height: 1.4; color: #000; }
+            img { display: none !important; }
+            .container { padding: 12mm 14mm; box-sizing: border-box; }
+            .header { text-align: center; margin-bottom: 12px; }
+            .company { font-weight:700; font-size:22px; letter-spacing:0.6px; }
+            .title { font-size:18px; margin-top:8px; font-weight:600; }
+            .folio { font-weight:700; font-size:20px; margin-top:8px; }
+            /* Use single column for print to increase vertical space and readability */
+            .grid { display: block; }
+            .section { margin-bottom:12px; }
+            .label { font-weight:700; display:block; font-size:14px; margin-bottom:6px; }
+            .value { font-size:15px; display:block; margin-bottom:8px; }
+            .value.inline { display:inline-block; border-bottom:1px solid #000; padding-bottom:4px; min-width:140px; }
+            .obs { max-height:160px; overflow:auto; font-size:14px; }
+            .sig { margin-top:22px; display:flex; justify-content:space-between; gap:24px; font-size:14px; }
+            .sig div { width:48%; text-align:center; }
+            .sig-line { border-top:1px solid #000; margin-top:28px; padding-top:8px; }
+            /* Make helper spacing for groups */
+            .meta-row { margin-bottom:10px; }
+            /* Force a comfortable column width so content uses more vertical space (~half page) */
+            .half { max-width: 160mm; margin: 0 auto; }
           </style>
         </head>
         <body>
-          <div class="container">
-            <div class="header">
-              <h1>TRANSPORTES MONARCA</h1>
-              <h2>DETALLES DEL EMBARQUE</h2>
-              <p>Folio: <span class="value">${embarqueDetalle.folio}</span></p>
+          <div class="container half">
+              <div class="header">
+                  <div class="company">TRANSPORTES INTERNACIONALES MONARCA</div>
+                  <div class="title">DETALLE COMPLETO DEL EMBARQUE</div>
+                  <div style="margin-top:6px; display:flex; justify-content:center; gap:12px; font-size:14px;">
+                    <div><strong>Folio:</strong> ${embarqueDetalle.folio}</div>
+                    <div><strong>Estado:</strong> ${embarqueDetalle.estado || ''}</div>
+                    <div><strong>Fecha:</strong> ${embarqueDetalle.fecha_creacion ? new Date(embarqueDetalle.fecha_creacion).toLocaleDateString() : ''}</div>
+                  </div>
+                </div>
+
+            <div class="grid">
+              <div class="section meta-row">
+                <div class="label">Carta Porte</div>
+                <div class="value">${embarqueDetalle.carta_porte || ""}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Cliente</div>
+                <div class="value">${clienteNombre}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Recolecta</div>
+                <div class="value">${embarqueDetalle.fecha_recolecta ? new Date(embarqueDetalle.fecha_recolecta).toLocaleDateString() : ''} ${embarqueDetalle.hora_recolecta || ''}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Dirección Recolecta</div>
+                <div class="value">${(embarqueDetalle.direccion_recolecta || "").replace(/\n/g, ' ')}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Entrega</div>
+                <div class="value">${embarqueDetalle.fecha_entrega ? new Date(embarqueDetalle.fecha_entrega).toLocaleDateString() : ''} ${embarqueDetalle.hora_entrega || ''}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Dirección Entrega</div>
+                <div class="value">${(embarqueDetalle.direccion_entrega || "").replace(/\n/g, ' ')}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Remolque</div>
+                <div class="value">${remolqueTexto}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Marca del Remolque</div>
+                <div class="value">${remolqueMarca || ''}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Tractocamión</div>
+                <div class="value">${camionTexto}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Marca del Tractocamión</div>
+                <div class="value">${camionMarca || ''}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Contenido</div>
+                <div class="value">${embarqueDetalle.contenido || ""}</div>
+              </div>
+
+              <div class="section meta-row">
+                <div class="label">Peso (kg)</div>
+                <div class="value">${(embarqueDetalle as any).peso || ""}</div>
+              </div>
+
+              <div class="section" style="margin-bottom:8px;">
+                <div class="label">Observaciones</div>
+                <div class="value obs">${(embarqueDetalle.observaciones || "").replace(/\n/g, '<br/>')}</div>
+              </div>
             </div>
 
-            <div class="section">
-              <h3>INFORMACIÓN BÁSICA</h3>
-              <div class="grid">
-                <div class="field">
-                  <span class="label">Carta Porte:</span> <span class="value">${embarqueDetalle.carta_porte || ""}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Cliente:</span> <span class="value">${clienteNombre}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>DIRECCIONES</h3>
-              <div class="field full-width">
-                <span class="label">Dirección de Recolecta:</span><br>
-                <span class="value" style="width: 100%; min-height: 24px; display: block;">${embarqueDetalle.direccion_recolecta || ""}</span>
-              </div>
-              <div class="field full-width">
-                <span class="label">Dirección de Entrega:</span><br>
-                <span class="value" style="width: 100%; min-height: 24px; display: block;">${embarqueDetalle.direccion_entrega || ""}</span>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>FECHAS Y HORARIOS</h3>
-              <div class="grid">
-                <div class="field">
-                  <span class="label">Fecha Recolecta:</span> <span class="value">${embarqueDetalle.fecha_recolecta || ""}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Hora Recolecta:</span> <span class="value">${embarqueDetalle.hora_recolecta || ""}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Fecha Entrega:</span> <span class="value">${embarqueDetalle.fecha_entrega || ""}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Hora Entrega:</span> <span class="value">${embarqueDetalle.hora_entrega || ""}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>VEHÍCULOS</h3>
-              <div class="grid">
-                <div class="field">
-                  <span class="label">Tractocamión:</span> <span class="value">${camionTexto}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Remolque:</span> <span class="value">${remolqueTexto}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>DETALLES DE CARGA</h3>
-              <div class="grid">
-                <div class="field">
-                  <span class="label">Contenido:</span> <span class="value">${embarqueDetalle.contenido || ""}</span>
-                </div>
-                <div class="field">
-                  <span class="label">Peso (kg):</span> <span class="value">${(embarqueDetalle as any).peso || ""}</span>
-                </div>
-              </div>
-            </div>
-
-            <div class="section">
-              <h3>OBSERVACIONES</h3>
-              <div class="field full-width">
-                <span class="value" style="width: 100%; min-height: 30px; display: block;">${embarqueDetalle.observaciones || ""}</span>
-              </div>
-            </div>
-
-            <div class="sig">
-              <div>
-                <div class="sig-line">FIRMA AUTORIZADA</div>
-              </div>
-              <div>
-                <div class="sig-line">FECHA: ${new Date().toLocaleDateString()}</div>
-              </div>
+            <div style="margin-top:14px;">
+              <div style="border-top:1px solid #000; padding-top:6px; margin-bottom:6px; font-weight:700;">Firma de autorizado: ________________________________</div>
+              <div style="font-weight:700;">Fecha: ${new Date().toLocaleDateString()}</div>
             </div>
           </div>
         </body>
@@ -1623,17 +1696,24 @@ export default function EmbarquesPage() {
   // Helper: construir texto de camión y remolque
   const getCamionTexto = (e: Embarque) =>
     e.camion?.numero_economico || (e as any).camion_numero_economico || "";
-  const getRemolqueTexto = (e: Embarque) =>
-    e.remolque
-      ? `${e.remolque.numero_economico || "Sin económico"} | ${e.remolque.marca || "Sin marca"} | Placas: ${e.remolque.placas || "Sin placas"}`
-      : (e as any).remolque_numero_economico
-      ? `${(e as any).remolque_numero_economico}${(e as any).remolque_placa ? ` | Placas: ${(e as any).remolque_placa}` : ""}`
-      : "";
+  // Prefer explicit/manual remolque fields (remolque_numero_economico / remolque_placa)
+  // so that when a user captures a remolque manually it is shown in exports.
+  const getRemolqueTexto = (e: Embarque) => {
+    const manualNum = (e as any).remolque_numero_economico;
+    const manualPlaca = (e as any).remolque_placa;
+    if (manualNum && manualNum.toString().trim() !== "") {
+      return `${manualNum}${manualPlaca ? ` | Placas: ${manualPlaca}` : ""}`;
+    }
+    if (e.remolque) {
+      return `${e.remolque.numero_economico || "Sin económico"} | ${e.remolque.marca || "Sin marca"} | Placas: ${e.remolque.placas || "Sin placas"}`;
+    }
+    return "";
+  };
 
   // Exportar todos los embarques no archivados (activos)
   const exportarEmbarquesActivosAExcel = () => {
     const activos = embarques.filter((e) => e.estado !== "archivado");
-    const header = [
+  const header = [
       "Folio",
       "Estado",
       "Cliente",
@@ -1660,11 +1740,18 @@ export default function EmbarquesPage() {
       "Contacto Puesto",
       "Contacto Teléfono",
       "Contacto Email",
+      // campos de facturación (pestaña Facturación)
+      "Empresa Facturadora",
+      "Divisa de Pago",
+      "Forma de Facturación",
+      "RFC",
+      "Razón Social",
+      "Dirección Fiscal",
     ];
 
     const rows = activos.map((e) => {
       const contacto = (e as any).info_representante || {};
-      return [
+  return [
         e.folio || "",
         e.estado || "",
         e.cliente?.nombre || "",
@@ -1682,8 +1769,8 @@ export default function EmbarquesPage() {
         e.contenido || "",
         (e as any).peso ?? "",
         e.observaciones || "",
-        e.fecha_creacion ? new Date(e.fecha_creacion).toLocaleString() : "",
-        e.updated_at ? new Date(e.updated_at).toLocaleString() : "",
+        e.fecha_creacion ? new Date(e.fecha_creacion).toISOString() : "",
+        e.updated_at ? new Date(e.updated_at).toISOString() : "",
         e.patente_agente_aduanal || "",
         e.aduana_cruce || "",
         e.dueno_mercancia || "",
@@ -1691,39 +1778,63 @@ export default function EmbarquesPage() {
         contacto.puesto || "",
         contacto.telefono || "",
         contacto.email || "",
+        // valores de facturación
+        renderEmpresaFacturadora(
+          (e.cliente as any)?.empresa_facturadora ||
+            (e.cliente as any)?.razon_social ||
+            (e.cliente as any)?.nombre_comercial ||
+            e.cliente?.nombre
+        ),
+        renderDivisaPago(
+          (e.cliente as any)?.divsa_pago ||
+            (e.cliente as any)?.divisa_pago ||
+            (e.cliente as any)?.moneda_preferida
+        ),
+        renderFormaFacturacion(
+          (e.cliente as any)?.forma_facturacion ||
+            (e.cliente as any)?.forma_pago ||
+            (e.cliente as any)?.metodo_pago
+        ),
+        (e.cliente as any)?.rfc || "",
+        (e.cliente as any)?.razon_social || e.cliente?.nombre || "",
+        (e.cliente as any)?.direccion_fiscal || "",
       ];
     });
 
-    const csvContent = [header, ...rows]
-      .map((r) =>
-        r
-          .map((cell) => {
-            const str = String(cell ?? "");
-            const escaped = '"' + str.replace(/"/g, '""') + '"';
-            return escaped;
-          })
-          .join(",")
-      )
-      .join("\n");
-
-    const blob = new Blob(["\uFEFF" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `embarques_activos_${new Date().toISOString().slice(0, 10)}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // Generar XLSX con SheetJS
     try {
-      agregarAuditLog(
-        "EXPORTAR",
-        "Embarques",
-        `Exportó ${activos.length} embarques activos a CSV`
-      );
-    } catch {}
+      const aoa = [header, ...rows];
+      const ws = (XLSX as any).utils.aoa_to_sheet(aoa);
+      // Autofilter y freeze
+      try {
+        ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }) } as any;
+      } catch {}
+      (ws as any)["!freeze"] = { xSplit: 0, ySplit: 1 };
+
+      // Intento estilo encabezado (mejor esfuerzo)
+      for (let c = 0; c < header.length; c++) {
+        const addr = XLSX.utils.encode_cell({ r: 0, c });
+        if (!ws[addr]) continue;
+        try {
+          ws[addr].s = ws[addr].s || {};
+          ws[addr].s.font = { bold: true, sz: 12 };
+        } catch (e) {}
+      }
+
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "Embarques Activos");
+      XLSX.writeFile(wb, `embarques_activos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      try {
+        agregarAuditLog(
+          "EXPORTAR",
+          "Embarques",
+          `Exportó ${activos.length} embarques activos a XLSX`
+        );
+      } catch {}
+    } catch (e) {
+      console.error("Error generando XLSX:", e);
+      toast({ title: "Error exportando", description: "No se pudo generar el archivo Excel", variant: "destructive" });
+    }
   };
 
   // Exportar un solo registro (detalle actual) a Excel (CSV)
@@ -1756,6 +1867,13 @@ export default function EmbarquesPage() {
       "Contacto Puesto",
       "Contacto Teléfono",
       "Contacto Email",
+  // facturación
+  "Empresa Facturadora",
+  "Divisa de Pago",
+  "Forma de Facturación",
+  "RFC",
+  "Razón Social",
+  "Dirección Fiscal",
     ];
     const row = [
       e.folio || "",
@@ -1784,38 +1902,49 @@ export default function EmbarquesPage() {
       contacto.puesto || "",
       contacto.telefono || "",
       contacto.email || "",
+      // facturación
+      renderEmpresaFacturadora(
+        (e.cliente as any)?.empresa_facturadora ||
+          (e.cliente as any)?.razon_social ||
+          (e.cliente as any)?.nombre_comercial ||
+          e.cliente?.nombre
+      ),
+      renderDivisaPago(
+        (e.cliente as any)?.divsa_pago ||
+          (e.cliente as any)?.divisa_pago ||
+          (e.cliente as any)?.moneda_preferida
+      ),
+      renderFormaFacturacion(
+        (e.cliente as any)?.forma_facturacion ||
+          (e.cliente as any)?.forma_pago ||
+          (e.cliente as any)?.metodo_pago
+      ),
+      (e.cliente as any)?.rfc || "",
+      (e.cliente as any)?.razon_social || e.cliente?.nombre || "",
+      (e.cliente as any)?.direccion_fiscal || "",
     ];
 
-    const csvContent = [header, row]
-      .map((r) =>
-        r
-          .map((cell) => {
-            const str = String(cell ?? "");
-            const escaped = '"' + str.replace(/"/g, '""') + '"';
-            return escaped;
-          })
-          .join(",")
-      )
-      .join("\n");
-
-    const blob = new Blob(["\uFEFF" + csvContent], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `embarque_${e.folio}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
     try {
-      agregarAuditLog(
-        "EXPORTAR",
-        "Embarques",
-        `Exportó detalle del embarque ${e.folio} a CSV`
-      );
-    } catch {}
+      const aoa = [header, row];
+      const ws = (XLSX as any).utils.aoa_to_sheet(aoa);
+      try {
+        ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }) } as any;
+      } catch {}
+      (ws as any)["!freeze"] = { xSplit: 0, ySplit: 1 };
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, `Embarque_${e.folio}`);
+      XLSX.writeFile(wb, `embarque_${e.folio}.xlsx`);
+      try {
+        agregarAuditLog(
+          "EXPORTAR",
+          "Embarques",
+          `Exportó detalle del embarque ${e.folio} a XLSX`
+        );
+      } catch {}
+    } catch (err) {
+      console.error("Error generando XLSX detalle:", err);
+      toast({ title: "Error exportando", description: "No se pudo generar el archivo Excel", variant: "destructive" });
+    }
   };
 
   const handleSort = (key: typeof archivosSortKey) => {
@@ -1844,28 +1973,28 @@ export default function EmbarquesPage() {
   return (masViejoArchivadoId && e.id === masViejoArchivadoId) || fecha <= haceUnAnio;
   };
 
-  const eliminarArchivadoDefinitivo = async (embarque: Embarque) => {
-    const msg = `¿Eliminar definitivamente el embarque ${embarque.folio}?\n\n` +
-      "Esta acción no se puede deshacer y eliminará el registro de forma permanente.";
-    const confirmado = window.confirm(msg);
-    if (!confirmado) return;
+  // Abre el diálogo de confirmación para eliminación definitiva de un embarque archivado
+  const eliminarArchivadoDefinitivo = (embarque: Embarque) => {
+    setEmbarqueAEliminar(embarque);
+    setShowEliminarArchivadoDialog(true);
+  };
+
+  // Ejecuta la eliminación una vez el usuario confirma en el diálogo
+  const confirmarEliminarArchivado = async () => {
+    const embarque = embarqueAEliminar;
+    if (!embarque) return;
     try {
       setSaving(true);
+      setShowEliminarArchivadoDialog(false);
       agregarAuditLog("ELIMINAR", "Embarques (Archivados)", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
-      const { error } = await supabase
-        .from("embarques")
-        .delete()
-        .eq("id", embarque.id);
+      const { error } = await supabase.from("embarques").delete().eq("id", embarque.id);
       if (error) {
         console.error("Error eliminando embarque archivado:", error);
-        toast({
-          title: "Error al eliminar",
-          description: error.message,
-          variant: "destructive",
-        });
+        toast({ title: "Error al eliminar", description: error.message, variant: "destructive" });
         return;
       }
-      toast({ title: "Eliminado", description: `Se eliminó el embarque ${embarque.folio}.` });
+  toast({ title: "Eliminado", description: `Se eliminó el embarque ${embarque.folio}.`, variant: "destructive" });
+      setEmbarqueAEliminar(null);
       await loadEmbarques();
     } catch (err) {
       console.error("Error:", err);
@@ -2264,6 +2393,68 @@ export default function EmbarquesPage() {
           </DialogContent>
         </Dialog>
 
+        {/* Dialog para confirmar eliminación definitiva de embarques archivados */}
+        <Dialog open={showEliminarArchivadoDialog} onOpenChange={setShowEliminarArchivadoDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Eliminar embarque archivado</DialogTitle>
+              <DialogDescription>
+                ¿Estás seguro que deseas eliminar definitivamente el embarque {embarqueAEliminar?.folio}? Esta acción no se puede deshacer y eliminará el registro de forma permanente.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowEliminarArchivadoDialog(false)}>Cancelar</Button>
+              <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={confirmarEliminarArchivado} disabled={saving}>
+                Eliminar definitivamente
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog para confirmar archivado de un embarque */}
+        <Dialog open={showArchivarDialog} onOpenChange={setShowArchivarDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Archivar embarque</DialogTitle>
+              <DialogDescription>
+                ¿Estás seguro de que deseas archivar el embarque {embarqueAArchivar?.folio}? Se moverá al historial de archivados.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowArchivarDialog(false)}>Cancelar</Button>
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={async () => {
+                if (!embarqueAArchivar) return;
+                setShowArchivarDialog(false);
+                try {
+                  await updateEstado(embarqueAArchivar, "archivado");
+                  // mostrar toast de confirmación (azul con texto blanco solo para este toast)
+                  toast({ title: "Embarque archivado exitosamente", description: `Folio: ${embarqueAArchivar.folio}`, className: "bg-blue-600 text-white" });
+                } catch (e) {
+                  // si updateEstado lanza, mostrar error
+                  toast({ title: "Error al archivar", description: "No se pudo archivar el embarque.", variant: "destructive" });
+                }
+                setEmbarqueAArchivar(null);
+              }}>Archivar</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Dialog para confirmar completar y enviar el embarque a Asignación */}
+        <Dialog open={showCompletarDialog} onOpenChange={setShowCompletarDialog}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Completar y enviar embarque</DialogTitle>
+              <DialogDescription>
+                ¿Deseas completar y enviar el embarque {embarqueACompletar?.folio} a Asignación? Esta acción cambiará su estado a "listo-para-asignar".
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowCompletarDialog(false)}>Cancelar</Button>
+              <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={confirmarCompletar} disabled={saving}>Confirmar</Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
   {/* Estadísticas */}
   <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           {/* Embarques creados en el año */}
@@ -2283,7 +2474,7 @@ export default function EmbarquesPage() {
                       ).length
                     }
                   </p>
-                  <p className="text-xs text-gray-500">Total del año en curso</p>
+                  <p className="text-xs text-gray-500 mt-2">Total del año en curso</p>
                 </div>
                 <Truck className="h-8 w-8 text-blue-600" />
               </div>
@@ -2575,13 +2766,8 @@ export default function EmbarquesPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => {
-                            if (
-                              window.confirm(
-                                "¿Estás seguro de que deseas archivar este embarque?"
-                              )
-                            ) {
-                              updateEstado(embarque, "archivado");
-                            }
+                            setEmbarqueAArchivar(embarque);
+                            setShowArchivarDialog(true);
                           }}
                         >
                           Archivar
@@ -2661,7 +2847,7 @@ export default function EmbarquesPage() {
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm border-t pt-3">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm border-t pt-3">
                   {embarque.camion && (
                     <div className="flex items-center space-x-2">
                       <Truck className="h-4 w-4 text-gray-400" />
@@ -2676,56 +2862,72 @@ export default function EmbarquesPage() {
 
                   {(embarque.tipo_servicio_id ||
                     (embarque.cliente &&
-                      ((embarque.cliente as any).divsa_pago ||
-                        (embarque.cliente as any).divisa_pago))) && (
-                    <div className="flex items-center space-x-4">
+                      ((embarque.cliente as any).divisa_pago ||
+                        (embarque.cliente as any).moneda_preferida))) && (
+                    <div className="flex flex-col md:flex-row md:space-x-8 space-y-3 md:space-y-0 lg:col-span-3">
                       {embarque.tipo_servicio_id && (
-                        <div className="flex items-center space-x-2">
-                          <Package className="h-4 w-4 text-gray-400" />
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
+                          <Package className="h-5 w-5 text-gray-400 mt-1" />
                           <div>
                             <p className="font-medium">Tipo de Servicio</p>
-                            <p className="text-xs text-gray-500">
+                            <p className="text-xs text-gray-600">
                               {getServiceDisplayName(embarque.tipo_servicio_id)}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {(() => {
+                                const t = tiposServicio.find((x) => x.id === (embarque.tipo_servicio_id as any));
+                                return t && (t as any).precio_base ? `Precio base: ${(t as any).precio_base}` : null;
+                              })()}
                             </p>
                           </div>
                         </div>
                       )}
+
                       {getRemolqueTexto(embarque) && (
-                        <div className="flex items-center space-x-2">
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
+                          <Truck className="h-5 w-5 text-gray-400 mt-1" />
                           <div>
                             <p className="font-medium">Remolque</p>
-                            <p className="text-xs text-gray-500">{getRemolqueTexto(embarque)}</p>
+                            {embarque.remolque ? (
+                              <div className="text-xs text-gray-600">
+                                <div>
+                                  {embarque.remolque.numero_economico || "-"}
+                                  {embarque.remolque.marca ? ` • ${embarque.remolque.marca}` : ''}
+                                </div>
+                                {/* modelo y año removidos por requerimiento de UI */}
+                                <div>{embarque.remolque.placas ? `Placas: ${embarque.remolque.placas}` : ''}</div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-gray-600">{(embarque as any).remolque_numero_economico || (embarque as any).remolque_placa || getRemolqueTexto(embarque)}</p>
+                            )}
                           </div>
                         </div>
                       )}
-                      {(embarque.cliente &&
-                        (((embarque.cliente as any).divsa_pago ||
-                          (embarque.cliente as any).divisa_pago))) && (
-                        <div className="flex items-center space-x-2">
+
+                      {(embarque.cliente && (((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida))) && (
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
                           <span className="font-medium">Divisa de Pago:</span>
                           <span className="text-xs text-gray-500">
-                            {(
-                              (embarque.cliente as any).divsa_pago ||
-                              (embarque.cliente as any).divisa_pago
-                            )}
+                            {((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida)}
                           </span>
                         </div>
                       )}
                     </div>
                   )}
+                  
                 </div>
 
                 {(embarque.load_number ||
                   embarque.patente_agente_aduanal ||
                   embarque.aduana_cruce ||
                   embarque.dueno_mercancia) && (
-                  <div className="bg-gray-50 p-3 rounded-lg">
-                    <h4 className="font-medium text-sm mb-2">
+                  <div className="bg-gray-100 p-3 rounded-lg">
+                    <h4 className="font-medium text-sm mb-2 text-gray-700">
                       Información Aduanal
                     </h4>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                       {embarque.load_number && (
-                        <div className="text-sm">
+                        <div className="text-sm text-gray-600">
                           <span className="font-medium">Load:</span>{" "}
                           {embarque.load_number}
                         </div>
@@ -2754,16 +2956,16 @@ export default function EmbarquesPage() {
 
                 {(embarque.contenido || embarque.observaciones) && (
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {embarque.contenido && (
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm">
+                      {embarque.contenido && (
+                      <div className="bg-gray-100 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">
                           <strong>Contenido:</strong> {embarque.contenido}
                         </p>
                       </div>
                     )}
                     {embarque.observaciones && (
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm">
+                      <div className="bg-gray-100 p-3 rounded-lg">
+                        <p className="text-sm text-gray-600">
                           <strong>Observaciones:</strong>{" "}
                           {embarque.observaciones}
                         </p>
@@ -2772,7 +2974,7 @@ export default function EmbarquesPage() {
                   </div>
                 )}
 
-                <div className="text-xs text-gray-400">
+                <div className="text-xs text-gray-500">
                   Creado:{" "}
                   {new Date(embarque.fecha_creacion).toLocaleDateString()}
                 </div>
@@ -3503,6 +3705,7 @@ export default function EmbarquesPage() {
             Imprimir
           </Button>
           <Button
+            type="button"
             onClick={handleSave}
             disabled={saving || (!embarqueEditando && !isNuevoEmbarqueValid)}
             className="bg-green-600 hover:bg-green-700 text-white"
@@ -3953,17 +4156,18 @@ export default function EmbarquesPage() {
                             <Label className="text-sm font-medium text-gray-700">
                               Nombre del Contacto
                             </Label>
-                            <div className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1 inline-flex items-center">
-                              <span>
+                            <div className="mt-1">
+                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
                                 {detalleContacto
                                   ? `${detalleContacto?.nombre || ""} ${detalleContacto?.apellidos || ""}`.trim()
                                   : `${embarqueDetalle.info_representante?.nombre || ""} ${embarqueDetalle.info_representante?.apellidos || ""}`.trim()}
-                              </span>
-                              {(detalleContacto?.es_principal || embarqueDetalle.info_representante
-                                .es_principal) && (
-                                <Badge className="ml-2 bg-green-100 text-green-800 text-xs">
-                                  Principal
-                                </Badge>
+                              </p>
+                              {(detalleContacto?.es_principal || embarqueDetalle.info_representante?.es_principal) && (
+                                <div className="mt-1">
+                                  <Badge className="bg-green-100 text-green-800 text-xs">
+                                    Principal
+                                  </Badge>
+                                </div>
                               )}
                             </div>
                           </div>

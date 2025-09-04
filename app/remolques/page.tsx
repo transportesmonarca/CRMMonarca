@@ -53,6 +53,7 @@ import {
 import { useState, useEffect } from "react";
 import { supabase, type Remolque, type MarcaRemolque } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
 
 export default function RemolquesPage() {
   // --- Estados y lógica para gestión de marcas de remolques ---
@@ -143,6 +144,21 @@ export default function RemolquesPage() {
   // Estados para los datos
   const [remolques, setRemolques] = useState<Remolque[]>([]);
   const [marcas, setMarcas] = useState<MarcaRemolque[]>([]);
+  const [deletingMarcaId, setDeletingMarcaId] = useState<string | null>(null);
+  const [pendingDeleteMarca, setPendingDeleteMarca] = useState<{
+    id: string;
+    nombre: string;
+    abierto: boolean;
+  } | null>(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState("");
+  const [notificationFolios, setNotificationFolios] = useState<string[]>([]);
+  // Estado para confirmación de activar/desactivar remolque
+  const [pendingToggleRemolque, setPendingToggleRemolque] = useState<{
+    id: string;
+    nuevoEstado: boolean;
+    abierto: boolean;
+  } | null>(null);
   // Historial de mantenimiento remolques
   const [historialMantenimientoRemolque, setHistorialMantenimientoRemolque] = useState<any[]>([]);
   const [loadingHistorialMantenimientoRemolque, setLoadingHistorialMantenimientoRemolque] = useState(false);
@@ -287,9 +303,12 @@ export default function RemolquesPage() {
         if (error) {
           console.error("Error creando recordatorios:", error);
           // Mostrar mensaje informativo al usuario en lugar de error
-          alert(
-            `Remolque guardado exitosamente. Nota: Los recordatorios automáticos se configurarán manualmente desde la sección de recordatorios.`
-          );
+          toast({
+            title: "Remolque guardado exitosamente",
+            description:
+              "Nota: Los recordatorios automáticos se configurarán manualmente desde la sección de recordatorios.",
+            variant: "success",
+          });
         } else {
           console.log(
             `Creados ${recordatorios.length} recordatorios para remolque ${numeroEconomico}`
@@ -317,9 +336,9 @@ export default function RemolquesPage() {
         .select("id")
         .eq("numero_economico", formData.numeroEconomico);
 
-      if (checkError) {
+        if (checkError) {
         console.error("Error verificando número económico:", checkError);
-        alert("Error al verificar número económico");
+        toast({ title: "Error al verificar número económico", variant: "destructive" });
         return;
       }
 
@@ -329,7 +348,7 @@ export default function RemolquesPage() {
         : existingRemolque && existingRemolque.length > 0;
 
       if (duplicateExists) {
-        alert("Ya existe un remolque con ese número económico");
+        toast({ title: "Ya existe un remolque con ese número económico", variant: "destructive" });
         return;
       }
 
@@ -344,7 +363,7 @@ export default function RemolquesPage() {
         if (serialError) {
           console.error("Error verificando número de serie:", serialError);
           const msg = (serialError as any)?.message || (serialError as any)?.hint || JSON.stringify(serialError);
-          alert(`Error al verificar número de serie: ${msg}`);
+          toast({ title: `Error al verificar número de serie: ${msg}`, variant: "destructive" });
           return;
         }
 
@@ -354,7 +373,7 @@ export default function RemolquesPage() {
           : existingSerial && existingSerial.length > 0;
 
   if (serialDuplicateExists) {
-          alert("Ya existe un remolque con ese número de serie");
+          toast({ title: "Ya existe un remolque con ese número de serie", variant: "destructive" });
           return;
         }
       }
@@ -436,11 +455,12 @@ export default function RemolquesPage() {
         formData.vigenciaSeguro
       );
 
-      alert(
-        editingRemolque
+      toast({
+        title: editingRemolque
           ? "Remolque actualizado exitosamente"
-          : "Remolque creado exitosamente"
-      );
+          : "Remolque creado exitosamente",
+        variant: "success",
+      });
       limpiarFormulario();
       setShowForm(false);
       await cargarDatos();
@@ -452,7 +472,7 @@ export default function RemolquesPage() {
     }
   };
 
-  const editarRemolque = (remolque: Remolque) => {
+  const editarRemolque = async (remolque: Remolque) => {
     setFormData({
       numeroEconomico: remolque.numero_economico,
       tipo: remolque.tipo || "",
@@ -470,6 +490,14 @@ export default function RemolquesPage() {
       comentarios: remolque.comentarios || "",
     });
     setEditingRemolque(remolque);
+    // Asegurar que remolqueDetalle esté seteado para operaciones de mantenimiento
+    setRemolqueDetalle(remolque);
+    // Cargar historial para que la pestaña Mantenimiento muestre datos cuando el usuario abra el modal de edición
+    try {
+      await cargarHistorialMantenimientoRemolque(remolque.id);
+    } catch (e) {
+      console.warn('No se pudo cargar historial al editar remolque', e);
+    }
     setShowForm(true);
   };
 
@@ -568,7 +596,7 @@ export default function RemolquesPage() {
           console.warn('Fallo creando recordatorio de mantenimiento', e);
         }
       }
-      alert('Mantenimiento registrado');
+  toast({ title: 'Mantenimiento registrado', variant: 'success' });
       resetFormMantenimientoRemolque();
       setShowFormMantenimientoRemolque(false);
       await cargarHistorialMantenimientoRemolque(remolqueDetalle.id);
@@ -621,7 +649,30 @@ export default function RemolquesPage() {
       esc(remolque.comentarios || '')
     ];
 
-    const contenido = [headers.join(','), row.join(',')].join('\n');
+    // Construir contenido CSV incluyendo sección de historial de mantenimiento
+    const lines: string[] = [];
+    lines.push(headers.join(','));
+    lines.push(row.join(','));
+    // Sección de historial de mantenimiento
+    lines.push('');
+    lines.push('"Historial de Mantenimiento"');
+    const maintHeaders = ['Fecha','Tipo','Detalles','Próximo Mantenimiento'];
+    lines.push(maintHeaders.join(','));
+    if (historialMantenimientoRemolque && historialMantenimientoRemolque.length > 0) {
+      for (const reg of historialMantenimientoRemolque) {
+        const mrow = [
+          esc(reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : ''),
+          esc(reg.tipo_mantenimiento || ''),
+          esc(reg.detalles_mantenimiento || ''),
+          esc(reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : ''),
+        ];
+        lines.push(mrow.join(','));
+      }
+    } else {
+      lines.push('"Sin registros de mantenimiento"');
+    }
+
+    const contenido = lines.join('\n');
     const blob = new Blob(['\ufeff' + contenido], { type: 'text/csv;charset=utf-8;' });
     const link = document.createElement('a');
     const url = URL.createObjectURL(blob);
@@ -647,14 +698,14 @@ export default function RemolquesPage() {
       // Verificar que el REMOLQUE esté INACTIVO antes de eliminar
       const remolque = remolques.find((r) => r.id === id);
       if (!remolque) {
-        alert("Remolque no encontrado");
+        toast({ title: 'Remolque no encontrado', variant: 'destructive' });
         return;
       }
 
       if (remolque.activo !== false) {
-        alert(
-          "Para eliminar este remolque primero debes cambiarlo a estado INACTIVO. Luego intenta nuevamente."
-        );
+        setNotificationMessage("Para eliminar este remolque primero debes cambiarlo a estado INACTIVO. Luego intenta nuevamente.");
+        setNotificationFolios([]);
+        setNotificationOpen(true);
         return;
       }
 
@@ -669,48 +720,28 @@ export default function RemolquesPage() {
 
       if (embarquesError) {
         console.error("Error verificando embarques:", embarquesError);
-        alert("Error al verificar embarques activos");
+  toast({ title: 'Error al verificar embarques activos', variant: 'destructive' });
         return;
       }
 
       if (embarquesActivos && embarquesActivos.length > 0) {
-        const listaFolios = embarquesActivos
-          .map((e) => `${e.folio || e.id} (${e.estado})`)
-          .join("\n • ");
-        alert(
-          `❌ No se puede eliminar el remolque\n\n` +
-            `Tiene ${embarquesActivos.length} embarque(s) aún activos (no archivados ni cancelados).\n` +
-            `Debes ARCHIVAR o CANCELAR todos los embarques asociados a este remolque (Crear Embarques / Asignación / Facturación y Cobranza) antes de eliminarlo.\n\n` +
-            (listaFolios ? `Referencias:\n • ${listaFolios}` : "")
-        );
+        const folios = embarquesActivos.map((e) => `${e.folio || e.id} (${e.estado})`).filter(Boolean) as string[];
+        setNotificationMessage(`No es posible eliminar el remolque ${remolque.numero_economico} porque tiene ${embarquesActivos.length} embarque(s) activo(s).`);
+        setNotificationFolios(folios.slice(0, 20));
+        setNotificationOpen(true);
         return;
       }
 
-  // Confirmar eliminación (una sola confirmación)
-      const confirmacion = confirm(
-        `¿Estás seguro de que deseas eliminar permanentemente el remolque ${remolque.numero_economico}?\n\n` +
-          "ADVERTENCIA: Esta acción no se puede deshacer.\n\n" +
-          "El remolque será eliminado completamente del sistema junto con:\n" +
-          "- Su historial de mantenimiento\n" +
-          "- Sus registros de inspección\n" +
-          "- Todos sus datos asociados\n\n" +
-          "Solo procede si estás completamente seguro."
-      );
-
-      if (!confirmacion) {
-        return;
-      }
-
-      // Proceder con la eliminación
+  // Proceder con la eliminación (la confirmación se muestra mediante AlertDialog en la UI)
       const { error } = await supabase.from("remolques").delete().eq("id", id);
 
       if (error) {
-        console.error("Error eliminando remolque:", error);
-        alert("Error al eliminar remolque");
+        console.error('Error eliminando remolque:', error);
+        toast({ title: 'Error al eliminar remolque', variant: 'destructive' });
         return;
       }
 
-      alert("Remolque eliminado exitosamente");
+      toast({ title: 'Remolque eliminado exitosamente', variant: 'destructive' });
       // Audit log: eliminación de remolque
       try {
         agregarAuditLog(
@@ -722,58 +753,13 @@ export default function RemolquesPage() {
       await cargarDatos();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al eliminar remolque");
+      toast({ title: 'Error al eliminar remolque', variant: 'destructive' });
     }
   };
 
-  const toggleActivarRemolque = async (id: string, estadoActual: boolean) => {
-    try {
-      const nuevoEstado = !estadoActual;
-      const accion = nuevoEstado ? "activar" : "desactivar";
-
-      const confirmacion = confirm(
-        `¿Estás seguro de que deseas ${accion} este remolque?\n\n` +
-          `El remolque será ${
-            nuevoEstado
-              ? "activado y estará disponible"
-              : "desactivado y no estará disponible"
-          } para asignaciones.`
-      );
-
-      if (!confirmacion) {
-        return;
-      }
-
-      const { error } = await supabase
-        .from("remolques")
-        .update({
-          activo: nuevoEstado,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", id);
-
-      if (error) {
-        console.error("Error actualizando estado del remolque:", error);
-        alert("Error al actualizar el estado del remolque");
-        return;
-      }
-
-      alert(
-        `Remolque ${nuevoEstado ? "activado" : "desactivado"} exitosamente`
-      );
-      // Audit log: cambio de estado de remolque
-      try {
-        agregarAuditLog(
-          "ACTUALIZAR",
-          "Remolques",
-          `Cambió estado del remolque (ID: ${id}) a ${nuevoEstado ? 'activo' : 'inactivo'}`
-        );
-      } catch {}
-      await cargarDatos();
-    } catch (error) {
-      console.error("Error:", error);
-      alert("Error al cambiar el estado del remolque");
-    }
+  const toggleActivarRemolque = (id: string, estadoActual: boolean) => {
+    const nuevoEstado = !estadoActual;
+    setPendingToggleRemolque({ id, nuevoEstado, abierto: true });
   };
 
   // Función para verificar si una fecha está próxima a vencer
@@ -836,6 +822,59 @@ export default function RemolquesPage() {
 
   return (
     <MainLayout>
+        {/* AlertDialog for activar/desactivar remolque (replaces confirm) */}
+        <AlertDialog open={!!pendingToggleRemolque?.abierto} onOpenChange={(v) => {
+          if (!v) setPendingToggleRemolque(null);
+          else if (pendingToggleRemolque) setPendingToggleRemolque({...pendingToggleRemolque, abierto: v});
+        }}>
+          <AlertDialogContent className="max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {pendingToggleRemolque?.nuevoEstado ? 'Activar remolque' : 'Desactivar remolque'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {pendingToggleRemolque?.nuevoEstado
+                  ? '¿Estás seguro de que deseas activar este remolque? El remolque será activado y estará disponible para asignaciones.'
+                  : '¿Estás seguro de que deseas desactivar este remolque? El remolque será desactivado y no estará disponible para asignaciones.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={async () => {
+                if (!pendingToggleRemolque) return;
+                const { id, nuevoEstado } = pendingToggleRemolque;
+                try {
+                  const updateObj: any = { activo: nuevoEstado, updated_at: new Date().toISOString() };
+                  // If marking as inactive, also set estado to 'fuera-de-servicio' so system counts it correctly
+                  if (nuevoEstado === false) {
+                    updateObj.estado = 'fuera-de-servicio';
+                  } else if (nuevoEstado === true) {
+                    // Al reactivar, marcar como disponible para que aparezca en el contador de 'Disponibles'
+                    updateObj.estado = 'disponible';
+                  }
+                  const { error } = await supabase
+                    .from('remolques')
+                    .update(updateObj)
+                    .eq('id', id);
+                  if (error) {
+                    console.error('Error actualizando estado del remolque:', error);
+                    toast({ title: 'Error al actualizar el estado del remolque', variant: 'destructive' });
+                  } else {
+                    toast({ title: nuevoEstado ? 'Remolque activado' : 'Remolque desactivado', description: nuevoEstado ? undefined : 'El remolque ha sido marcado como fuera de servicio', variant: 'success' });
+                    try { agregarAuditLog('ACTUALIZAR', 'Remolques', `Cambió estado del remolque (ID: ${id}) a ${nuevoEstado ? 'activo' : 'inactivo'}`); } catch {}
+                    await cargarDatos();
+                  }
+                } catch (e) {
+                  console.error('Error:', e);
+                  toast({ title: 'Error al cambiar el estado del remolque', variant: 'destructive' });
+                } finally {
+                  setPendingToggleRemolque(null);
+                }
+              }} className="bg-green-600 hover:bg-green-700 text-white">Aceptar</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
       <div className="space-y-6">
         <div className="flex justify-between items-center">
           <div>
@@ -884,8 +923,9 @@ export default function RemolquesPage() {
                           setEditandoMarcaId(null);
                           setNuevaMarcaNombre("");
                           await cargarDatos();
+                          toast({ title: 'Marca actualizada', variant: 'success' });
                         } else {
-                          alert("Error al editar marca");
+                          toast({ title: 'Error al editar marca', variant: 'destructive' });
                         }
                       } else {
                         // Crear nueva marca
@@ -898,8 +938,10 @@ export default function RemolquesPage() {
                         if (!error) {
                           setNuevaMarcaNombre("");
                           await cargarDatos();
+                          // Popo-style green toast to notify success
+                          toast({ title: 'Marca registrada', description: 'Nueva marca de remolque registrada correctamente.', variant: 'success' });
                         } else {
-                          alert("Error al agregar marca");
+                          toast({ title: 'Error al agregar marca', variant: 'destructive' });
                         }
                       }
                       setAgregandoMarca(false);
@@ -966,10 +1008,118 @@ export default function RemolquesPage() {
                           >
                             <Edit className="h-4 w-4" />
                           </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Eliminar"
+                            onClick={() => setPendingDeleteMarca({ id: marca.id, nombre: marca.nombre, abierto: true })}
+                            disabled={deletingMarcaId === marca.id}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                          </Button>
                         </div>
                       </div>
                     ))}
                   </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            {/* Confirmation dialog for deleting a marca (popo-style) */}
+            <AlertDialog open={!!pendingDeleteMarca?.abierto} onOpenChange={(v)=>{ if(!v) setPendingDeleteMarca(null); else if(pendingDeleteMarca) setPendingDeleteMarca({...pendingDeleteMarca, abierto: v}); }}>
+              <AlertDialogContent className="max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Confirmar eliminación</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    ¿Deseas eliminar la marca <strong>{pendingDeleteMarca?.nombre}</strong>? Esta acción desactivará la marca y no eliminará los registros históricos.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={async ()=>{
+                    if(!pendingDeleteMarca) return;
+                    const id = pendingDeleteMarca.id;
+                    try{
+                      setDeletingMarcaId(id);
+                      const { error } = await supabase.from('marcas_remolques').update({ activa: false }).eq('id', id);
+                      if(error){
+                        console.error('Error desactivando marca:', error);
+                        toast({ title: 'Error al eliminar marca', variant: 'destructive' });
+                      } else {
+                        toast({ title: 'Marca eliminada', variant: 'destructive' });
+                        try{ agregarAuditLog('ELIMINAR','MarcasRemolques', `Desactivó marca ${pendingDeleteMarca.nombre} (ID: ${id})`); }catch{}
+                        await cargarDatos();
+                      }
+                    }catch(e){
+                      console.error(e);
+                      toast({ title: 'Error al eliminar marca', variant: 'destructive' });
+                    }finally{
+                      setDeletingMarcaId(null);
+                      setPendingDeleteMarca(null);
+                    }
+                  }} className="bg-red-600 hover:bg-red-700 text-white">Eliminar</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            {/* Notification dialog for remolques (replaces alerts) */}
+            <Dialog open={notificationOpen} onOpenChange={(o)=>{setNotificationOpen(o); if(!o) setNotificationMessage(""); setNotificationFolios([]);}}>
+              {/* Consider this a warning modal when the message indicates deletion is blocked or asks to set to INACTIVO */}
+              <DialogContent className={
+                notificationMessage && (
+                  notificationMessage.includes("No es posible eliminar el remolque") ||
+                  notificationMessage.includes("Para eliminar este remolque") ||
+                  notificationMessage.includes("INACTIVO")
+                )
+                  ? "max-w-md bg-red-50 border border-red-200"
+                  : "max-w-sm"
+              }>
+                <DialogHeader>
+                  {(notificationMessage && (
+                    notificationMessage.includes("No es posible eliminar el remolque") ||
+                    notificationMessage.includes("Para eliminar este remolque") ||
+                    notificationMessage.includes("INACTIVO")
+                  )) ? (
+                    <div className="flex items-center space-x-2">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                      <DialogTitle>Aviso</DialogTitle>
+                    </div>
+                  ) : (
+                    <DialogTitle>Notificación</DialogTitle>
+                  )}
+                  <DialogDescription className={
+                    notificationMessage && (
+                      notificationMessage.includes("No es posible eliminar el remolque") ||
+                      notificationMessage.includes("Para eliminar este remolque") ||
+                      notificationMessage.includes("INACTIVO")
+                    )
+                      ? "text-red-700"
+                      : undefined
+                  }>
+                    {notificationMessage}
+                  </DialogDescription>
+                  {notificationFolios && notificationFolios.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-sm font-medium text-gray-700">Embarques asociados:</p>
+                      <ul className="mt-2 list-disc list-inside text-sm text-gray-700 space-y-1">
+                        {notificationFolios.map((f, idx) => (
+                          <li key={idx} className="break-all">{f}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </DialogHeader>
+                <div className="flex justify-end mt-4">
+                  <Button onClick={()=>setNotificationOpen(false)} className={
+                    notificationMessage && (
+                      notificationMessage.includes("No es posible eliminar el remolque") ||
+                      notificationMessage.includes("Para eliminar este remolque") ||
+                      notificationMessage.includes("INACTIVO")
+                    )
+                      ? "bg-red-600 hover:bg-red-700 text-white"
+                      : undefined
+                  }>
+                    Aceptar
+                  </Button>
                 </div>
               </DialogContent>
             </Dialog>
@@ -1226,14 +1376,6 @@ export default function RemolquesPage() {
                       <h3 className="text-lg font-medium">
                         Inspecciones y Seguro
                       </h3>
-                      {editingRemolque && (
-                        <TabsContent value="mantenimiento">
-                          <div className="space-y-2 py-4">
-                            <h3 className="text-lg font-medium">Mantenimiento</h3>
-                            <p className="text-xs text-gray-500">El historial de mantenimiento se gestiona después de crear el remolque desde el modal de detalles.</p>
-                          </div>
-                        </TabsContent>
-                      )}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="fechaUltimaInspeccion">
@@ -1299,6 +1441,104 @@ export default function RemolquesPage() {
                             }
                           />
                         </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="mantenimiento">
+                    <div className="py-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-medium">Mantenimiento</h3>
+                        <div className="flex gap-2">
+                          <Button size="sm" onClick={() => setShowFormMantenimientoRemolque((s)=>!s)} className="bg-[#16A34A] hover:bg-[#12813a] text-white">
+                            {showFormMantenimientoRemolque ? 'Cancelar' : 'Nuevo Mantenimiento'}
+                          </Button>
+                        </div>
+                      </div>
+
+                      {showFormMantenimientoRemolque && (
+                        <div className="border rounded-lg p-4 bg-gray-50 space-y-3">
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                            <div className="space-y-1">
+                              <Label htmlFor="fecha_mantenimiento">Fecha *</Label>
+                              <Input id="fecha_mantenimiento" type="date" value={mantenimientoRemolqueFormData.fecha_mantenimiento} onChange={e=>setMantenimientoRemolqueFormData({...mantenimientoRemolqueFormData, fecha_mantenimiento: e.target.value})} />
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor="tipo_mantenimiento">Tipo</Label>
+                              <select id="tipo_mantenimiento" value={mantenimientoRemolqueFormData.tipo_mantenimiento} onChange={e=>setMantenimientoRemolqueFormData({...mantenimientoRemolqueFormData, tipo_mantenimiento: e.target.value})} className="border rounded-md h-9 px-2 text-sm w-full bg-white">
+                                <option value="preventivo">Preventivo</option>
+                                <option value="correctivo">Correctivo</option>
+                                <option value="revision">Revisión</option>
+                                <option value="otro">Otro</option>
+                              </select>
+                            </div>
+                            <div className="space-y-1">
+                              <Label htmlFor="proximo_mantenimiento">Próximo</Label>
+                              <Input id="proximo_mantenimiento" type="date" value={mantenimientoRemolqueFormData.proximo_mantenimiento} onChange={e=>setMantenimientoRemolqueFormData({...mantenimientoRemolqueFormData, proximo_mantenimiento: e.target.value})} />
+                            </div>
+                            <div className="md:col-span-3 space-y-1">
+                              <Label htmlFor="detalles_mantenimiento">Detalles *</Label>
+                              <Textarea id="detalles_mantenimiento" rows={2} value={mantenimientoRemolqueFormData.detalles_mantenimiento} onChange={e=>setMantenimientoRemolqueFormData({...mantenimientoRemolqueFormData, detalles_mantenimiento: e.target.value})} placeholder="Trabajo realizado, refacciones, etc." />
+                            </div>
+                          </div>
+                          <div className="flex justify-end gap-2">
+                            <Button variant="outline" size="sm" onClick={()=>{resetFormMantenimientoRemolque(); setShowFormMantenimientoRemolque(false);}} disabled={addingMantenimientoRemolque}>Cancelar</Button>
+                            <Button size="sm" onClick={agregarMantenimientoRemolque} disabled={addingMantenimientoRemolque} className="bg-[#16A34A] hover:bg-[#12813a] text-white">
+                              {addingMantenimientoRemolque ? 'Guardando...' : 'Guardar'}
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="space-y-2">
+                        {loadingHistorialMantenimientoRemolque ? (
+                          <p className="text-sm text-gray-500">Cargando historial...</p>
+                        ) : historialMantenimientoRemolque.length === 0 ? (
+                          <p className="text-sm text-gray-400 italic">Sin registros de mantenimiento.</p>
+                        ) : (
+                          <div className="space-y-3">
+                            <div className="overflow-x-auto border rounded-md">
+                              <table className="min-w-full text-xs">
+                                <thead className="bg-gray-100 text-gray-700">
+                                  <tr>
+                                    <th className="px-2 py-2 text-left font-medium">Fecha</th>
+                                    <th className="px-2 py-2 text-left font-medium">Tipo</th>
+                                    <th className="px-2 py-2 text-left font-medium">Detalles</th>
+                                    <th className="px-2 py-2 text-left font-medium">Próximo</th>
+                                    <th className="px-2 py-2 text-left font-medium">Acciones</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y">
+                                  {historialMantenimientoRemolque.slice((currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque, (currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque + pageSizeMantenimientoRemolque).map(reg => (
+                                    <tr key={reg.id} className="hover:bg-gray-50">
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap capitalize">{reg.tipo_mantenimiento}</td>
+                                      <td className="px-2 py-2 max-w-xs"><span className="line-clamp-2" title={reg.detalles_mantenimiento}>{reg.detalles_mantenimiento}</span></td>
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap">
+                                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={()=>eliminarMantenimientoRemolque(reg.id)}>Eliminar</Button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                              <span className="text-gray-600">Total: {historialMantenimientoRemolque.length}</span>
+                              <div className="flex items-center gap-1">
+                                <Button variant="outline" size="sm" className="h-7" disabled={currentPageMantenimientoRemolque===1} onClick={()=>setCurrentPageMantenimientoRemolque(p=>Math.max(1,p-1))}>Anterior</Button>
+                                <span>Página {currentPageMantenimientoRemolque} de {Math.ceil(historialMantenimientoRemolque.length / pageSizeMantenimientoRemolque) || 1}</span>
+                                <Button variant="outline" size="sm" className="h-7" disabled={currentPageMantenimientoRemolque >= Math.ceil(historialMantenimientoRemolque.length / pageSizeMantenimientoRemolque)} onClick={()=>setCurrentPageMantenimientoRemolque(p=>p+1)}>Siguiente</Button>
+                              </div>
+                              <div className="flex items-center gap-1">
+                                <span>Por página:</span>
+                                <select value={pageSizeMantenimientoRemolque} onChange={e=>{setPageSizeMantenimientoRemolque(Number(e.target.value)); setCurrentPageMantenimientoRemolque(1);}} className="border rounded-md h-7 text-xs px-1">
+                                  {[5,10,15,20].map(n=> <option key={n} value={n}>{n}</option>)}
+                                </select>
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </TabsContent>
@@ -1427,22 +1667,19 @@ export default function RemolquesPage() {
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    Inspecciones por Vencer
-                  </p>
+              <div className="flex items-center justify-between gap-6">
+                <div className="flex-1">
+                  <p className="text-sm font-medium text-gray-600">Inspecciones por vencer</p>
                   <p className="text-2xl font-bold text-orange-600">
-                    {
-                      remolques.filter(
-                        (r) =>
-                          r.proxima_inspeccion &&
-                          estaProximoAVencer(r.proxima_inspeccion, 30)
-                      ).length
-                    }
+                    {remolques.filter((r) => r.proxima_inspeccion && (estaProximoAVencer(r.proxima_inspeccion, 15) || yaVencio(r.proxima_inspeccion))).length}
                   </p>
                 </div>
-                <AlertTriangle className="h-8 w-8 text-orange-600" />
+                <div className="flex-1 text-right">
+                  <p className="text-sm font-medium text-gray-600">Seguros por vencer</p>
+                  <p className="text-2xl font-bold text-orange-500">
+                    {remolques.filter((r) => r.vigencia_seguro && (estaProximoAVencer(r.vigencia_seguro, 15) || yaVencio(r.vigencia_seguro))).length}
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1525,10 +1762,13 @@ export default function RemolquesPage() {
                 <div className="flex justify-between items-start">
                   <div>
                     <CardTitle className="text-lg">
-                      {remolque.numero_economico}
-                      {remolque.marca &&
-                        remolque.modelo &&
-                        ` - ${remolque.marca} ${remolque.modelo}`}
+                      <span>{remolque.numero_economico}</span>
+                      {remolque.marca && remolque.modelo && (
+                        <>
+                          <br />
+                          <span className="text-lg font-semibold">{`${remolque.marca} ${remolque.modelo}`}</span>
+                        </>
+                      )}
                     </CardTitle>
                     <CardDescription>
                       {remolque.tipo && `Tipo: ${remolque.tipo}`}
@@ -1790,15 +2030,13 @@ export default function RemolquesPage() {
         <Dialog open={showDetallesRemolque} onOpenChange={(o)=>{setShowDetallesRemolque(o); if(!o){setRemolqueDetalle(null);} }}>
           <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>Detalles del Remolque</DialogTitle>
+              <DialogTitle className="text-2xl font-semibold">
+                {`Detalles del remolque: ${remolqueDetalle?.numero_economico ?? ""}`}
+              </DialogTitle>
               <DialogDescription>Información completa y acciones del remolque seleccionado.</DialogDescription>
             </DialogHeader>
             {remolqueDetalle && (
               <div className="space-y-4">
-                <div>
-                  <h2 className="text-xl font-semibold flex items-center gap-2">Remolque {remolqueDetalle.numero_economico}</h2>
-                  <p className="text-sm text-gray-600">Registrado: {new Date(remolqueDetalle.fecha_registro).toLocaleDateString()}</p>
-                </div>
 
                 <Tabs value={detalleTabRemolque} onValueChange={setDetalleTabRemolque} className="w-full">
                   <TabsList className="grid w-full grid-cols-5">
@@ -1962,7 +2200,7 @@ export default function RemolquesPage() {
                     onClick={() => { editarRemolque(remolqueDetalle); /* no cerrar detalles */ }}
                     className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
                   >
-                    <Edit className="h-4 w-4 mr-1" /> Editar
+                    <Edit className="h-4 w-4 mr-1" /> Editar Remolque
                   </Button>
                   <Button
                     variant="outline"

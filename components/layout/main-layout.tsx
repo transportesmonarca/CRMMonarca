@@ -6,6 +6,7 @@ import { useState, useEffect } from "react"
 import { useRouter, usePathname } from "next/navigation"
 import { Header } from "./header"
 import { Sidebar } from "./sidebar"
+import { Toaster } from "@/components/ui/toaster"
 import { isAuthenticated } from "@/lib/auth"
 
 interface MainLayoutProps {
@@ -62,7 +63,7 @@ export function MainLayout({ children }: MainLayoutProps) {
       {/* Header */}
       <Header onMenuClick={() => setSidebarOpen(!sidebarOpen)} />
 
-      <div className="flex">
+  <div className="flex">
         {/* Sidebar */}
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
 
@@ -70,7 +71,10 @@ export function MainLayout({ children }: MainLayoutProps) {
         <main className="flex-1 lg:ml-64 pt-16">
           <div className="p-6">{children}</div>
         </main>
-      </div>
+  </div>
+
+  {/* Global toaster */}
+  <Toaster />
     </div>
   )
 }

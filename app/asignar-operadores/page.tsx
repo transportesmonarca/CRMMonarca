@@ -46,6 +46,7 @@ import {
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
+import { useToast } from "@/hooks/use-toast";
 import { useSearchParams } from "next/navigation";
 import {
   supabase,
@@ -88,6 +89,15 @@ export default function AsignarOperadoresPage() {
   }, [operadores]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showConfirmAsignar, setShowConfirmAsignar] = useState(false);
+  const [pendingAsignacion, setPendingAsignacion] = useState<{
+    embarqueId: string | null;
+  embarqueFolio?: string | null;
+    operador: Operador | null;
+    camion: Camion | null;
+    precio_flete?: string;
+    moneda_flete?: string;
+  } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("todos");
   const [showDetailsModal, setShowDetailsModal] = useState(false);
@@ -103,6 +113,13 @@ export default function AsignarOperadoresPage() {
     null
   );
   const [activeTab, setActiveTab] = useState("general");
+  // Dialog para archivar desde Asignación (Registros Completados)
+  const [showArchivarAsignacionDialog, setShowArchivarAsignacionDialog] = useState(false);
+  const [embarqueAArchivarAsignacion, setEmbarqueAArchivarAsignacion] = useState<Embarque | null>(null);
+
+  // Dialog para confirmar eliminación definitiva en Registros Completados
+  const [showEliminarCompletadoDialog, setShowEliminarCompletadoDialog] = useState(false);
+  const [embarqueAEliminarCompletado, setEmbarqueAEliminarCompletado] = useState<Embarque | null>(null);
 
   const [showCompletedModal, setShowCompletedModal] = useState(false);
   const [embarquesFinalizados, setEmbarquesFinalizados] = useState<Embarque[]>(
@@ -117,7 +134,7 @@ export default function AsignarOperadoresPage() {
   const [completadosSearch, setCompletadosSearch] = useState("");
   const [completadosTipoServicio, setCompletadosTipoServicio] = useState("todos");
   const [completadosPeriodo, setCompletadosPeriodo] = useState<
-    "todo" | "mes_actual" | "mes_anterior" | "ultimos_3" | "ultimos_6" | "este_anio"
+    "todo" | "mes_actual" | "mes_anterior" | "ultimos_3" | "ultimos_6" | "este_anio" | "rango"
   >("todo");
   const [completadosSortField, setCompletadosSortField] = useState<
     "folio" | "cliente" | "load" | "fecha" | "tipo"
@@ -127,6 +144,9 @@ export default function AsignarOperadoresPage() {
   );
   const [completadosPage, setCompletadosPage] = useState(1);
   const [completadosPageSize, setCompletadosPageSize] = useState(25);
+  // Rango personalizado para filtrar registros completados
+  const [completadosFrom, setCompletadosFrom] = useState<string | null>(null);
+  const [completadosTo, setCompletadosTo] = useState<string | null>(null);
 
   // Determinar el ID más antiguo con estado archivado (para habilitar eliminación siempre en el más viejo)
   const masViejoArchivadoId = useMemo(() => {
@@ -159,27 +179,34 @@ export default function AsignarOperadoresPage() {
       setEmbarquesFinalizados((prev) => prev.filter((x) => x.id !== embarque.id));
       return;
     }
-    const confirmado = window.confirm(
-      `¿Eliminar definitivamente el embarque ${embarque.folio}?\n\nEsta acción no se puede deshacer y eliminará el registro de forma permanente.`
-    );
-    if (!confirmado) return;
+    // Abrir diálogo de confirmación en vez de window.confirm
+    setEmbarqueAEliminarCompletado(embarque);
+    setShowEliminarCompletadoDialog(true);
+  };
+
+  const confirmarEliminarCompletado = async () => {
+    const embarque = embarqueAEliminarCompletado;
+    if (!embarque) return;
     try {
       setSaving(true);
       await agregarAuditLog("ELIMINAR", "Asignación → Registros Completados", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
       const { error } = await supabase.from("embarques").delete().eq("id", embarque.id);
       if (error) {
         console.error("Error eliminando embarque:", error);
-        alert("Error al eliminar: " + error.message);
+        toast({ title: "Error al eliminar", description: error.message || "Error desconocido", variant: "destructive" });
         return;
       }
       // Refrescar listas
       await cargarEmbarquesFinalizados();
       await cargarDatos();
+      toast({ title: "Embarque eliminado", description: `Folio: ${embarque.folio}` });
     } catch (err) {
       console.error("Error inesperado al eliminar:", err);
-      alert("No se pudo eliminar el embarque.");
+      toast({ title: "Error", description: "No se pudo eliminar el embarque.", variant: "destructive" });
     } finally {
       setSaving(false);
+      setShowEliminarCompletadoDialog(false);
+      setEmbarqueAEliminarCompletado(null);
     }
   };
 
@@ -277,7 +304,7 @@ export default function AsignarOperadoresPage() {
     const ahora = new Date();
     const anioActual = ahora.getFullYear();
     const mesActual = ahora.getMonth();
-    if (completadosPeriodo === "todo") return true;
+  if (completadosPeriodo === "todo") return true;
     if (completadosPeriodo === "mes_actual") {
       return fecha.getFullYear() === anioActual && fecha.getMonth() === mesActual;
     }
@@ -300,6 +327,30 @@ export default function AsignarOperadoresPage() {
     }
     if (completadosPeriodo === "este_anio") {
       return fecha.getFullYear() === anioActual;
+    }
+    if (completadosPeriodo === "rango") {
+      // If either bound is missing, treat accordingly
+      try {
+        const from = completadosFrom ? new Date(completadosFrom) : null;
+        const to = completadosTo ? new Date(completadosTo) : null;
+        if (from && isNaN(from.getTime())) return false;
+        if (to && isNaN(to.getTime())) return false;
+        // Normalize times: include full day for 'to'
+        if (from && to) {
+          const toEnd = new Date(to);
+          toEnd.setHours(23, 59, 59, 999);
+          return fecha >= from && fecha <= toEnd;
+        }
+        if (from) return fecha >= from;
+        if (to) {
+          const toEnd = new Date(to);
+          toEnd.setHours(23, 59, 59, 999);
+          return fecha <= toEnd;
+        }
+        return true;
+      } catch (e) {
+        return true;
+      }
     }
     return true;
   };
@@ -366,6 +417,19 @@ export default function AsignarOperadoresPage() {
     []
   );
 
+  // Mapa con conteo de embarques actualmente asignados por operador (no finalizados/archivados/cancelados)
+  const asignadosPorOperador = useMemo(() => {
+    const map: { [operadorId: string]: number } = {};
+    (embarques || []).forEach((e: any) => {
+      const id = e.operador_id;
+      if (!id) return;
+      // Excluir estados que ya terminaron o no cuentan como asignación activa
+      if (["finalizado", "cancelado", "archivado"].includes(e.estado)) return;
+      map[id] = (map[id] || 0) + 1;
+    });
+    return map;
+  }, [embarques]);
+
   // Estados para asignación y quickpaid
   const [asignaciones, setAsignaciones] = useState<{
     [key: string]: {
@@ -406,6 +470,9 @@ export default function AsignarOperadoresPage() {
   const [fotosCount, setFotosCount] = useState<{[embarqueId: string]: number}>({});
   const [loadingFotosCount, setLoadingFotosCount] = useState<Set<string>>(new Set());
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  const [showFinalizarDialog, setShowFinalizarDialog] = useState(false);
+  const [embarqueAFinalizar, setEmbarqueAFinalizar] = useState<Embarque | null>(null);
+  const { toast } = useToast();
 
   const cancelarEmbarque = async () => {
     if (!cancelingEmbarque || !cancelReason.trim()) {
@@ -472,14 +539,14 @@ export default function AsignarOperadoresPage() {
         .from("embarques")
         .select(
           `
-          *,
-          cliente:clientes(*),
-          operador:operadores(*),
-          camion:camiones(*),
-          remolque:remolques(*)
-        `
+        *,
+        cliente:clientes(*),
+        operador:operadores(*),
+        camion:camiones(*),
+        remolque:remolques(*)
+      `
         )
-  .in("estado", ["listo-para-asignar", "asignado", "en-transito", "cancelado", "archivado"]) // incluir cancelados y archivados para lógica de doble archivado
+        .in("estado", ["listo-para-asignar", "asignado", "en-transito", "cancelado", "archivado"]) // incluir cancelados y archivados para lógica de doble archivado
         .order("fecha_creacion", { ascending: false });
 
       if (embarquesError) {
@@ -764,30 +831,86 @@ export default function AsignarOperadoresPage() {
         quickpaid_descuento = precioFlete * quickpaid_percent;
         precio_quickpaid = precioFlete - quickpaid_descuento;
       }
-      const { error } = await supabase
+      // Calcular y persistir el pago al operador basado en el tipo de servicio del embarque
+      try {
+        const embarqueObj = embarques.find((e) => e.id === embarqueId);
+        const tipoServicio = tiposServicio.find((t) => t.id === embarqueObj?.tipo_servicio_id);
+        const precioOperadorRaw = tipoServicio?.precio_base ?? 0;
+        const precioOperador = typeof precioOperadorRaw === 'number' ? precioOperadorRaw : Number(precioOperadorRaw) || 0;
+        // Añadir al update payload
+        // (si la columna no existe en la DB, Supabase retornará un error y el update fallará)
+        // Pero preferimos intentar persistir para garantizar inmutabilidad histórica.
+        // Lo agregamos al objeto que se envía en el .update() más abajo.
+        // Para esto, extendemos asignacionUpdatePayload temporalmente.
+        (asignacion as any).__pagoOperadorToPersist = precioOperador;
+      } catch (e) {
+        console.warn('No se pudo calcular pagoOperador para persistir:', e);
+      }
+      // Construir payload y añadir pago_operador si lo calculamos
+      const updatePayload: any = {
+        operador_id: asignacion.operador_id,
+        camion_id: asignacion.camion_id,
+        precio_flete: asignacion.precio_flete
+          ? Number.parseFloat(asignacion.precio_flete)
+          : null,
+        moneda_flete:
+          asignacion.moneda_flete ||
+          embarques.find((e) => e.id === embarqueId)?.moneda_flete ||
+          "MXN",
+        estado: "asignado",
+        updated_at: new Date().toISOString(),
+        quickpaid_enabled: asignacion.quickpaidEnabled || false, // Corrected column name
+        quickpaid_percent: quickpaid_percent,
+        quickpaid_descuento: quickpaid_descuento,
+        precio_quickpaid: precio_quickpaid,
+      };
+      if ((asignacion as any).__pagoOperadorToPersist != null) {
+        updatePayload.pago_operador = (asignacion as any).__pagoOperadorToPersist;
+      }
+
+      // Try to update. If the pago_operador column doesn't exist in the DB,
+      // Supabase may return a vague/empty error object. Detect that case,
+      // retry the update without the field and surface detailed info to the UI.
+      let { data: updateResult, error } = await supabase
         .from("embarques")
-        .update({
-          operador_id: asignacion.operador_id,
-          camion_id: asignacion.camion_id,
-          precio_flete: asignacion.precio_flete
-            ? Number.parseFloat(asignacion.precio_flete)
-            : null,
-          moneda_flete:
-            asignacion.moneda_flete ||
-            embarques.find((e) => e.id === embarqueId)?.moneda_flete ||
-            "MXN",
-          estado: "asignado",
-          updated_at: new Date().toISOString(),
-          quickpaid_enabled: asignacion.quickpaidEnabled || false, // Corrected column name
-          quickpaid_percent: quickpaid_percent,
-          quickpaid_descuento: quickpaid_descuento,
-          precio_quickpaid: precio_quickpaid,
-        })
+        .update(updatePayload)
         .eq("id", embarqueId);
+
       if (error) {
-        console.error("Error asignando recursos:", error);
-        alert("Error al asignar recursos");
-        return;
+        // Build a useful detailed message from the error object
+        const detailedMsg =
+          (error as any)?.message || (error as any)?.details || (error as any)?.hint || JSON.stringify(error);
+        console.error("Error asignando recursos (primera tentativa):", error, "detalle:", detailedMsg);
+
+        // If the error seems to be caused by a missing pago_operador column, retry without it
+        if (/(column\s+"?pago_operador"?\s+does not exist|column .*pago_operador|42703)/i.test(detailedMsg)) {
+          try {
+            const { pago_operador, ...payloadNoPago } = updatePayload;
+            const { data: retryData, error: retryError } = await supabase
+              .from("embarques")
+              .update(payloadNoPago)
+              .eq("id", embarqueId);
+
+            if (retryError) {
+              const retryDetailed =
+                (retryError as any)?.message || (retryError as any)?.details || (retryError as any)?.hint || JSON.stringify(retryError);
+              console.error("Error asignando recursos (retry sin pago_operador):", retryError, "detalle:", retryDetailed);
+              toast({ title: "Error al asignar recursos", description: String(retryDetailed), variant: "destructive" });
+              return;
+            }
+
+            // Success after retrying without pago_OPERADOR
+            toast({ title: "Recursos asignados", description: "Asignación completada, pero el campo pago_operador no existe en la base de datos. Ejecuta la migración SQL para persistirlo.", variant: "destructive" });
+          } catch (retryErr) {
+            console.error("Error en retry asignando recursos:", retryErr);
+            toast({ title: "Error al asignar recursos", description: String((retryErr as any)?.message || JSON.stringify(retryErr)), variant: "destructive" });
+            return;
+          }
+        } else {
+          // Not a missing-column error: show details and bail out
+          toast({ title: "Error al asignar recursos", description: String(detailedMsg), variant: "destructive" });
+          return;
+        }
       }
       // Audit log: asignación
       const embarque = embarques.find((e) => e.id === embarqueId);
@@ -796,7 +919,7 @@ export default function AsignarOperadoresPage() {
         "Asignación Embarques",
         `Folio: ${embarque?.folio || ""}`
       );
-      alert("Recursos asignados exitosamente");
+      toast({ title: "Recursos asignados", description: "Recursos asignados exitosamente", variant: "success" });
       await cargarDatos();
       setAsignaciones((prev) => {
         const newAsignaciones = { ...prev };
@@ -822,7 +945,7 @@ export default function AsignarOperadoresPage() {
         `Folio: ${embarqueAModificar.folio}`
       );
     if (!embarqueAModificar || !modificacionData.razon.trim()) {
-      alert("Por favor ingresa una justificación para la modificación");
+      toast({ title: "Por favor ingresa una justificación para la modificación", variant: "destructive" });
       return;
     }
 
@@ -832,7 +955,7 @@ export default function AsignarOperadoresPage() {
       !modificacionData.cambiar_remolque &&
       !modificacionData.cambiar_flete
     ) {
-      alert("Por favor selecciona al menos un elemento a modificar");
+      toast({ title: "Por favor selecciona al menos un elemento a modificar", variant: "destructive" });
       return;
     }
 
@@ -847,9 +970,7 @@ export default function AsignarOperadoresPage() {
         const placa = (modificacionData.remolque_placa || "").trim();
         const numero = (modificacionData.remolque_numero_economico || "").trim();
         if (!numero || !placa) {
-          alert(
-            "Para remolque manual, captura el Número Económico y la Placa."
-          );
+          toast({ title: "Para remolque manual, captura el Número Económico y la Placa.", variant: "destructive" });
           setSaving(false);
           return;
         }
@@ -921,7 +1042,7 @@ export default function AsignarOperadoresPage() {
           (updateError as any)?.hint ||
           JSON.stringify(updateError);
         console.error("Error actualizando embarque:", updateError);
-        alert("Error al actualizar embarque: " + detailedMsg);
+        toast({ title: "Error al actualizar embarque", description: String(detailedMsg), variant: "destructive" });
         return;
       }
 
@@ -1070,25 +1191,25 @@ export default function AsignarOperadoresPage() {
             logError.message.includes("Could not find") &&
             logError.message.includes("column")
           ) {
-            alert(`Modificación guardada exitosamente, pero hay un problema con la tabla de auditoría. 
-                   Por favor ejecuta el script SQL 33 para corregir la estructura de la base de datos.
-                   Error técnico: ${logError.message}`);
+            toast({ title: "Modificación guardada (audit error)", description: `Problema con la tabla de auditoría. Ejecuta el script SQL 33. Detalle: ${logError.message}`, variant: "destructive" });
           } else {
-            alert(
-              "Modificación guardada, pero hubo un problema registrando la auditoría: " +
-                logError.message
-            );
+            toast({ title: "Modificación guardada (audit error)", description: `No se pudo registrar la auditoría: ${logError.message}`, variant: "destructive" });
           }
         } else {
-          alert(
-            "Modificación guardada exitosamente con registro de auditoría completo"
-          );
+          // Show a red toast (white text) in the corner to notify the user
+          try {
+            toast({
+              title: "Modificación guardada",
+              description: `Folio: ${embarqueAModificar?.folio || ""}`,
+              className: "bg-red-600 text-white",
+            });
+          } catch (e) {
+            // no-op: toast is best-effort
+          }
         }
       } catch (auditError) {
         console.error("Error en auditoría:", auditError);
-        alert(
-          "Modificación guardada exitosamente, pero no se pudo registrar en auditoría. Contacta al administrador."
-        );
+        toast({ title: "Modificación guardada (audit error)", description: "No se pudo registrar en auditoría. Contacta al administrador.", variant: "destructive" });
       }
 
       setShowModifyModal(false);
@@ -1097,23 +1218,23 @@ export default function AsignarOperadoresPage() {
       await cargarDatos();
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al guardar modificación");
+      toast({ title: "Error al guardar modificación", variant: "destructive" });
     } finally {
       setSaving(false);
     }
   };
 
-  const finalizarEmbarque = async (embarqueId: string) => {
+  const finalizarEmbarque = (embarqueId: string) => {
     const embarque = embarques.find((e) => e.id === embarqueId);
     if (!embarque) return;
+    setEmbarqueAFinalizar(embarque);
+    setShowFinalizarDialog(true);
+  };
 
-    const confirmacion = confirm(
-      `¿Estás seguro de que deseas finalizar el embarque ${embarque.folio}?\n\n` +
-        `Este embarque pasará al área de Facturación y Cobranza y se marcará como completado.`
-    );
-
-    if (!confirmacion) return;
-
+  const confirmarFinalizarEmbarque = async () => {
+    if (!embarqueAFinalizar) return;
+    const embarqueId = embarqueAFinalizar.id;
+    setShowFinalizarDialog(false);
     try {
       setSaving(true);
 
@@ -1152,6 +1273,8 @@ export default function AsignarOperadoresPage() {
         return;
       }
 
+      // same post-success logic (localStorage updates)
+      const embarque = embarqueAFinalizar;
       const embarqueCompletado = {
         id: embarque.id,
         folio: embarque.folio,
@@ -1223,10 +1346,7 @@ export default function AsignarOperadoresPage() {
         JSON.stringify(embarquesAsignadosActualizados)
       );
 
-      alert(
-        `Embarque ${embarque.folio} finalizado exitosamente.\nAhora está disponible en el área de Facturación y Cobranza.`
-      );
-      // Refrescar datos de pantalla y del modal de completados
+      toast({ title: `Embarque ${embarque.folio} finalizado`, description: "Ahora está disponible en Facturación y Cobranza", variant: "success" });
       await Promise.all([
         cargarDatos(),
         cargarEmbarquesFinalizados(),
@@ -1236,6 +1356,7 @@ export default function AsignarOperadoresPage() {
       alert("Error al finalizar embarque");
     } finally {
       setSaving(false);
+      setEmbarqueAFinalizar(null);
     }
   };
 
@@ -1243,14 +1364,18 @@ export default function AsignarOperadoresPage() {
   const archivarEmbarque = async (embarqueId: string) => {
     const embarque = embarques.find((e) => e.id === embarqueId);
     if (!embarque) return;
-    const ok = window.confirm(
-      `¿Deseas archivar el embarque ${embarque.folio} en Registros Completados?\n\nQuedará disponible en Asignación → Registros Completados.`
-    );
-    if (!ok) return;
+    // abrir diálogo de confirmación en vez de window.confirm
+    setEmbarqueAArchivarAsignacion(embarque);
+    setShowArchivarAsignacionDialog(true);
+    return;
+  };
+
+  const confirmarArchivarAsignacion = async () => {
+    const embarque = embarqueAArchivarAsignacion;
+    if (!embarque) return;
     try {
       setSaving(true);
       const nowIso = new Date().toISOString();
-      // Marcar como archivado en Asignación usando una etiqueta en observaciones para no requerir cambios de esquema
       const tag = "[ARCHIVADO-ASIGNACION]";
       const observacionesPrevias = embarque.observaciones || "";
       const yaArchivado = observacionesPrevias.toUpperCase().includes(tag);
@@ -1261,20 +1386,23 @@ export default function AsignarOperadoresPage() {
       const { error } = await supabase
         .from("embarques")
         .update({ observaciones: nuevasObservaciones, updated_at: nowIso })
-        .eq("id", embarqueId);
+        .eq("id", embarque.id);
       if (error) {
         console.error("Error archivando embarque:", error);
-        alert(`Error al archivar: ${error.message}`);
+        toast({ title: "Error al archivar", description: error.message || "Error desconocido", variant: "destructive" });
         return;
       }
-      // Refrescar listas: quitar de la lista principal (si aplica) y asegurar que aparezca en "Registros Completados"
-      await cargarEmbarquesFinalizados();
-      await cargarDatos();
+  await cargarEmbarquesFinalizados();
+  await cargarDatos();
+  // Mostrar toast azul con texto blanco solo para este mensaje
+  toast({ title: "Embarque archivado exitosamente", description: `Folio: ${embarque.folio}`, className: "bg-blue-600 text-white" });
     } catch (e: any) {
       console.error("Error:", e);
-      alert("Error inesperado al archivar");
+      toast({ title: "Error", description: "Error inesperado al archivar", variant: "destructive" });
     } finally {
       setSaving(false);
+      setShowArchivarAsignacionDialog(false);
+      setEmbarqueAArchivarAsignacion(null);
     }
   };
 
@@ -1420,12 +1548,14 @@ export default function AsignarOperadoresPage() {
     </style>
   </head>
   <body>
-    <div class="header">
-      <h1>TRANSPORTES MONARCA</h1>
-      <h2>DETALLES COMPLETOS DEL EMBARQUE</h2>
-      <p><strong>Folio:</strong> ${embarqueDetalle.folio}</p>
-      <p><strong>Estado:</strong> ${embarqueDetalle.estado}</p>
-      <p><strong>Fecha de Impresión:</strong> ${new Date().toLocaleString()}</p>
+    <div class="header" style="margin-bottom:12px; padding-bottom:8px; border-bottom:1px solid #ddd;">
+      <h1 style="font-size:18px; margin:0; font-weight:700;">TRANSPORTES INTERNACIONALES, MONARCA</h1>
+      <h2 style="font-size:14px; margin:6px 0 8px 0; font-weight:600;">DETALLES COMPLETOS DEL EMBARQUE</h2>
+      <div style="display:flex; justify-content:center; gap:18px; font-size:13px;">
+        <div><strong>Folio:</strong> ${embarqueDetalle.folio}</div>
+        <div><strong>Estado:</strong> ${embarqueDetalle.estado}</div>
+        <div><strong>Fecha:</strong> ${new Date().toLocaleDateString()}</div>
+      </div>
     </div>
     
     <div class="section">
@@ -1615,10 +1745,14 @@ export default function AsignarOperadoresPage() {
     <div class="section">
       <div class="section-title">OBSERVACIONES</div>
       <div class="field full-width">
-        <div class="field-value" style="min-height: 60px; background-color: #f9f9f9; padding: 10px;">${
+        <div class="field-value" style="min-height: 40px; background-color: #f9f9f9; padding: 8px;">${
           embarqueDetalle.observaciones || "Sin observaciones"
         }</div>
       </div>
+    </div>
+
+    <div style="margin-top:10px; font-weight:700;">
+      Firma de autorizado: ________________________________ &nbsp;&nbsp; Fecha: ${new Date().toLocaleDateString()}
     </div>
   </body>
 </html>
@@ -1950,7 +2084,8 @@ export default function AsignarOperadoresPage() {
   }
 
   return (
-    <MainLayout>
+    <>
+      <MainLayout>
       <div className="space-y-4">
         <div className="flex justify-between items-center">
           <div>
@@ -1988,62 +2123,46 @@ export default function AsignarOperadoresPage() {
 
         {/* Estadísticas */}
         <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+          {/* 1) Embarques Pendientes por Asignar */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    Embarques Pendientes por Asignar
-                  </p>
-                  <p className="text-2xl font-bold text-blue-700">
-                    {
-                      embarques.filter((e) => e.estado === "listo-para-asignar")
-                        .length
-                    }
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Embarques Pendientes por Asignar</p>
+                  <p className="text-2xl font-bold text-blue-700">{embarques.filter((e) => e.estado === "listo-para-asignar").length}</p>
                 </div>
-                <svg
-                  className="h-8 w-8 text-blue-700"
-                  fill="none"
-                  stroke="currentColor"
-                  viewBox="0 0 24 24"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                  />
+                <svg className="h-8 w-8 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
             </CardContent>
           </Card>
+
+          {/* 2) Embarques por Finalizar */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    Operadores Disponibles
-                  </p>
-                  <p className="text-2xl font-bold text-gray-600">
-                    {operadores.filter((op) => op.estado === "activo").length}
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Embarques por Finalizar</p>
+                  <p className="text-2xl font-bold text-gray-600">{embarques.filter((e:any) => ["asignado","en-transito"].includes(e.estado)).length}</p>
                 </div>
-                <Users className="h-8 w-8 text-gray-600" />
+                <svg className="h-8 w-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
               </div>
             </CardContent>
           </Card>
+
+          {/* 3) Embarques con Contingencia */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Embarques con Contingencia</p>
-                  <p className="text-2xl font-bold text-red-600">
-                    {embarques.filter((e:any) => {
-                      const txt = (e.observaciones || "").toLowerCase();
-                      return e.estado === "contingencia" || e.modificado === true || txt.includes("contingencia") || txt.includes("emergencia");
-                    }).length}
-                  </p>
+                  <p className="text-2xl font-bold text-red-600">{embarques.filter((e:any) => {
+                    const txt = (e.observaciones || "").toLowerCase();
+                    return e.estado === "contingencia" || e.modificado === true || txt.includes("contingencia") || txt.includes("emergencia");
+                  }).length}</p>
                 </div>
                 <svg className="h-8 w-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
@@ -2051,31 +2170,29 @@ export default function AsignarOperadoresPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* 4) Tractocamiones Disponibles (cuenta estado === 'disponible') */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-medium text-gray-600">Tractocamiones Disponibles</p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {camiones.filter((c) => c.estado === "activo").length}
-                  </p>
+                  <p className="text-2xl font-bold text-green-600">{camiones.filter((c) => c.estado === "disponible").length}</p>
                 </div>
                 <Truck className="h-8 w-8 text-green-600" />
               </div>
             </CardContent>
           </Card>
+
+          {/* 5) Operadores Disponibles (moved to last) */}
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Embarques por Finalizar</p>
-                  <p className="text-2xl font-bold text-gray-600">
-                    {embarques.filter((e:any) => ["asignado","en-transito"].includes(e.estado)).length}
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Operadores Disponibles</p>
+                  <p className="text-2xl font-bold text-gray-600">{operadores.filter((op) => op.estado === "activo").length}</p>
                 </div>
-                <svg className="h-8 w-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
+                <Users className="h-8 w-8 text-gray-600" />
               </div>
             </CardContent>
           </Card>
@@ -2242,7 +2359,7 @@ export default function AsignarOperadoresPage() {
                           variant="default"
                           size="sm"
                           className="bg-green-600 hover:bg-green-700 text-white"
-                          onClick={() => finalizarEmbarque(embarque.id)}
+                          onClick={() => { setEmbarqueAFinalizar(embarque); setShowFinalizarDialog(true); }}
                           disabled={saving}
                         >
                           {saving ? (
@@ -2325,10 +2442,17 @@ export default function AsignarOperadoresPage() {
                             <div className="grid grid-cols-1 gap-3">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Operador</label>
-                                <p className="text-sm text-gray-900">
-                                  {embarque.operador
-                                    ? `${embarque.operador.nombre} ${embarque.operador.apellidos}`
-                                    : "Sin asignar"}
+                                <p className="text-sm text-gray-900 flex items-center gap-2">
+                                  <span>
+                                    {embarque.operador
+                                      ? `${embarque.operador.nombre} ${embarque.operador.apellidos}`
+                                      : "Sin asignar"}
+                                  </span>
+                                  {embarque.operador?.id && asignadosPorOperador[embarque.operador.id] > 0 && (
+                                    <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
+                                      {asignadosPorOperador[embarque.operador.id]}
+                                    </span>
+                                  )}
                                 </p>
                               </div>
                               <div className="space-y-1">
@@ -2784,9 +2908,16 @@ export default function AsignarOperadoresPage() {
                                       value={operador.id}
                                     >
                                       <div className="flex items-center justify-between w-full">
-                                        <span>
-                                          {operador.nombre} {operador.apellidos}
-                                        </span>
+                                        <div className="flex items-center gap-2">
+                                          <span>
+                                            {operador.nombre} {operador.apellidos}
+                                          </span>
+                                          {asignadosPorOperador[operador.id] > 0 && (
+                                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
+                                              {asignadosPorOperador[operador.id]}
+                                            </span>
+                                          )}
+                                        </div>
                                         {getVehicleStatusBadge(operador.estado)}
                                       </div>
                                     </SelectItem>
@@ -3072,32 +3203,22 @@ export default function AsignarOperadoresPage() {
                                   return;
                                 }
 
+                                // Abrir diálogo de confirmación (reemplaza confirm nativo)
                                 const operadorSeleccionado = operadores.find(
                                   (op) => op.id === asignacion.operador_id
                                 );
                                 const camionSeleccionado = camiones.find(
                                   (cam) => cam.id === asignacion.camion_id
                                 );
-
-                                const confirmacion = confirm(
-                                  `¿Estás seguro de que deseas asignar los siguientes recursos al embarque ${embarque.folio}?\n\n` +
-                                    `Operador: ${
-                                      operadorSeleccionado
-                                        ? `${operadorSeleccionado.nombre} ${operadorSeleccionado.apellidos}`
-                                        : "No seleccionado"
-                                    }\n` +
-                                    `Tractocamión: ${
-                                      camionSeleccionado
-                                        ? `${camionSeleccionado.numero_economico} - ${camionSeleccionado.marca}`
-                                        : "No seleccionado"
-                                    }\n` +
-                                    `Precio Flete: $${(Number(asignacion.precio_flete) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${asignacion.moneda_flete}\n\n` +
-                                    `Esta acción cambiará el estado del embarque a "Asignado".`
-                                );
-
-                                if (confirmacion) {
-                                  asignarRecursos(embarque.id);
-                                }
+                                setPendingAsignacion({
+                                  embarqueId: embarque.id,
+                                  embarqueFolio: embarque.folio || null,
+                                  operador: operadorSeleccionado || null,
+                                  camion: camionSeleccionado || null,
+                                  precio_flete: asignacion.precio_flete,
+                                  moneda_flete: asignacion.moneda_flete,
+                                });
+                                setShowConfirmAsignar(true);
                               }}
                               disabled={
                                 saving ||
@@ -3736,7 +3857,7 @@ export default function AsignarOperadoresPage() {
                         size="sm"
                         className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                       >
-                        📊 Descargar Excel
+                        Descargar Excel
                       </Button>
                       <Button
                         onClick={imprimirDetalles}
@@ -3744,7 +3865,7 @@ export default function AsignarOperadoresPage() {
                         size="sm"
                         className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                       >
-                        🖨️ Imprimir Detalles
+                        Imprimir Detalles
                       </Button>
                     </div>
                     <Button
@@ -3838,12 +3959,12 @@ export default function AsignarOperadoresPage() {
                 {/* Justificación Tab */}
                 {activeModifyTab === "justificacion" && (
                   <div className="space-y-6">
-                    <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-6">
+                    <div className="bg-white rounded-lg p-6">
                       <Label className="text-lg font-semibold mb-4 block text-red-800">
                         Justificación de la Modificación *
                       </Label>
                       <textarea
-                        className="w-full p-4 border border-yellow-300 rounded-md text-sm min-h-[120px]"
+                        className="w-full p-4 border border-gray-200 rounded-md text-sm min-h-[120px]"
                         placeholder="Explica detalladamente la razón de esta modificación (emergencia, contingencia, cambio de cliente, etc.)"
                         value={modificacionData.razon}
                         onChange={(e) =>
@@ -3899,11 +4020,7 @@ export default function AsignarOperadoresPage() {
                                     ? `${embarqueAModificar.operador.nombre} ${embarqueAModificar.operador.apellidos}`
                                     : "Sin asignar"}
                                 </span>
-                                {embarqueAModificar.operador?.telefono && (
-                                  <span className="text-xs text-gray-500">
-                                    Tel: {embarqueAModificar.operador.telefono}
-                                  </span>
-                                )}
+                                {/* Phone intentionally hidden in Operador tab */}
                               </div>
                             </div>
 
@@ -3932,15 +4049,18 @@ export default function AsignarOperadoresPage() {
                                       key={operador.id}
                                       value={operador.id}
                                     >
-                                      <div className="flex items-center gap-2">
-                                        <span className="font-medium">
-                                          {operador.nombre} {operador.apellidos}
-                                        </span>
-                                        {operador.telefono && (
-                                          <span className="text-xs text-gray-500">
-                                            {operador.telefono}
+                                      <div className="flex items-center justify-between w-full">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium">
+                                            {operador.nombre} {operador.apellidos}
                                           </span>
-                                        )}
+                                          {asignadosPorOperador[operador.id] > 0 && (
+                                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
+                                              {asignadosPorOperador[operador.id]}
+                                            </span>
+                                          )}
+                                        </div>
+                                        {/* Phone hidden in select list */}
                                       </div>
                                     </SelectItem>
                                   ))}
@@ -4221,7 +4341,7 @@ export default function AsignarOperadoresPage() {
                       {modificacionData.cambiar_flete && (
                         <div className="space-y-6">
                           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                            <div className="border rounded-lg p-4">
+                            <div className="rounded-lg p-4">
                               <h4 className="text-sm font-semibold text-gray-700 mb-3">
                                 Precio Flete Actual
                               </h4>
@@ -4395,49 +4515,61 @@ export default function AsignarOperadoresPage() {
                   </div>
                 </div>
 
-                {/* Periodos rápidos */}
-                <div className="mt-2 mb-3 flex flex-wrap gap-2">
+                {/* Periodos rápidos + Rango personalizado */}
+                <div className="mt-2 mb-3 flex flex-wrap items-center gap-2">
                   <Button
                     variant={completadosPeriodo === "todo" ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setCompletadosPeriodo("todo")}
+                    onClick={() => { setCompletadosPeriodo("todo"); setCompletadosFrom(null); setCompletadosTo(null); }}
                   >
                     Todo
                   </Button>
                   <Button
                     variant={completadosPeriodo === "mes_actual" ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setCompletadosPeriodo("mes_actual")}
+                    onClick={() => { setCompletadosPeriodo("mes_actual"); setCompletadosFrom(null); setCompletadosTo(null); }}
                   >
                     Mes actual
                   </Button>
                   <Button
                     variant={completadosPeriodo === "mes_anterior" ? "default" : "outline"}
                     size="sm"
-                    onClick={() => setCompletadosPeriodo("mes_anterior")}
+                    onClick={() => { setCompletadosPeriodo("mes_anterior"); setCompletadosFrom(null); setCompletadosTo(null); }}
                   >
                     Mes anterior
                   </Button>
+                  {/* Removed quick 3/6 months and this year options — use date range instead */}
+
+                  {/* Fecha Desde / Hasta para rango personalizado */}
+                  <label className="text-xs text-gray-500 ml-2">Desde</label>
+                  <input
+                    type="date"
+                    className="border rounded px-2 py-1 text-sm"
+                    value={completadosFrom || ""}
+                    onChange={(e) => {
+                      const v = e.target.value || null;
+                      setCompletadosFrom(v);
+                      setCompletadosPeriodo("rango");
+                    }}
+                  />
+                  <label className="text-xs text-gray-500">Hasta</label>
+                  <input
+                    type="date"
+                    className="border rounded px-2 py-1 text-sm"
+                    value={completadosTo || ""}
+                    onChange={(e) => {
+                      const v = e.target.value || null;
+                      setCompletadosTo(v);
+                      setCompletadosPeriodo("rango");
+                    }}
+                  />
                   <Button
-                    variant={completadosPeriodo === "ultimos_3" ? "default" : "outline"}
+                    variant="ghost"
                     size="sm"
-                    onClick={() => setCompletadosPeriodo("ultimos_3")}
+                    onClick={() => { setCompletadosFrom(null); setCompletadosTo(null); setCompletadosPeriodo("todo"); }}
+                    className="text-xs"
                   >
-                    Últ. 3 meses
-                  </Button>
-                  <Button
-                    variant={completadosPeriodo === "ultimos_6" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setCompletadosPeriodo("ultimos_6")}
-                  >
-                    Últ. 6 meses
-                  </Button>
-                  <Button
-                    variant={completadosPeriodo === "este_anio" ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => setCompletadosPeriodo("este_anio")}
-                  >
-                    Este año
+                    Limpiar
                   </Button>
                 </div>
 
@@ -4487,13 +4619,13 @@ export default function AsignarOperadoresPage() {
                   </div>
                 ) : (
                   <div className="border rounded-lg overflow-x-auto">
-                    <table className="min-w-full text-sm">
+                    <table className="min-w-full text-sm table-fixed">
                       <thead>
                         <tr className="bg-purple-50">
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-40 md:w-48 cursor-pointer select-none" onClick={() => handleSortCompletados("folio")}>Folio{sortIndicatorCompletados("folio")}</th>
                           <th className="px-3 py-2 text-left font-semibold w-48 md:w-64 cursor-pointer select-none" onClick={() => handleSortCompletados("cliente")}>Cliente{sortIndicatorCompletados("cliente")}</th>
                           <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-14 md:w-16 cursor-pointer select-none" onClick={() => handleSortCompletados("load")}>Load{sortIndicatorCompletados("load")}</th>
-                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-32 cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
+                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-12 md:w-16 cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
                           <th className="px-3 py-2 text-right font-semibold whitespace-nowrap w-40">Monto Facturado</th>
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-28">Resultado</th>
                           <th className="px-3 py-2 text-left font-semibold w-32 cursor-pointer select-none" onClick={() => handleSortCompletados("fecha")}>Fecha Finalización{sortIndicatorCompletados("fecha")}</th>
@@ -4508,7 +4640,7 @@ export default function AsignarOperadoresPage() {
                             <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">{embarque.folio}</td>
                             <td className="px-3 py-2 w-48 md:w-64 truncate">{embarque.cliente?.nombre || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-14 md:w-16 truncate">{embarque.load_number || ""}</td>
-                            <td className="px-2 py-2 whitespace-nowrap w-32 md:w-36 truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
+                            <td className="px-2 py-2 whitespace-nowrap w-12 md:w-16 truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {(() => {
                                 const monto =
@@ -4728,5 +4860,96 @@ export default function AsignarOperadoresPage() {
         </div>
       )}
     </MainLayout>
+    {/* Dialog de confirmación para asignar recursos (ubicado fuera de printContent) */}
+    <Dialog open={showFinalizarDialog} onOpenChange={setShowFinalizarDialog}>
+      <DialogContent>
+        {embarqueAFinalizar ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Finalizar embarque</DialogTitle>
+              <DialogDescription>
+                {"¿Estás seguro de que deseas finalizar el embarque " + (embarqueAFinalizar.folio || '') + "?"}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <p className="text-sm"><b>Folio:</b> {embarqueAFinalizar.folio}</p>
+              <p className="text-sm"><b>Cliente:</b> {embarqueAFinalizar.cliente?.nombre || 'No especificado'}</p>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => setShowFinalizarDialog(false)}>Cancelar</Button>
+              <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={async () => { await confirmarFinalizarEmbarque(); }}>
+                Confirmar
+              </Button>
+            </div>
+          </>
+        ) : null}
+      </DialogContent>
+    </Dialog>
+    <Dialog open={showArchivarAsignacionDialog} onOpenChange={setShowArchivarAsignacionDialog}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Archivar embarque</DialogTitle>
+          <DialogDescription>
+            ¿Deseas archivar el embarque {embarqueAArchivarAsignacion?.folio} en Registros Completados?\nQuedará disponible en Asignación → Registros Completados.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="outline" onClick={() => { setShowArchivarAsignacionDialog(false); setEmbarqueAArchivarAsignacion(null); }}>Cancelar</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={async () => { await confirmarArchivarAsignacion(); }} disabled={saving}>Archivar</Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    <Dialog open={showEliminarCompletadoDialog} onOpenChange={setShowEliminarCompletadoDialog}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Eliminar embarque</DialogTitle>
+          <DialogDescription>
+            ¿Eliminar definitivamente el embarque {embarqueAEliminarCompletado?.folio}? Esta acción no se puede deshacer.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="outline" onClick={() => { setShowEliminarCompletadoDialog(false); setEmbarqueAEliminarCompletado(null); }}>Cancelar</Button>
+          <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={async () => { await confirmarEliminarCompletado(); }} disabled={saving}>
+            Eliminar definitivamente
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  {/* Dialog de éxito por modificación eliminado: ahora usamos toast rojo */}
+    <Dialog open={showConfirmAsignar} onOpenChange={setShowConfirmAsignar}>
+      <DialogContent>
+        {pendingAsignacion ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>Asignar recursos</DialogTitle>
+              <DialogDescription>
+                {"¿Estás seguro de que deseas asignar los recursos seleccionados al embarque " + (
+                  pendingAsignacion.embarqueFolio ||
+                  (embarques.find(e => e.id === pendingAsignacion.embarqueId)?.folio) ||
+                  (pendingAsignacion.embarqueId ? pendingAsignacion.embarqueId : "")
+                ) + "?"}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-2">
+              <p className="text-sm"><b>Operador:</b> {pendingAsignacion.operador ? (pendingAsignacion.operador.nombre + " " + (pendingAsignacion.operador.apellidos || "")) : 'No seleccionado'}</p>
+              <p className="text-sm"><b>Tractocamión:</b> {pendingAsignacion.camion ? (pendingAsignacion.camion.numero_economico + ' - ' + (pendingAsignacion.camion.marca || '')) : 'No seleccionado'}</p>
+              <p className="text-sm"><b>Precio Flete:</b> {pendingAsignacion.precio_flete ? ('$' + ((Number(pendingAsignacion.precio_flete) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })) + ' ' + (pendingAsignacion.moneda_flete || '')) : 'No especificado'}</p>
+            </div>
+          </>
+        ) : null}
+        <div className="flex justify-end gap-2 mt-4">
+          <Button variant="outline" onClick={() => setShowConfirmAsignar(false)}>Cancelar</Button>
+          <Button className="bg-blue-600 hover:bg-blue-700 text-white" onClick={async () => {
+            if (!pendingAsignacion?.embarqueId) return;
+            setShowConfirmAsignar(false);
+            await asignarRecursos(pendingAsignacion.embarqueId);
+            setPendingAsignacion(null);
+          }}>
+            Confirmar asignación
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

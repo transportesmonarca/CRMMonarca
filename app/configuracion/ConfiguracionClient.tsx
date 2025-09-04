@@ -890,6 +890,15 @@ export default function ConfiguracionPage() {
                                                             setSavingSec(true)
                                                             await setSecuritySettings(secSettings as any)
                                                             await agregarAuditLog('ACTUALIZAR', 'Seguridad', 'Políticas actualizadas')
+                                                            // Apply new session timeout to current client so it takes effect immediately
+                                                            try {
+                                                                const u = getCurrentUser()
+                                                                if (u) {
+                                                                    const minutes = Number(secSettings.session_timeout_minutes) || 30
+                                                                    const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString()
+                                                                    try { localStorage.setItem('user_expires_at', expiresAt) } catch (e) { /* ignore */ }
+                                                                }
+                                                            } catch (e) { /* ignore */ }
                                                             setSecConfirmOpen(false)
                                                         } catch (e: any) {
                                                             alert('Error guardando políticas: ' + (e.message || e))

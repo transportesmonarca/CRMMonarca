@@ -28,6 +28,13 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+} from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Users,
@@ -57,8 +64,9 @@ import { exportOperadoresToExcel, exportOperadorDetalleToExcel } from "./excel-e
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, type Operador } from "@/lib/supabase";
-import { subirDocumentoOperador, eliminarDocumentoOperador } from "@/lib/blob";
+import { subirDocumentoOperador, eliminarDocumentoOperador, subirFotoPerfilOperador, eliminarFotoPerfilOperador, subirArchivoOperador, listarArchivosOperador, eliminarArchivoOperador } from "@/lib/blob";
 import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
 
 interface DocumentoOperador {
   id: string;
@@ -71,6 +79,7 @@ interface DocumentoOperador {
   tamano_bytes?: number;
   tipo_mime?: string;
   fecha_vencimiento?: string;
+  display_url?: string;
   activo: boolean;
   notas?: string;
   fecha_subida: string;
@@ -95,17 +104,46 @@ export default function OperadoresPage() {
   const [activeTab, setActiveTab] = useState("general");
   const [documentos, setDocumentos] = useState<DocumentoOperador[]>([]);
   const [loadingDocumentos, setLoadingDocumentos] = useState(false);
+  // Foto de perfil activa para el modal de detalles
+  const [perfilFoto, setPerfilFoto] = useState<any | null>(null);
+  const [perfilLoading, setPerfilLoading] = useState(false);
+  // Ref to keep recently deleted targets to avoid immediate UI re-show (debounce server races)
+  const recentlyDeletedRef = useRef<Set<string>>(new Set());
+  const RECENTLY_DELETED_TTL = 15 * 1000; // ms to keep suppressed
 
   // Observaciones (comentarios) - se almacena como JSON en campo observaciones
   interface ComentarioOperador {
     id: string;
     texto: string;
     fecha: string; // ISO string
+  usuario?: string | null;
   }
   const [comentarios, setComentarios] = useState<ComentarioOperador[]>([]);
+
+  // Helper: parsear fechas "YYYY-MM-DD" (o ISO date-only) como fecha local sin shift por zona horaria
+  const parseDateOnlyLocal = (value?: string | null) => {
+    if (!value) return null;
+    const m = String(value).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (m) {
+      const y = Number(m[1]);
+      const mo = Number(m[2]) - 1;
+      const d = Number(m[3]);
+      return new Date(y, mo, d);
+    }
+    const parsed = new Date(value);
+    if (isNaN(parsed.getTime())) return null;
+    return parsed;
+  };
   const [nuevoComentario, setNuevoComentario] = useState("");
   const [editandoComentarioId, setEditandoComentarioId] = useState<string | null>(null);
   const [textoEdicion, setTextoEdicion] = useState("");
+  const nuevoComentarioRef = useRef<HTMLTextAreaElement | null>(null);
+  // Paginación para observaciones
+  const [comentariosPage, setComentariosPage] = useState<number>(1);
+  const [comentariosPerPage, setComentariosPerPage] = useState<number>(5);
+  const comentariosPageOptions = [3, 5, 10, 20, 50];
+
+  // (eliminación de comentarios mostrará un toast destructivo cuando provenga del botón de papelera)
 
   // Estados para fotografía y documentos básicos
   const [fotoOperador, setFotoOperador] = useState<File | null>(null);
@@ -119,6 +157,8 @@ export default function OperadoresPage() {
 
   // Estados para los datos
   const [operadores, setOperadores] = useState<Operador[]>([]);
+  const [operadorEmbarquesDialogOpen, setOperadorEmbarquesDialogOpen] = useState(false);
+  const [operadorEmbarquesList, setOperadorEmbarquesList] = useState<string[]>([]);
   // Toggle para columnas (2 o 3)
   const [cols, setCols] = useState<2 | 3>(3);
   // Foto principal y documentos adicionales (antiguo comportamiento)
@@ -501,8 +541,20 @@ export default function OperadoresPage() {
   ) => {
     const files = Array.from(event.target.files || []);
 
-    if (documentosBasicos.length + files.length > 7) {
-      setError("Máximo 7 documentos adicionales permitidos");
+    // Calcular cuántos documentos ya existen en el servidor para este operador
+    const existingCount = operadorDetalle ? (documentos || []).filter(d => String(d.operador_id) === String(operadorDetalle.id) && d.activo).length : 0;
+    const currentSelectedCount = documentosBasicos.length;
+    const allowedRemaining = Math.max(0, 7 - existingCount - currentSelectedCount);
+
+    if (allowedRemaining <= 0) {
+      // Ya alcanzó el máximo
+      toast({ title: 'Recuerda que sólo puedes cargar hasta siete documentos', variant: 'destructive' });
+      return;
+    }
+
+    if (files.length > allowedRemaining) {
+      // Informar cuántos puede agregar como máximo
+      toast({ title: `Solo puedes agregar ${allowedRemaining} documento(s) más (ya tienes ${existingCount} cargados)`, variant: 'destructive' });
       return;
     }
 
@@ -561,66 +613,22 @@ export default function OperadoresPage() {
   const subirFotografiaYDocumentos = async (operadorId: string) => {
     try {
       const resultados: string[] = [];
-      // Subir foto principal si existe
+      // Subir foto principal si existe: usar la nueva tabla imagenes_perfil_operador
       if (fotoOperador) {
         setUploadingFoto(true);
-        const { url: fotoUrl, pathname: fotoPathname } = await subirDocumentoOperador(
-          operadorId,
-          fotoOperador,
-          'fotografia_operador'
-        );
-        const insertFotoResp = await supabase.from('documentos_operadores').insert({
-          operador_id: operadorId,
-          tipo_documento: 'fotografia_operador',
-          nombre_archivo: fotoOperador.name || null,
-          url_blob: fotoUrl,
-          // Compatibilidad con esquemas legados que usan url_archivo NOT NULL
-          url_archivo: fotoUrl,
-          pathname: fotoPathname,
-          // Compat con esquemas legados que usan pathname_archivo NOT NULL
-          pathname_archivo: fotoPathname,
-          tamano_bytes: fotoOperador.size || null,
-          tipo_mime: fotoOperador.type || null,
-          notas: 'Fotografía del operador',
-          subido_por: 'Sistema',
-          activo: true,
-        }).select();
-  if (insertFotoResp.error) {
-          console.error('Error insertando foto en DB (error):', safeStringify(insertFotoResp.error));
-          console.error('Error insertando foto en DB (resp):', safeStringify(insertFotoResp));
-          throw new Error(`Error insertando foto: ${insertFotoResp.error.message || safeStringify(insertFotoResp.error)}`);
-        }
-        resultados.push('Fotografía subida');
+        const resp = await subirFotoPerfilOperador(operadorId, fotoOperador);
+        resultados.push('Fotografía de perfil subida');
       }
 
       // Subir documentos adicionales (hasta 7)
+      // Estos archivos ahora se guardan en la tabla `archivos_operadores` y en la carpeta operadores/{id}/archivos/
       if (documentosBasicos.length > 0) {
         setUploadingDocumentos(true);
         for (let i = 0; i < Math.min(7, documentosBasicos.length); i++) {
           const documento = documentosBasicos[i];
-          const tipo = `documento_basico_${i + 1}`;
-          const { url: docUrl, pathname: docPathname } = await subirDocumentoOperador(operadorId, documento, tipo);
-          const insertDocResp = await supabase.from('documentos_operadores').insert({
-            operador_id: operadorId,
-            tipo_documento: tipo,
-            nombre_archivo: documento.name || null,
-            url_blob: docUrl,
-            // Compatibilidad con esquemas legados que usan url_archivo NOT NULL
-            url_archivo: docUrl,
-            pathname: docPathname,
-            // Compat legada: pathname_archivo
-            pathname_archivo: docPathname,
-            tamano_bytes: documento.size || null,
-            tipo_mime: documento.type || null,
-            notas: `Documento básico ${i + 1}`,
-            subido_por: 'Sistema',
-            activo: true,
-          }).select();
-          if (insertDocResp.error) {
-            console.error('Error insertando documento en DB (error):', safeStringify(insertDocResp.error));
-            console.error('Error insertando documento en DB (resp):', safeStringify(insertDocResp));
-            throw new Error(`Error insertando documento: ${insertDocResp.error.message || safeStringify(insertDocResp.error)}`);
-          }
+          // subir usando la nueva API que inserta en archivos_operadores
+          const { url: docUrl, pathname: docPathname } = await subirArchivoOperador(operadorId, documento, { subidoPor: 'Sistema' });
+          console.debug('[diagnostic] archivo subido a archivos_operadores:', { operadorId, pathname: docPathname, url: docUrl });
         }
         resultados.push(`${Math.min(7, documentosBasicos.length)} documentos subidos`);
       }
@@ -662,12 +670,12 @@ export default function OperadoresPage() {
         let fotosMap: Record<string, string> = {};
 
         if (ids.length > 0) {
-          const { data: fotosData, error: fotosError } = await supabase
-            .from("documentos_operadores")
-            .select("operador_id,url_blob,url_archivo,tipo_documento")
-            .in("operador_id", ids)
-            .eq("tipo_documento", "fotografia_operador")
-            .eq("activo", true);
+            // Leer foto de perfil desde la nueva tabla
+            const { data: fotosData, error: fotosError } = await supabase
+              .from("imagenes_perfil_operador")
+              .select("operador_id,url_blob,pathname,activo")
+              .in("operador_id", ids)
+              .eq("activo", true);
 
           if (fotosError) {
             console.warn("Error cargando fotos operadores:", fotosError);
@@ -694,58 +702,120 @@ export default function OperadoresPage() {
     }
   };
 
+  // Cargar foto de perfil activa para el operador en el modal de detalles
+  const cargarPerfilFoto = async (operadorId: string) => {
+    try {
+      setPerfilLoading(true);
+      const { data, error } = await supabase
+        .from('imagenes_perfil_operador')
+        .select('*')
+        .eq('operador_id', operadorId)
+        .eq('activo', true)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+
+      if (error) {
+        console.warn('Error cargando foto de perfil:', error);
+        setPerfilFoto(null);
+      } else {
+        setPerfilFoto(data || null);
+      }
+    } catch (e) {
+      console.warn('Error cargando foto de perfil:', e);
+      setPerfilFoto(null);
+    } finally {
+      setPerfilLoading(false);
+    }
+  };
+
   const cargarDocumentosOperador = async (operadorId: string) => {
     try {
       setLoadingDocumentos(true);
 
-      const { data, error } = await supabase
-        .from("documentos_operadores")
-        .select("*")
-        .eq("operador_id", operadorId)
-        .eq("activo", true)
-        .order("fecha_subida", { ascending: false });
+      // Leer documentos legacy junto con la nueva tabla archivos_operadores.
+      const [legacyResp, archivosResp] = await Promise.all([
+        supabase
+          .from("documentos_operadores")
+          .select("*")
+          .eq("operador_id", operadorId)
+          .neq("tipo_documento", "fotografia_operador")
+          .eq("activo", true)
+          .order("fecha_subida", { ascending: false }),
+        listarArchivosOperador(operadorId).then((d: any) => ({ data: d, error: null })).catch((e: any) => ({ data: null, error: e })),
+      ]);
 
-      if (error) {
-        console.error("Error cargando documentos:", error);
-        setDocumentos([]);
-      } else {
-        // Ordenar documentos: fotografía primero, luego documentos básicos, luego otros
-        const documentosOrdenados = (data || []).sort((a, b) => {
-          // Fotografía del operador va primero
-          if (a.tipo_documento === "fotografia_operador") return -1;
-          if (b.tipo_documento === "fotografia_operador") return 1;
-
-          // Documentos básicos van después
-          if (
-            a.tipo_documento.startsWith("documento_basico_") &&
-            !b.tipo_documento.startsWith("documento_basico_")
-          )
-            return -1;
-          if (
-            b.tipo_documento.startsWith("documento_basico_") &&
-            !a.tipo_documento.startsWith("documento_basico_")
-          )
-            return 1;
-
-          // Si ambos son documentos básicos, ordenar por número
-          if (
-            a.tipo_documento.startsWith("documento_basico_") &&
-            b.tipo_documento.startsWith("documento_basico_")
-          ) {
-            const numA = Number.parseInt(a.tipo_documento.split("_")[2]) || 0;
-            const numB = Number.parseInt(b.tipo_documento.split("_")[2]) || 0;
-            return numA - numB;
-          }
-
-          // Para otros documentos, ordenar por fecha de subida (más reciente primero)
-          return (
-            new Date(b.fecha_subida).getTime() -
-            new Date(a.fecha_subida).getTime()
-          );
-        });
-
-        setDocumentos(documentosOrdenados);
+      if (legacyResp.error) {
+        console.error("Error cargando documentos legacy:", legacyResp.error);
       }
+      if (archivosResp.error) {
+        console.error('Error cargando archivos_operadores:', archivosResp.error);
+      }
+
+      // merge results: prefer archivos_operadores entries (they have pathname + url_blob)
+      const archivos = (archivosResp.data || []) as any[];
+      const legacy = (legacyResp.data || []) as any[];
+
+      // Normalize both sets into a common DocumentoOperador shape
+      const normalizedArchivos = archivos.map((a) => ({
+        id: a.id,
+        operador_id: a.operador_id,
+        tipo_documento: 'archivo_operador',
+        nombre_archivo: a.nombre_archivo || a.pathname?.split('/').pop() || '',
+        url_blob: a.url_blob || '',
+        pathname: a.pathname || '',
+        tamano_bytes: a.tamano_bytes || null,
+        tipo_mime: a.tipo_mime || '',
+        fecha_subida: a.fecha_subida || a.created_at || null,
+        display_url: a.url_blob && /^https?:\/\//i.test(a.url_blob) ? a.url_blob : `/api/blob-proxy?pathname=${encodeURIComponent(a.pathname || a.url_blob || '')}`,
+        activo: a.activo,
+        subido_por: a.subido_por || null,
+      })) as any[];
+
+      const normalizedLegacy = legacy.map((d) => ({
+        id: d.id,
+        operador_id: d.operador_id,
+        tipo_documento: d.tipo_documento,
+        nombre_archivo: d.nombre_archivo || d.pathname?.split('/').pop() || '',
+        url_blob: d.url_blob || d.url_archivo || '',
+        pathname: d.pathname || d.pathname_archivo || '',
+        tamano_bytes: d.tamano_bytes || null,
+        tipo_mime: d.tipo_mime || '',
+        fecha_subida: d.fecha_subida || d.created_at || null,
+        display_url: (d.url_blob || d.url_archivo) && /^https?:\/\//i.test(d.url_blob || d.url_archivo) ? (d.url_blob || d.url_archivo) : `/api/blob-proxy?pathname=${encodeURIComponent(d.pathname || d.url_blob || d.url_archivo || '')}`,
+        activo: d.activo,
+        notas: d.notas || null,
+      })) as any[];
+
+      // Combine, preferring archivos (de-duplicate by pathname)
+      const byPath = new Map<string, any>();
+      for (const a of normalizedLegacy) {
+        const key = String(a.pathname || a.url_blob || a.nombre_archivo || a.id || 'legacy_' + Math.random());
+        byPath.set(key, a);
+      }
+      for (const a of normalizedArchivos) {
+        const key = String(a.pathname || a.url_blob || a.nombre_archivo || a.id);
+        byPath.set(key, a); // overwrite legacy if same key
+      }
+
+      let merged = Array.from(byPath.values());
+
+      // Order by fecha_subida desc
+      merged = merged.sort((a, b) => {
+        const ta = a.fecha_subida ? new Date(a.fecha_subida).getTime() : 0;
+        const tb = b.fecha_subida ? new Date(b.fecha_subida).getTime() : 0;
+        return tb - ta;
+      });
+
+      // Filtrar elementos recientemente marcados como eliminados para evitar re-aparición inmediata
+      const filtered = (merged || []).filter((d: any) => {
+        try {
+          const t = d.pathname || d.url_blob || '';
+          if (!t) return true;
+          return !recentlyDeletedRef.current.has(String(t));
+        } catch { return true; }
+      });
+      setDocumentos(filtered as any[]);
     } catch (error) {
       console.error("Error:", error);
       setDocumentos([]);
@@ -757,6 +827,15 @@ export default function OperadoresPage() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  // Cuando se abre el modal de detalles, cargar la foto de perfil activa
+  useEffect(() => {
+    if (showDetailsModal && operadorDetalle) {
+      cargarPerfilFoto(operadorDetalle.id);
+    } else {
+      setPerfilFoto(null);
+    }
+  }, [showDetailsModal, operadorDetalle]);
 
   // Parsear observaciones actuales cuando se abre el modal de detalles
   useEffect(() => {
@@ -774,6 +853,7 @@ export default function OperadoresPage() {
             )
           ) {
             setComentarios(parsed as ComentarioOperador[]);
+            setComentariosPage(1);
           } else {
             // Tratar todo el texto como un único comentario
             setComentarios([
@@ -783,6 +863,7 @@ export default function OperadoresPage() {
                 fecha: new Date().toISOString(),
               },
             ]);
+            setComentariosPage(1);
           }
         } else {
           setComentarios([]);
@@ -796,6 +877,13 @@ export default function OperadoresPage() {
       setTextoEdicion("");
     }
   }, [showDetailsModal, operadorDetalle]);
+
+  // Derivados de paginación de comentarios
+  const comentariosTotalPages = Math.max(1, Math.ceil(comentarios.length / Math.max(1, comentariosPerPage)));
+  useEffect(() => {
+    if (comentariosPage > comentariosTotalPages) setComentariosPage(comentariosTotalPages);
+  }, [comentariosTotalPages]);
+  const comentariosPaginated = comentarios.slice((comentariosPage - 1) * comentariosPerPage, comentariosPage * comentariosPerPage);
 
   const persistirComentarios = async (lista: ComentarioOperador[]) => {
     if (!operadorDetalle) return;
@@ -824,13 +912,34 @@ export default function OperadoresPage() {
   const agregarComentario = async () => {
     const texto = nuevoComentario.trim();
     if (!texto) return;
+    // intentar obtener usuario autenticado para registrar autor
+    let autor: string | null = null;
+    try {
+      // supabase v2 getUser
+      try {
+        const userRes: any = await (supabase as any).auth.getUser?.();
+        if (userRes && userRes.data && userRes.data.user) {
+          const u = userRes.data.user;
+          autor = (u.user_metadata && (u.user_metadata.full_name || u.user_metadata.name)) || u.email || u.id || null;
+        }
+      } catch (e) {
+        // fallback older API
+        const maybeUser: any = (supabase as any).auth?.user?.() || null;
+        if (maybeUser) autor = maybeUser.email || maybeUser.id || null;
+      }
+    } catch (e) {
+      // ignore
+    }
+
     const nuevo: ComentarioOperador = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2,8)}`,
       texto,
       fecha: new Date().toISOString(),
+      usuario: autor,
     };
     const lista = [nuevo, ...comentarios];
     setComentarios(lista);
+    setComentariosPage(1);
     setNuevoComentario("");
     await persistirComentarios(lista);
   };
@@ -860,10 +969,17 @@ export default function OperadoresPage() {
     setTextoEdicion("");
   };
 
-  const eliminarComentario = async (id: string) => {
+  const eliminarComentario = async (id: string, showToast = false) => {
     const lista = comentarios.filter((c) => c.id !== id);
     setComentarios(lista);
     await persistirComentarios(lista);
+    if (showToast) {
+      try {
+        toast({ title: 'Comentario eliminado', description: 'Se eliminó la observación. Revisa la pestaña "Documentos" para NSS / RFC / CURP.', variant: 'destructive' });
+      } catch (e) {
+        // ignore toast failures
+      }
+    }
   };
 
   const resetForm = () => {
@@ -1033,6 +1149,75 @@ export default function OperadoresPage() {
         const newOperador = insertResult?.data;
         console.log('[DEBUG] Operador creado:', newOperador);
 
+        // Crear automáticamente un recordatorio de cumpleaños para el nuevo operador
+        try {
+          if (newOperador && newOperador.fecha_nacimiento) {
+              const nacimiento = parseDateOnlyLocal(newOperador.fecha_nacimiento) ?? new Date(newOperador.fecha_nacimiento);
+            if (!isNaN(nacimiento.getTime())) {
+              const hoy = new Date();
+              const añoActual = hoy.getFullYear();
+              let fechaCumple = new Date(añoActual, nacimiento.getMonth(), nacimiento.getDate());
+              // Si ya pasó este año, usar el siguiente
+              if (fechaCumple < new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate())) {
+                fechaCumple = new Date(añoActual + 1, nacimiento.getMonth(), nacimiento.getDate());
+              }
+              const vencimiento = new Date(fechaCumple);
+              vencimiento.setDate(vencimiento.getDate() + 7); // una semana después
+
+              const fmt = (d: Date) => d.toLocaleDateString('es-MX');
+              const titulo = `Cumpleaños de ${newOperador.nombre} ${newOperador.apellidos}`;
+              const descripcion = `El cumpleaños de este operador es ${fmt(nacimiento)}. Fecha de cumpleaños para este año: ${fmt(fechaCumple)}. Vencimiento del recordatorio: ${fmt(vencimiento)}`;
+
+              const formatDateForDB = (d: Date) => {
+                const y = d.getFullYear();
+                const m = String(d.getMonth() + 1).padStart(2, '0');
+                const dd = String(d.getDate()).padStart(2, '0');
+                return `${y}-${m}-${dd}`;
+              };
+
+              const fechaVencStr = formatDateForDB(vencimiento);
+
+              // Evitar duplicados: verificar si ya existe un recordatorio con mismo operador y fecha_vencimiento
+              const { data: existeRec } = await supabase
+                .from('recordatorios')
+                .select('id')
+                .eq('operador_id', newOperador.id)
+                .eq('fecha_vencimiento', fechaVencStr)
+                .limit(1)
+                .maybeSingle();
+
+              if (!existeRec) {
+                const insertRecResult = await supabase.from('recordatorios').insert({
+                  titulo,
+                  descripcion,
+                  fecha_vencimiento: fechaVencStr,
+                  tipo: 'cumpleanos',
+                  prioridad: 'baja',
+                  estado: 'pendiente',
+                  operador_id: newOperador.id,
+                  fecha_creacion: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
+
+                const recError = insertRecResult?.error;
+                if (recError) {
+                  console.error('Error creando recordatorio de cumpleaños:', recError);
+                  // no block: solo informar en consola y audit (usar CREAR como acción válida)
+                  try { agregarAuditLog('CREAR', 'Recordatorios', `No se pudo crear recordatorio de cumpleaños para operador ${newOperador.id}: ${recError.message || JSON.stringify(recError)}`); } catch {}
+                } else {
+                  try { agregarAuditLog('CREAR', 'Recordatorios', `Recordatorio de cumpleaños creado para operador ${newOperador.id}`); } catch {}
+                }
+              } else {
+                console.debug('Recordatorio de cumpleaños ya existe para operador', newOperador.id, 'fecha', fechaVencStr);
+              }
+
+              
+            }
+          }
+        } catch (e) {
+          console.error('Excepción creando recordatorio de cumpleaños:', e);
+        }
+
         // Audit log: creación de operador
         try {
           agregarAuditLog(
@@ -1049,13 +1234,16 @@ export default function OperadoresPage() {
             setSuccess(
               `Operador creado exitosamente. ${resultados.join(", ")}`
             );
+            toast({ title: 'Operador creado exitosamente', variant: 'success' });
           } catch (error) {
             setSuccess(
               "Operador creado exitosamente, pero hubo errores subiendo algunos archivos"
             );
+            toast({ title: 'Operador creado exitosamente', variant: 'success' });
           }
         } else {
           setSuccess("Operador creado exitosamente");
+          toast({ title: 'Operador creado exitosamente', variant: 'success' });
         }
       }
 
@@ -1134,6 +1322,16 @@ export default function OperadoresPage() {
     setContactosEmergencia(contactosCargados);
 
     setEditingId(operador.id);
+    // Mostrar la foto de perfil vigente en el modal de edición si existe
+    try {
+      if (operador.foto_url) {
+        setFotoOperadorUrl(operador.foto_url);
+      } else {
+        setFotoOperadorUrl("");
+      }
+    } catch (e) {
+      setFotoOperadorUrl("");
+    }
     setShowModal(true);
   };
 
@@ -1155,9 +1353,7 @@ export default function OperadoresPage() {
       }
 
       if (!operador || operador.estado !== "inactivo") {
-        window.alert(
-          "No se puede eliminar. El operador debe estar en estado INACTIVO."
-        );
+        toast({ title: 'No se puede eliminar. El operador debe estar en estado INACTIVO.', variant: 'destructive' });
         return;
       }
 
@@ -1174,15 +1370,9 @@ export default function OperadoresPage() {
       }
 
       if (embarques && embarques.length > 0) {
-        const listado = embarques
-          .slice(0, 5)
-          .map((e) => e.folio || e.id)
-          .join(", ");
-        window.alert(
-          `No se puede eliminar: el operador tiene embarques asociados (${embarques.length}). Folios: ${listado}${
-            embarques.length > 5 ? "..." : ""
-          }`
-        );
+        const listado = embarques.map((e) => `${e.folio || e.id}`).filter(Boolean) as string[];
+        setOperadorEmbarquesList(listado.slice(0, 20));
+        setOperadorEmbarquesDialogOpen(true);
         return;
       }
 
@@ -1263,7 +1453,7 @@ export default function OperadoresPage() {
         return;
       }
 
-      setSuccess("Operador eliminado exitosamente");
+  toast({ title: 'Operador eliminado exitosamente', variant: 'destructive' });
       // Audit log: eliminación de operador
       try {
         agregarAuditLog(
@@ -1380,26 +1570,289 @@ export default function OperadoresPage() {
 
   const eliminarDocumento = async (documento: DocumentoOperador) => {
     try {
-      // Eliminar de Blob storage
-      await eliminarDocumentoOperador(documento.pathname);
+      const anyDoc: any = documento as any;
+      let target = documento.pathname || anyDoc.pathname_archivo || documento.url_blob || anyDoc.url_archivo || null;
 
-      // Marcar como inactivo en la base de datos
-      const { error } = await supabase
-        .from("documentos_operadores")
-        .update({ activo: false, updated_at: new Date().toISOString() })
-        .eq("id", documento.id);
-
-      if (error) {
-        console.error("Error eliminando documento:", error);
-        setError("Error al eliminar documento");
+      if (!target) {
+        setError('No se encontró información de ubicación del archivo (pathname/url) para eliminar.');
         return;
       }
 
-      setSuccess("Documento eliminado exitosamente");
-      await cargarDocumentosOperador(documento.operador_id);
-    } catch (error) {
-      console.error("Error:", error);
-      setError("Error al eliminar documento");
+      // Si el target es la URL del proxy (/api/blob-proxy?pathname=...), extraer el pathname decodificado
+      try {
+        if (typeof target === 'string' && target.startsWith('/api/blob-proxy')) {
+          const u = new URL(window.location.origin + target);
+          const p = u.searchParams.get('pathname') || '';
+          try { target = decodeURIComponent(p) } catch { target = p }
+        }
+        // Si es una URL completa a blob.vercel-storage.com, pasarla tal cual y el servidor la normalizará
+      } catch (e) {
+        // ignore parse errors
+      }
+
+  // Variables de diagnóstico/limpieza con scope de función
+  let encodedTarget = '';
+  let basename = '';
+  let decodedTarget: string | null = null;
+  let blobDeleted = false;
+
+  // Marcar como inactivo primero (optimistic) para que desaparezca de la UI inmediatamente
+  setSaving(true);
+
+      // Construir condiciones para limpiar duplicados legados: buscar por id OR por cualquiera de las columnas que guardan la ubicación
+      const conditions = [] as string[]
+      conditions.push(`id.eq.${documento.id}`)
+      try {
+        if (target) {
+          // es posible que target sea una URL completa o un pathname
+          // Actualizar tanto pathname como pathname_archivo y url_blob/url_archivo
+          const esc = (v: string) => v.replace(/'/g, "''")
+          conditions.push(`pathname.eq.${encodeURIComponent(String(target))}`)
+          conditions.push(`pathname_archivo.eq.${encodeURIComponent(String(target))}`)
+          conditions.push(`url_blob.eq.${encodeURIComponent(String(target))}`)
+          conditions.push(`url_archivo.eq.${encodeURIComponent(String(target))}`)
+        }
+      } catch (e) {
+        console.warn('Error construyendo condiciones de eliminación:', e)
+      }
+
+
+      // Ejecutar updates separados para asegurar coincidencias (id + posibles campos legacy)
+      try {
+        // 1) por id
+        const { error: e1 } = await supabase
+          .from('documentos_operadores')
+          .update({ activo: false, updated_at: new Date().toISOString() })
+          .eq('id', documento.id)
+        if (e1) throw e1
+
+        // 2) por campos de ubicación (si target está presente)
+        if (target) {
+          const cols = ['pathname', 'pathname_archivo', 'url_blob', 'url_archivo']
+          encodedTarget = encodeURIComponent(String(target))
+
+          // Extraer basename del target para búsquedas por substring (archivo.ext)
+          basename = String(target)
+          try {
+            // si es una url, parsear y obtener pathname
+            if (/^https?:\/\//i.test(basename)) {
+              const pu = new URL(basename)
+              basename = pu.pathname.split('/').pop() || basename
+            } else {
+              basename = basename.split('/').pop() || basename
+            }
+          } catch (e) {
+            // fallback
+            basename = String(target).split('/').pop() || String(target)
+          }
+
+          for (const col of cols) {
+            try {
+              // exact match (decoded)
+              let q: any = supabase
+                .from('documentos_operadores')
+                .update({ activo: false, updated_at: new Date().toISOString() })
+                .eq(col, String(target))
+              q.eq('operador_id', documento.operador_id)
+              const { error: e2 } = await q
+              if (e2) console.warn(`No se pudo marcar inactivo por ${col} exact:`, e2)
+
+              // exact match (encoded)
+              if (encodedTarget !== String(target)) {
+                let q2: any = supabase
+                  .from('documentos_operadores')
+                  .update({ activo: false, updated_at: new Date().toISOString() })
+                  .eq(col, encodedTarget)
+                q2.eq('operador_id', documento.operador_id)
+                const { error: e3 } = await q2
+                if (e3) console.warn(`No se pudo marcar inactivo por ${col} encoded:`, e3)
+              }
+
+              // substring match on filename
+              if (basename && basename.length > 3) {
+                try {
+                  let q3: any = supabase
+                    .from('documentos_operadores')
+                    .update({ activo: false, updated_at: new Date().toISOString() })
+                    .ilike(col, `%${basename}%`)
+                  q3.eq('operador_id', documento.operador_id)
+                  const { error: e4 } = await q3
+                  if (e4) console.warn(`No se pudo marcar inactivo por ${col} ilike:`, e4)
+                } catch (ie) {
+                  console.warn(`Excepción en ilike para ${col}:`, ie)
+                }
+              }
+            } catch (inner) {
+              console.warn(`Excepción marcando inactivo por ${col}:`, inner)
+            }
+          }
+        }
+      } catch (errAny) {
+        console.error('Error actualizando documentos a inactivo:', errAny)
+        setError('Error al marcar documento(s) como inactivo: ' + String((errAny as any)?.message || JSON.stringify(errAny)))
+        setSaving(false)
+        return
+      }
+
+      // Intentar eliminar desde la nueva tabla archivos_operadores si existe (no hace daño si no existe)
+      try {
+        try {
+          // prefer id if disponible
+          if (documento && documento.id) {
+            await eliminarArchivoOperador({ id: documento.id });
+            blobDeleted = true;
+          } else if (target) {
+            await eliminarArchivoOperador({ pathname: target });
+            blobDeleted = true;
+          }
+        } catch (e) {
+          // si falla, ignorar y continuar con la lógica existente
+          console.debug('No se eliminó desde archivos_operadores (puede no existir):', e);
+        }
+      } catch (e) {
+        console.warn('Error intentando eliminar en archivos_operadores:', e);
+      }
+
+      // Si el documento coincide con la foto de perfil activa, eliminarla
+      try {
+        if (perfilFoto && target && (perfilFoto.pathname === target || perfilFoto.url_blob === target)) {
+          // usar la ruta de eliminarFotoPerfilOperador para mantener consistencia en la tabla imagenes_perfil_operador
+          try {
+            await eliminarFotoPerfilOperador({ id: perfilFoto.id });
+            setPerfilFoto(null);
+            blobDeleted = true; // eliminarFotoPerfilOperador ya intentó eliminar el blob
+          } catch (pfErr) {
+            console.warn('No se pudo eliminar foto de perfil asociada al documento:', pfErr);
+          }
+        }
+      } catch (pfAny) {
+        console.warn('Error comprobando foto de perfil al eliminar documento:', pfAny);
+      }
+
+      // Actualizar UI: quitar cualquier documento que coincida por id o por target (evitar que re-aparezca un duplicado)
+      setDocumentos((prev) => prev.filter((d) => {
+        const anyD: any = d as any
+        if (d.id === documento.id) return false
+        if (!target) return true
+
+        // decoded/encoded variants
+        try {
+          if (!decodedTarget && typeof target === 'string') {
+            try { decodedTarget = decodeURIComponent(String(target)); } catch { decodedTarget = null }
+          }
+        } catch {}
+
+        const variants = new Set<string>();
+        variants.add(String(target));
+        if (encodedTarget) variants.add(encodedTarget);
+        if (decodedTarget) variants.add(decodedTarget);
+        if (basename) variants.add(basename);
+
+        // check common fields
+        if (variants.has(String(anyD.pathname))) return false
+        if (variants.has(String(anyD.pathname_archivo))) return false
+        if (variants.has(String(anyD.url_blob))) return false
+        if (variants.has(String(anyD.url_archivo))) return false
+
+        // also match by filename or substring
+        try {
+          const filename = String(anyD.nombre_archivo || '').split('/').pop() || '';
+          if (basename && filename && filename.includes(basename)) return false
+          if (basename && (String(anyD.pathname || '').includes(basename) || String(anyD.url_blob || '').includes(basename))) return false
+        } catch (e) {}
+
+        // if matches current perfilFoto (different object), remove it as well
+        try {
+          if (perfilFoto && (String(anyD.pathname) === String(perfilFoto.pathname) || String(anyD.url_blob) === String(perfilFoto.url_blob))) return false
+        } catch (e) {}
+
+        return true
+      }))
+
+      // Añadir target al conjunto de supresión temporal para evitar re-aparición inmediata
+      try {
+        if (target && typeof target === 'string') {
+          recentlyDeletedRef.current.add(target);
+          setTimeout(() => {
+            try { recentlyDeletedRef.current.delete(target); } catch {};
+          }, RECENTLY_DELETED_TTL);
+        }
+      } catch (e) {
+        // ignore
+      }
+
+      // Intentar eliminar el blob en segundo plano (si no se eliminó vía foto de perfil)
+      try {
+        if (!blobDeleted) {
+          await eliminarDocumentoOperador(target);
+        } else {
+          console.debug('Salteando eliminación de blob porque ya fue eliminada por eliminarFotoPerfilOperador');
+        }
+
+          // Adicional: limpiar cualquier fila duplicada LEGADA en toda la tabla
+          // (no limitar por operador_id). Esto evita que registros huérfanos o con
+          // operador_id incorrecto reaparezcan después de una eliminación.
+          try {
+            const globalCols = ['pathname', 'pathname_archivo', 'url_blob', 'url_archivo']
+            for (const gcol of globalCols) {
+              try {
+                const { error: ge1 } = await supabase
+                  .from('documentos_operadores')
+                  .update({ activo: false, updated_at: new Date().toISOString() })
+                  .eq(gcol, String(target))
+                if (ge1) console.warn(`No se pudo marcar inactivo global por ${gcol} exact:`, ge1)
+
+                // encoded
+                if (encodedTarget !== String(target)) {
+                  const { error: ge2 } = await supabase
+                    .from('documentos_operadores')
+                    .update({ activo: false, updated_at: new Date().toISOString() })
+                    .eq(gcol, encodedTarget)
+                  if (ge2) console.warn(`No se pudo marcar inactivo global por ${gcol} encoded:`, ge2)
+                }
+
+                // basename ilike global
+                if (basename && basename.length > 3) {
+                  try {
+                    const { error: ge3 } = await supabase
+                      .from('documentos_operadores')
+                      .update({ activo: false, updated_at: new Date().toISOString() })
+                      .ilike(gcol, `%${basename}%`)
+                    if (ge3) console.warn(`No se pudo marcar inactivo global por ${gcol} ilike:`, ge3)
+                  } catch (gie) {
+                    console.warn(`Excepción en global ilike para ${gcol}:`, gie)
+                  }
+                }
+              } catch (ginner) {
+                console.warn(`Excepción marcando inactivo global por ${gcol}:`, ginner)
+              }
+            }
+          } catch (gerr) {
+            console.warn('Error ejecutando limpieza global de duplicados:', gerr)
+          }
+      } catch (err) {
+        console.warn('Error eliminando blob (pero DB ya marcado inactivo):', err);
+        // No revertir la inactivación. Mostrar advertencia al usuario.
+        setError('El archivo fue marcado como eliminado en el sistema, pero hubo un error eliminando el archivo en almacenamiento. Contacta al administrador.');
+      }
+
+      setSuccess('Documento eliminado exitosamente');
+      // Force refresh from DB to ensure UI is fully in sync with storage and metadata
+      try {
+        if (documento && documento.operador_id) {
+          await cargarDocumentosOperador(documento.operador_id);
+        }
+        // Also refresh main operadores list in case the operator's foto_url changed
+        await cargarDatos();
+      } catch (refreshErr) {
+        console.warn('Error refreshing documents/operadores after delete:', refreshErr);
+      }
+    } catch (error: any) {
+      console.error('Error eliminando documento:', error);
+      const msg = error instanceof Error ? error.message : String(error);
+      setError(`Error al eliminar documento: ${msg}`);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -1650,11 +2103,9 @@ export default function OperadoresPage() {
                   <p className="text-2xl font-bold text-yellow-600">
                     {
                       operadores.filter((op) => {
-                        if (!op.fecha_vencimiento_licencia) return false;
-                        const dias =
-                          (new Date(op.fecha_vencimiento_licencia).getTime() -
-                            new Date().getTime()) /
-                          (1000 * 60 * 60 * 24);
+                          if (!op.fecha_vencimiento_licencia) return false;
+                          const fvLic = parseDateOnlyLocal(op.fecha_vencimiento_licencia) ?? new Date(op.fecha_vencimiento_licencia);
+                          const dias = (fvLic.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24);
                         return dias >= 0 && dias <= 30;
                       }).length
                     }
@@ -1676,12 +2127,8 @@ export default function OperadoresPage() {
                     {
                       operadores.filter((op) => {
                         if (!op.fecha_vencimiento_apto_medico) return false;
-                        const dias =
-                          (new Date(
-                            op.fecha_vencimiento_apto_medico
-                          ).getTime() -
-                            new Date().getTime()) /
-                          (1000 * 60 * 60 * 24);
+                        const fvApto = parseDateOnlyLocal(op.fecha_vencimiento_apto_medico) ?? new Date(op.fecha_vencimiento_apto_medico);
+                        const dias = (fvApto.getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24);
                         return dias >= 0 && dias <= 30;
                       }).length
                     }
@@ -1704,11 +2151,10 @@ export default function OperadoresPage() {
                       operadores.filter((op) => {
                         if (!op.fecha_nacimiento) return false;
                         const hoy = new Date();
-                        const cumple = new Date(op.fecha_nacimiento);
+                        const cumpleDate = parseDateOnlyLocal(op.fecha_nacimiento) ?? new Date(op.fecha_nacimiento);
+                        const cumple = new Date(cumpleDate.getTime());
                         cumple.setFullYear(hoy.getFullYear());
-                        const diff =
-                          (cumple.getTime() - hoy.getTime()) /
-                          (1000 * 60 * 60 * 24);
+                        const diff = (cumple.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24);
                         return diff >= 0 && diff <= 14; // próximas 2 semanas
                       }).length
                     }
@@ -1906,11 +2352,10 @@ export default function OperadoresPage() {
                               );
                               return;
                             }
-                            setSuccess(
-                              nuevoEstado === "activo"
-                                ? "Operador activado correctamente"
-                                : "Operador desactivado correctamente"
-                            );
+                            toast({
+                              title: nuevoEstado === "activo" ? 'Operador activado correctamente' : 'Operador desactivado correctamente',
+                              variant: nuevoEstado === 'activo' ? 'success' : 'destructive',
+                            });
                             // Audit log: cambio de estado
                             try {
                               agregarAuditLog(
@@ -2062,7 +2507,7 @@ export default function OperadoresPage() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-600">
-                      {new Date(operador.fecha_nacimiento).toLocaleDateString()}
+                      {(parseDateOnlyLocal(operador.fecha_nacimiento) ?? new Date(operador.fecha_nacimiento)).toLocaleDateString()}
                     </p>
                   </div>
                 )}
@@ -2082,7 +2527,7 @@ export default function OperadoresPage() {
                 {/* Fecha de registro */}
                 <div className="text-xs text-gray-400 pt-2 border-t">
                   Registrado:{" "}
-                  {new Date(operador.fecha_registro).toLocaleDateString()}
+                  {(new Date(operador.fecha_registro)).toLocaleDateString()}
                 </div>
               </CardContent>
             </Card>
@@ -2160,6 +2605,28 @@ export default function OperadoresPage() {
         )}
       </div>
 
+      {/* Dialog para mostrar embarques asociados cuando la eliminación está bloqueada */}
+      <Dialog open={operadorEmbarquesDialogOpen} onOpenChange={setOperadorEmbarquesDialogOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>No es posible eliminar el operador</DialogTitle>
+            <DialogDescription>
+              El operador tiene embarques asociados. A continuación se muestran los folios (hasta 20):
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-2 max-h-60 overflow-y-auto">
+            <ul className="list-disc pl-5 space-y-1 text-sm">
+              {operadorEmbarquesList.map((f) => (
+                <li key={f}>{f}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="flex justify-end pt-4">
+            <Button onClick={() => setOperadorEmbarquesDialogOpen(false)}>Cerrar</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Modal de Formulario con Pestañas */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -2189,7 +2656,7 @@ export default function OperadoresPage() {
             <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
               <form onSubmit={handleSubmit} className="p-6">
                 <Tabs defaultValue="personal" className="w-full">
-                  <TabsList className="grid w-full grid-cols-7">
+                  <TabsList className="grid w-full grid-cols-6">
                     <TabsTrigger
                       value="personal"
                       className="flex items-center gap-2"
@@ -2769,7 +3236,7 @@ export default function OperadoresPage() {
                                         <td className="p-2">{c.correo || '—'}</td>
                                         <td className="p-2">
                                           <div className="flex gap-2">
-                                            <Button type="button" size="sm" onClick={() => { setEditingContactoIndex(idx); setNuevoContacto({ ...contactosEmergencia[idx] }); }}>Editar</Button>
+                                            <Button type="button" size="sm" onClick={() => { setEditingContactoIndex(idx); setNuevoContacto({ ...contactosEmergencia[idx] }); }} className="bg-green-600 hover:bg-green-700 text-white">Editar</Button>
                                             <Button type="button" size="sm" variant="outline" onClick={() => { setContactosEmergencia(contactosEmergencia.filter((_, i) => i !== idx)); }}>Eliminar</Button>
                                           </div>
                                         </td>
@@ -2889,17 +3356,17 @@ export default function OperadoresPage() {
                     <TabsTrigger value="general" className="flex items-center gap-2">
                       <User className="h-4 w-4" /> General
                     </TabsTrigger>
-                    <TabsTrigger value="ids" className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" /> IDs
-                    </TabsTrigger>
                     <TabsTrigger value="licencias" className="flex items-center gap-2">
                       <FileText className="h-4 w-4" /> Licencias
                     </TabsTrigger>
                     <TabsTrigger value="fotografias" className="flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4" /> Fotografías ({documentos.filter(doc => doc.tipo_mime?.startsWith('image/') || doc.tipo_documento === 'fotografia_operador').length})
+                      <ImageIcon className="h-4 w-4" /> Fotografías {(documentos.filter(doc => doc.tipo_mime?.startsWith('image/')).length + (perfilFoto ? 1 : 0))}
                     </TabsTrigger>
                     <TabsTrigger value="contactos" className="flex items-center gap-2">
                       <Contact className="h-4 w-4" /> Contactos de Emergencia
+                    </TabsTrigger>
+                    <TabsTrigger value="documentos" className="flex items-center gap-2">
+                      <IdCard className="h-4 w-4" /> Documentos
                     </TabsTrigger>
                     <TabsTrigger value="observaciones" className="flex items-center gap-2">
                       <FileText className="h-4 w-4" /> Observaciones
@@ -2969,7 +3436,7 @@ export default function OperadoresPage() {
                         </div>
                         <div>
                           <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Fecha de Nacimiento</p>
-                          <p>{operadorDetalle.fecha_nacimiento ? new Date(operadorDetalle.fecha_nacimiento).toLocaleDateString() : '—'}</p>
+                          <p>{operadorDetalle.fecha_nacimiento ? (parseDateOnlyLocal(operadorDetalle.fecha_nacimiento) ?? new Date(operadorDetalle.fecha_nacimiento)).toLocaleDateString('es-MX', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}</p>
                         </div>
                         <div>
                           <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Tipo de Sangre</p>
@@ -2995,52 +3462,55 @@ export default function OperadoresPage() {
                     </div>
                   </TabsContent>
 
-                  {/* Tab IDs */}
-                  <TabsContent value="ids" className="space-y-6 mt-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-                      <div>
-                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">CURP</p>
-                        <p className="font-mono break-all text-sm">{operadorDetalle.curp || '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">RFC</p>
-                        <p className="font-mono break-all text-sm">{operadorDetalle.rfc || '—'}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">NSS</p>
-                        <p className="font-mono break-all text-sm">{operadorDetalle.nss || '—'}</p>
-                      </div>
+                  {/* IDs merged into Licencias below */}
+
+                  {/* Tab Licencias */}
+                  <TabsContent value="licencias" className="space-y-4 mt-6 text-base min-h-[220px]">
+                    <h4 className="text-base font-semibold text-gray-700 uppercase tracking-wide">Documentos y Vencimientos</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
+                      <p className="text-base">
+                        <span className="font-semibold">Licencia:</span> <span className="font-medium text-gray-800">{operadorDetalle.licencia || '—'}</span>
+                        {operadorDetalle.fecha_vencimiento_licencia && (
+                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_licencia) ?? new Date(operadorDetalle.fecha_vencimiento_licencia)).toLocaleDateString()}</span>
+                        )}
+                      </p>
+                      <p className="text-base">
+                        <span className="font-semibold">Apto Médico:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_apto_medico || '—'}</span>
+                        {operadorDetalle.fecha_vencimiento_apto_medico && (
+                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_apto_medico) ?? new Date(operadorDetalle.fecha_vencimiento_apto_medico)).toLocaleDateString()}</span>
+                        )}
+                      </p>
+                      <p className="text-base">
+                        <span className="font-semibold">FAST:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_fast || '—'}</span>
+                        {operadorDetalle.fecha_vencimiento_fast && (
+                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_fast) ?? new Date(operadorDetalle.fecha_vencimiento_fast)).toLocaleDateString()}</span>
+                        )}
+                      </p>
+                      <p className="text-base">
+                        <span className="font-semibold">Visa:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_visa || '—'}</span>
+                        {operadorDetalle.fecha_vencimiento_visa && (
+                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_visa) ?? new Date(operadorDetalle.fecha_vencimiento_visa)).toLocaleDateString()}</span>
+                        )}
+                      </p>
                     </div>
                   </TabsContent>
 
-                  {/* Tab Licencias */}
-                  <TabsContent value="licencias" className="space-y-4 mt-6 text-sm">
-                    <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Documentos y Vencimientos</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
-                      <p className="text-sm">
-                        <span className="font-semibold">Licencia:</span> {operadorDetalle.licencia || '—'}
-                        {operadorDetalle.fecha_vencimiento_licencia && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorDetalle.fecha_vencimiento_licencia).toLocaleDateString()}</span>
-                        )}
-                      </p>
-                      <p className="text-sm">
-                        <span className="font-semibold">Apto Médico:</span> {operadorDetalle.numero_apto_medico || '—'}
-                        {operadorDetalle.fecha_vencimiento_apto_medico && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorDetalle.fecha_vencimiento_apto_medico).toLocaleDateString()}</span>
-                        )}
-                      </p>
-                      <p className="text-sm">
-                        <span className="font-semibold">FAST:</span> {operadorDetalle.numero_fast || '—'}
-                        {operadorDetalle.fecha_vencimiento_fast && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorDetalle.fecha_vencimiento_fast).toLocaleDateString()}</span>
-                        )}
-                      </p>
-                      <p className="text-sm">
-                        <span className="font-semibold">Visa:</span> {operadorDetalle.numero_visa || '—'}
-                        {operadorDetalle.fecha_vencimiento_visa && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorDetalle.fecha_vencimiento_visa).toLocaleDateString()}</span>
-                        )}
-                      </p>
+                  {/* Tab Documentos (NSS / RFC / CURP) */}
+                  <TabsContent value="documentos" className="space-y-4 mt-6 text-base min-h-[140px]">
+                    <h4 className="text-base font-semibold text-gray-700 uppercase tracking-wide">Identificadores</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <p className="text-sm text-gray-500">Número de Seguro Social (NSS)</p>
+                        <p className="text-lg text-gray-800">{operadorDetalle.nss || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">RFC</p>
+                        <p className="text-lg text-gray-800">{operadorDetalle.rfc || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-gray-500">CURP</p>
+                        <p className="text-lg text-gray-800">{operadorDetalle.curp || '—'}</p>
+                      </div>
                     </div>
                   </TabsContent>
 
@@ -3050,123 +3520,204 @@ export default function OperadoresPage() {
                       <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
                         Archivos Subidos ({documentos.length})
                       </h3>
-                      {loadingDocumentos ? (
-                        <div className="flex items-center justify-center py-8">
-                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
-                          <span className="ml-2 text-sm text-gray-600">Cargando archivos...</span>
+                      {/* Two-column layout: left = perfil, right = documentos */}
+                      <div className="grid grid-cols-1 md:grid-cols-[220px_1fr] gap-6">
+                        {/* Left: perfil foto + actions */}
+                        <div className="border rounded-lg p-4 bg-white flex flex-col items-center">
+                          {perfilLoading ? (
+                            <div className="flex items-center gap-2">
+                              <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                              <span className="text-sm text-gray-600">Cargando foto de perfil…</span>
+                            </div>
+                          ) : perfilFoto ? (
+                            <div className="flex flex-col items-center w-full">
+                              <div className="w-40 h-40 rounded-lg overflow-hidden bg-gray-100 border-2 border-green-400">
+                                <img src={perfilFoto.url_blob || `/api/blob-proxy?pathname=${encodeURIComponent(perfilFoto.pathname)}`} alt="Foto de perfil" className="w-full h-full object-cover" onError={(e:any)=>{e.currentTarget.src='/placeholder-user.jpg'}} />
+                              </div>
+                              <div className="text-center mt-3">
+                                <p className="font-medium">Fotografía de perfil</p>
+                                <p className="text-sm text-gray-500">Subida: {perfilFoto.created_at ? new Date(perfilFoto.created_at).toLocaleString() : '—'}</p>
+                              </div>
+                              <div className="mt-4 w-full flex flex-col gap-2">
+                                <Button size="sm" variant="outline" onClick={() => window.open(perfilFoto.url_blob || `/api/blob-proxy?pathname=${encodeURIComponent(perfilFoto.pathname)}`, '_blank')}>Ver</Button>
+                                <Button size="sm" variant="outline" onClick={() => {
+                                  try {
+                                    const downloadUrl = perfilFoto.url_blob || `/api/blob-proxy?pathname=${encodeURIComponent(perfilFoto.pathname)}`;
+                                    const ext = (perfilFoto.pathname || perfilFoto.url_blob || '').split('.').pop() || 'jpg';
+                                    const filename = (perfilFoto.nombre_archivo || `foto_perfil_${perfilFoto.operador_id || operadorDetalle?.id || 'operador'}.${ext}`).replace(/\s+/g, '_');
+                                    const link = document.createElement('a');
+                                    link.href = downloadUrl;
+                                    link.download = filename;
+                                    link.target = '_blank';
+                                    document.body.appendChild(link);
+                                    link.click();
+                                    document.body.removeChild(link);
+                                  } catch (e) {
+                                    console.error('Error al descargar foto de perfil', e);
+                                    toast({ title: 'Error', description: 'No se pudo descargar la foto.', variant: 'destructive' });
+                                  }
+                                }}>
+                                  <Download className="h-3 w-3 mr-1" /> Descargar
+                                </Button>
+                                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white" onClick={async()=>{ try { await eliminarFotoPerfilOperador({ id: perfilFoto.id }); setPerfilFoto(null); await cargarDocumentosOperador(operadorDetalle.id); toast({ title: 'Foto eliminada', description: 'La foto de perfil fue removida.', variant: 'destructive' }); } catch (e:any){ console.error(e); toast({ title: 'Error', description: e?.message || String(e), variant: 'destructive' }) } }}>
+                                  Eliminar
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="text-sm text-gray-500">No hay fotografía de perfil asignada.</div>
+                          )}
                         </div>
-                      ) : documentos.length === 0 ? (
-                        <div className="text-center py-8 text-gray-500">
-                          <ImageIcon className="h-16 w-16 mx-auto mb-4 text-gray-300" />
-                          <p className="text-lg font-medium">No hay archivos subidos</p>
-                          <p className="text-sm mt-1">Los archivos cargados en el registro aparecerán aquí</p>
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-                          {/* Mostrar primero imágenes, luego otros archivos */}
-                          {documentos
-                            .sort((a, b) => {
-                              const aImg = a.tipo_mime?.startsWith('image/');
-                              const bImg = b.tipo_mime?.startsWith('image/');
-                              if (aImg === bImg) return 0;
-                              return aImg ? -1 : 1;
-                            })
-                            .map((documento) => {
-                              const esImagen = documento.tipo_mime?.startsWith('image/');
-                              const esPrincipal = documento.tipo_documento === 'fotografia_operador';
-                              return (
-                                <div
-                                  key={documento.id}
-                                  className={`border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow ${esPrincipal ? 'border-green-500 ring-2 ring-green-400' : ''}`}
-                                >
-                                  <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
-                                    {esImagen ? (
-                                      <img
-                                        src={documento.url_blob || '/placeholder.svg'}
-                                        alt={documento.nombre_archivo}
-                                        className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
-                                        onClick={() => window.open(documento.url_blob, '_blank')}
-                                        onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
-                                      />
-                                    ) : (
-                                      <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
-                                        <FileText className="h-8 w-8 mb-2" />
-                                        <span className="text-[10px]">{documento.nombre_archivo}</span>
+
+                        {/* Right: documentos */}
+                        <div>
+                          {loadingDocumentos ? (
+                            <div className="flex items-center justify-center py-8">
+                              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                              <span className="ml-2 text-sm text-gray-600">Cargando archivos...</span>
+                            </div>
+                          ) : documentos.length === 0 ? (
+                            <div className="text-center py-8 text-gray-500">
+                              <ImageIcon className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                              <p className="text-lg font-medium">No hay archivos subidos</p>
+                              <p className="text-sm mt-1">Los archivos cargados en el registro aparecerán aquí</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                              {/* Mostrar primero imágenes, luego otros archivos */}
+                              {documentos
+                                .sort((a, b) => {
+                                  const aImg = a.tipo_mime?.startsWith('image/');
+                                  const bImg = b.tipo_mime?.startsWith('image/');
+                                  if (aImg === bImg) return 0;
+                                  return aImg ? -1 : 1;
+                                })
+                                .map((documento) => {
+                                  const esImagen = documento.tipo_mime?.startsWith('image/');
+                                  const esPrincipal = perfilFoto ? (perfilFoto.pathname === documento.pathname || perfilFoto.url_blob === documento.url_blob) : false;
+                                  return (
+                                    <div
+                                      key={documento.id}
+                                      className={`border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow ${esPrincipal ? 'border-green-500 ring-2 ring-green-400' : ''}`}
+                                    >
+                                      <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
+                                          {esImagen ? (
+                                          <img
+                                            src={documento.display_url || '/placeholder.svg'}
+                                            alt={documento.nombre_archivo}
+                                            className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                                            onClick={() => window.open(documento.display_url || documento.url_blob, '_blank')}
+                                            onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
+                                          />
+                                        ) : (
+                                          <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
+                                            <FileText className="h-8 w-8 mb-2" />
+                                            <span className="text-[10px]">{documento.nombre_archivo}</span>
+                                          </div>
+                                        )}
+                                              {esPrincipal && (
+                                                <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded shadow">FOTOGRAFÍA PRINCIPAL</div>
+                                              )}
+                                        <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                          <div className="text-white text-center">
+                                            <Eye className="h-5 w-5 mx-auto mb-1" />
+                                            <span className="text-[10px]">Click para ver</span>
+                                          </div>
+                                        </div>
                                       </div>
-                                    )}
-                                    {esPrincipal && (
-                                      <div className="absolute top-2 left-2 bg-green-500 text-white text-xs px-2 py-1 rounded shadow">FOTOGRAFÍA PRINCIPAL</div>
-                                    )}
-                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                                      <div className="text-white text-center">
-                                        <Eye className="h-5 w-5 mx-auto mb-1" />
-                                        <span className="text-[10px]">Click para ver</span>
-                                      </div>
-                                    </div>
-                                  </div>
-                                  <div className="space-y-2">
-                                    <div className="flex items-center justify-between">
-                                      <Badge className={esPrincipal ? 'bg-green-100 text-green-800 text-[10px]' : esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
-                                        {esPrincipal ? 'FOTOGRAFÍA PRINCIPAL' : esImagen ? 'IMAGEN' : 'ARCHIVO'}
-                                      </Badge>
-                                      <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
-                                    </div>
-                                    <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
-                                    <p className="text-[10px] text-gray-400">{new Date(documento.fecha_subida).toLocaleDateString()} a las {new Date(documento.fecha_subida).toLocaleTimeString()}</p>
-                                    {documento.notas && (<p className="text-[10px] text-gray-600 bg-gray-50 p-2 rounded">{documento.notas}</p>)}
-                                    <div className="flex space-x-2 pt-2">
-                                      <Button variant="outline" size="sm" className="flex-1 bg-transparent" onClick={() => window.open(documento.url_blob, '_blank')}>
-                                        <Eye className="h-3 w-3 mr-1" /> Ver
-                                      </Button>
-                                      <Button variant="outline" size="sm" className="flex-1 bg-transparent" onClick={() => {
-                                        const link = document.createElement('a');
-                                        link.href = documento.url_blob;
-                                        link.download = documento.nombre_archivo;
-                                        link.target = '_blank';
-                                        document.body.appendChild(link);
-                                        link.click();
-                                        document.body.removeChild(link);
-                                      }}>
-                                        <Download className="h-3 w-3 mr-1" /> Descargar
-                                      </Button>
-                                      <AlertDialog>
-                                        <AlertDialogTrigger asChild>
-                                          <Button variant="outline" size="sm">
-                                            <Trash2 className="h-3 w-3 text-red-500" />
+                                      <div className="space-y-2">
+                                        <div className="flex items-center justify-between">
+                                          <Badge className={esPrincipal ? 'bg-green-100 text-green-800 text-[10px]' : esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
+                                            {esPrincipal ? 'FOTOGRAFÍA PRINCIPAL' : esImagen ? 'IMAGEN' : 'ARCHIVO'}
+                                          </Badge>
+                                          <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
+                                        </div>
+                                        <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
+                                        <p className="text-[10px] text-gray-400">{new Date(documento.fecha_subida).toLocaleDateString()} a las {new Date(documento.fecha_subida).toLocaleTimeString()}</p>
+                                        {documento.notas && (<p className="text-[10px] text-gray-600 bg-gray-50 p-2 rounded">{documento.notas}</p>)}
+                                        <div className="flex space-x-2 pt-2">
+                                          <Button aria-label="Ver documento" title="Ver" variant="outline" size="sm" className="flex-1 bg-transparent" onClick={() => window.open(documento.display_url || documento.url_blob, '_blank')}>
+                                            <Eye className="h-3 w-3" />
                                           </Button>
-                                        </AlertDialogTrigger>
-                                        <AlertDialogContent>
-                                          <AlertDialogHeader>
-                                            <AlertDialogTitle>¿Eliminar archivo?</AlertDialogTitle>
-                                            <AlertDialogDescription>Esta acción no se puede deshacer. El archivo se eliminará permanentemente.</AlertDialogDescription>
-                                          </AlertDialogHeader>
-                                          <AlertDialogFooter>
-                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                            <AlertDialogAction onClick={() => eliminarDocumento(documento)}>Eliminar</AlertDialogAction>
-                                          </AlertDialogFooter>
-                                        </AlertDialogContent>
-                                      </AlertDialog>
+                                          <Button aria-label="Descargar documento" title="Descargar" variant="outline" size="sm" className="flex-1 bg-transparent" onClick={() => {
+                                            const link = document.createElement('a');
+                                            link.href = documento.display_url || documento.url_blob;
+                                            link.download = documento.nombre_archivo;
+                                            link.target = '_blank';
+                                            document.body.appendChild(link);
+                                            link.click();
+                                            document.body.removeChild(link);
+                                          }}>
+                                            <Download className="h-3 w-3" />
+                                          </Button>
+                                          <AlertDialog>
+                                            <AlertDialogTrigger asChild>
+                                              <Button variant="outline" size="sm">
+                                                <Trash2 className="h-3 w-3 text-red-500" />
+                                              </Button>
+                                            </AlertDialogTrigger>
+                                            <AlertDialogContent>
+                                              <AlertDialogHeader>
+                                                <AlertDialogTitle>¿Eliminar archivo?</AlertDialogTitle>
+                                                <AlertDialogDescription>Esta acción no se puede deshacer. El archivo se eliminará permanentemente.</AlertDialogDescription>
+                                              </AlertDialogHeader>
+                                                <AlertDialogFooter>
+                                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                                <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={() => eliminarDocumento(documento)}>Eliminar</AlertDialogAction>
+                                              </AlertDialogFooter>
+                                            </AlertDialogContent>
+                                          </AlertDialog>
+                                        </div>
+                                      </div>
                                     </div>
-                                  </div>
-                                </div>
-                              );
-                            })}
+                                  );
+                                })}
+                            </div>
+                          )}
                         </div>
-                      )}
+                      </div>
                     </div>
                   </TabsContent>
 
                   {/* Tab Observaciones */}
                   <TabsContent value="observaciones" className="space-y-6 mt-6">
+                    {/* Nota: la confirmación para eliminar comentarios usa un toast destructivo en la esquina inferior derecha. */}
                     <div className="bg-white border rounded-lg p-6">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center justify-between">
                         <span>Observaciones</span>
                         <span className="text-xs font-normal text-gray-400">{comentarios.length} comentario(s)</span>
                       </h3>
                       <div className="space-y-4">
+                        {/* Controles de paginación de comentarios */}
+                        <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-700">Filas:</span>
+                            <Select
+                              value={String(comentariosPerPage)}
+                              onValueChange={(v) => { setComentariosPerPage(Number.parseInt(v, 10)); setComentariosPage(1); }}
+                            >
+                              <SelectTrigger className="w-[90px]">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {comentariosPageOptions.map((opt) => (
+                                  <SelectItem key={opt} value={String(opt)}>{opt} por página</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm text-gray-700">Página {comentariosPage} de {comentariosTotalPages}</span>
+                            <div className="flex items-center gap-1">
+                              <Button variant="outline" size="sm" onClick={() => setComentariosPage((p) => Math.max(1, p - 1))} disabled={comentariosPage <= 1}>Anterior</Button>
+                              <Button variant="outline" size="sm" onClick={() => setComentariosPage((p) => Math.min(comentariosTotalPages, p + 1))} disabled={comentariosPage >= comentariosTotalPages}>Siguiente</Button>
+                            </div>
+                          </div>
+                        </div>
                         {/* Nuevo comentario */}
                         <div className="flex flex-col md:flex-row gap-2">
                           <Textarea
+                            ref={nuevoComentarioRef}
                             placeholder="Escribe un nuevo comentario / observación..."
                             value={nuevoComentario}
                             onChange={(e) => setNuevoComentario(e.target.value)}
@@ -3197,13 +3748,10 @@ export default function OperadoresPage() {
                         {comentarios.length === 0 ? (
                           <p className="text-sm text-gray-500">No hay comentarios todavía.</p>
                         ) : (
-                          <ul className="space-y-3">
-                            {comentarios.map((c) => (
-                              <li
-                                key={c.id}
-                                className="group border rounded-lg p-3 bg-gray-50 hover:bg-gray-100 transition-colors"
-                              >
-                                <div className="flex items-start justify-between gap-3">
+                          <ul className="divide-y divide-gray-200">
+                            {comentariosPaginated.map((c) => (
+                              <li key={c.id} className="py-2 first:pt-0 last:pb-0">
+                                <div className="flex items-start justify-between gap-2">
                                   <div className="flex-1 min-w-0">
                                     {editandoComentarioId === c.id ? (
                                       <div className="space-y-2">
@@ -3234,14 +3782,26 @@ export default function OperadoresPage() {
                                         </div>
                                       </div>
                                     ) : (
-                                      <>
-                                        <p className="text-sm text-gray-900 whitespace-pre-line break-words">
+                                      <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-2">
+                                        <p className="text-sm text-gray-900 whitespace-pre-line break-words md:pr-4">
                                           {c.texto}
                                         </p>
-                                        <div className="mt-2 flex items-center gap-2 text-[11px] text-gray-500">
-                                          <span>{new Date(c.fecha).toLocaleString()}</span>
+                                        <div className="text-sm text-gray-500 whitespace-nowrap flex items-center gap-2">
+                                          <span className="text-sm text-gray-600">{c.usuario || '—'}</span>
+                                          <span className="text-sm">•</span>
+                                          <span className="text-sm">{new Date(c.fecha).toLocaleString()}</span>
+                                          <button
+                                            type="button"
+                                            title="Eliminar comentario"
+                                            className="ml-1 text-red-500 hover:text-red-700 p-1 rounded text-sm"
+                                            onClick={() => {
+                                              eliminarComentario(c.id, true);
+                                            }}
+                                          >
+                                            <Trash2 className="h-4 w-4" />
+                                          </button>
                                         </div>
-                                      </>
+                                      </div>
                                     )}
                                   </div>
                                   {editandoComentarioId !== c.id && (
@@ -3260,7 +3820,7 @@ export default function OperadoresPage() {
                                         size="icon"
                                         variant="outline"
                                         className="h-7 w-7 hover:bg-red-50"
-                                        onClick={() => eliminarComentario(c.id)}
+                                        onClick={() => { eliminarComentario(c.id, true); }}
                                       >
                                         <Trash2 className="h-3 w-3 text-red-600" />
                                       </Button>
@@ -3363,7 +3923,7 @@ export default function OperadoresPage() {
                   }}
                   className="bg-green-600 hover:bg-green-700 text-white"
                 >
-                  Editar
+                  Editar Operador
                 </Button>
                 <Button
                   variant="outline"
@@ -3372,6 +3932,7 @@ export default function OperadoresPage() {
                 >
                   Descargar Excel
                 </Button>
+                
                 <Button
                   variant="outline"
                   size="sm"
@@ -3419,9 +3980,7 @@ export default function OperadoresPage() {
                     <TabsTrigger value="contacto" className="flex items-center gap-1 text-xs">
                       <Contact className="h-3 w-3" /> Contacto
                     </TabsTrigger>
-                    <TabsTrigger value="ids" className="flex items-center gap-1 text-xs">
-                      <IdCard className="h-3 w-3" /> IDs
-                    </TabsTrigger>
+                    {/* IDs merged into Licencias */}
                     <TabsTrigger value="licencias" className="flex items-center gap-1 text-xs">
                       <Shield className="h-3 w-3" /> Licencias
                     </TabsTrigger>
@@ -3454,7 +4013,7 @@ export default function OperadoresPage() {
                       )}
                       <div className="min-w-[150px]">
                         <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Fecha de Nacimiento</p>
-                        <p className="text-sm leading-snug">{operadorQuickDetalle.fecha_nacimiento ? new Date(operadorQuickDetalle.fecha_nacimiento).toLocaleDateString() : '—'}</p>
+                        <p className="text-sm leading-snug">{operadorQuickDetalle.fecha_nacimiento ? (parseDateOnlyLocal(operadorQuickDetalle.fecha_nacimiento) ?? new Date(operadorQuickDetalle.fecha_nacimiento)).toLocaleDateString() : '—'}</p>
                       </div>
                       <div className="min-w-[120px]">
                         <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase">Tipo de Sangre</p>
@@ -3500,51 +4059,51 @@ export default function OperadoresPage() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="ids" className="space-y-6 mt-6">
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-                    <div>
-                      <dt className="text-xs text-gray-500 uppercase">CURP</dt>
-                      <dd className="font-mono break-all text-xs">{operadorQuickDetalle.curp || '—'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-gray-500 uppercase">RFC</dt>
-                      <dd className="font-mono break-all text-xs">{operadorQuickDetalle.rfc || '—'}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-xs text-gray-500 uppercase">NSS</dt>
-                      <dd className="font-mono break-all text-xs">{operadorQuickDetalle.nss || '—'}</dd>
-                    </div>
-                  </div>
-                </TabsContent>
+                {/* IDs merged into Licencias (quick modal) */}
 
-                <TabsContent value="licencias" className="space-y-4 mt-6 text-sm">
+                <TabsContent value="licencias" className="space-y-4 mt-6 text-sm min-h-[180px]">
                   <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Documentos y Vencimientos</h4>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
                     <p className="text-sm">
                       <span className="font-semibold">Licencia:</span> {operadorQuickDetalle.licencia || '—'}
                       {operadorQuickDetalle.fecha_vencimiento_licencia && (
-                        <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorQuickDetalle.fecha_vencimiento_licencia).toLocaleDateString()}</span>
+                        <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorQuickDetalle.fecha_vencimiento_licencia) ?? new Date(operadorQuickDetalle.fecha_vencimiento_licencia)).toLocaleDateString()}</span>
                       )}
                     </p>
                     <p className="text-sm">
                       <span className="font-semibold">Apto Médico:</span> {operadorQuickDetalle.numero_apto_medico || '—'}
                       {operadorQuickDetalle.fecha_vencimiento_apto_medico && (
-                        <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorQuickDetalle.fecha_vencimiento_apto_medico).toLocaleDateString()}</span>
+                        <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorQuickDetalle.fecha_vencimiento_apto_medico) ?? new Date(operadorQuickDetalle.fecha_vencimiento_apto_medico)).toLocaleDateString()}</span>
                       )}
                     </p>
                     <p className="text-sm">
                       <span className="font-semibold">FAST:</span> {operadorQuickDetalle.numero_fast || '—'}
                       {operadorQuickDetalle.fecha_vencimiento_fast && (
-                        <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorQuickDetalle.fecha_vencimiento_fast).toLocaleDateString()}</span>
+                        <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorQuickDetalle.fecha_vencimiento_fast) ?? new Date(operadorQuickDetalle.fecha_vencimiento_fast)).toLocaleDateString()}</span>
                       )}
                     </p>
                     <p className="text-sm">
                       <span className="font-semibold">Visa:</span> {operadorQuickDetalle.numero_visa || '—'}
                       {operadorQuickDetalle.fecha_vencimiento_visa && (
-                        <span className="text-sm text-gray-500 ml-2">Vence {new Date(operadorQuickDetalle.fecha_vencimiento_visa).toLocaleDateString()}</span>
+                        <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorQuickDetalle.fecha_vencimiento_visa) ?? new Date(operadorQuickDetalle.fecha_vencimiento_visa)).toLocaleDateString()}</span>
                       )}
                     </p>
                   </div>
+                    {/* IDs (CURP / RFC / NSS) merged here (quick modal) */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm mt-4">
+                      <div>
+                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">CURP</p>
+                        <p className="font-mono break-all text-sm">{operadorQuickDetalle.curp || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">RFC</p>
+                        <p className="font-mono break-all text-sm">{operadorQuickDetalle.rfc || '—'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">NSS</p>
+                        <p className="font-mono break-all text-sm">{operadorQuickDetalle.nss || '—'}</p>
+                      </div>
+                    </div>
                 </TabsContent>
 
                 <TabsContent value="emergencia" className="space-y-6 mt-6 text-sm">
@@ -3573,38 +4132,42 @@ export default function OperadoresPage() {
 
                 <TabsContent value="fotos" className="space-y-6 mt-6">
                   <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Fotografías</h4>
-                  {(() => {
-                    const fotos = documentos.filter(d => d.operador_id === operadorQuickDetalle.id && (d.tipo_mime?.startsWith('image/') || d.tipo_documento === 'fotografia_operador'));
-                    if (!fotos.length) return <p className="text-xs text-gray-500">Sin fotografías registradas</p>;
-                    return (
-                      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                        {fotos.map(f => (
-                          <div key={f.id} className="border rounded-lg overflow-hidden group bg-white shadow-sm hover:shadow-md transition-shadow">
-                            <div className="aspect-square max-w-[200px] w-full mx-auto bg-gray-100 relative">
-                              <img
-                                src={f.url_blob || '/placeholder.svg'}
-                                alt={f.nombre_archivo}
-                                className="w-full h-full object-cover"
-                                loading="lazy"
-                                onClick={() => window.open(f.url_blob, '_blank')}
-                                onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/placeholder.svg?height=200&width=300&text=No+image'; }}
-                              />
-                              <div className="absolute inset-0 opacity-0 group-hover:opacity-100 bg-black/30 flex items-center justify-center text-white text-xs transition-opacity">
-                                Ver
+                    {(() => {
+                      // juntar imágenes desde documentos y añadir perfilFoto al inicio si existe
+                      const fotosDocs = documentos.filter(d => d.operador_id === operadorQuickDetalle.id && d.tipo_mime?.startsWith('image/'));
+                      const fotos: any[] = [];
+                      if (perfilFoto && perfilFoto.operador_id === operadorQuickDetalle.id) fotos.push({ ...perfilFoto, __isPerfil: true });
+                      fotos.push(...fotosDocs);
+                      if (!fotos.length) return <p className="text-xs text-gray-500">Sin fotografías registradas</p>;
+                      return (
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                          {fotos.map(f => (
+                            <div key={f.id || f.pathname || Math.random()} className="border rounded-lg overflow-hidden group bg-white shadow-sm hover:shadow-md transition-shadow">
+                              <div className="aspect-square max-w-[200px] w-full mx-auto bg-gray-100 relative">
+                                <img
+                                  src={f.url_blob || f.display_url || '/placeholder.svg'}
+                                  alt={f.nombre_archivo || 'Foto'}
+                                  className="w-full h-full object-cover"
+                                  loading="lazy"
+                                  onClick={() => window.open(f.url_blob || f.display_url, '_blank')}
+                                  onError={(e) => { (e.currentTarget as HTMLImageElement).src = '/placeholder.svg?height=200&width=300&text=No+image'; }}
+                                />
+                                <div className="absolute inset-0 opacity-0 group-hover:opacity-100 bg-black/30 flex items-center justify-center text-white text-xs transition-opacity">
+                                  Ver
+                                </div>
+                              </div>
+                              <div className="p-2 space-y-1">
+                                <p className="text-xs font-medium truncate">{f.nombre_archivo || 'Foto'}</p>
+                                <p className="text-xs text-gray-500">{f.created_at ? new Date(f.created_at).toLocaleDateString() : (f.fecha_subida ? new Date(f.fecha_subida).toLocaleDateString() : '')}</p>
+                                {f.__isPerfil && (
+                                  <span className="inline-block bg-green-100 text-green-700 rounded px-1 py-px text-[10px] md:text-xs">Principal</span>
+                                )}
                               </div>
                             </div>
-                            <div className="p-2 space-y-1">
-                              <p className="text-xs font-medium truncate">{f.nombre_archivo}</p>
-                              <p className="text-xs text-gray-500">{new Date(f.fecha_subida).toLocaleDateString()}</p>
-                              {f.tipo_documento === 'fotografia_operador' && (
-                                <span className="inline-block bg-green-100 text-green-700 rounded px-1 py-px text-[10px] md:text-xs">Principal</span>
-                              )}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })()}
+                          ))}
+                        </div>
+                      );
+                    })()}
                 </TabsContent>
 
                 <TabsContent value="observaciones" className="space-y-6 mt-6">

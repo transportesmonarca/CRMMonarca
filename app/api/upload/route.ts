@@ -138,9 +138,38 @@ export async function DELETE(request: Request): Promise<NextResponse> {
       return NextResponse.json({ error: "Configuración de almacenamiento no disponible", hint: "Defina BLOB_READ_WRITE_TOKEN" }, { status: 500 })
     }
 
-    console.log("Eliminando archivo de Blob:", target)
+    console.log("Eliminando archivo de Blob (raw):", target)
 
-    await del(target, {
+    // Normalizar target:
+    // - Si es una URL completa a blob.vercel-storage.com, extraer el pathname
+    // - Si es un pathname, eliminar barras iniciales
+    let normalizedTarget = target
+    try {
+      if (/^https?:\/\//i.test(target)) {
+        try {
+          const parsed = new URL(target)
+          // Si es URL de Vercel Blob, usar solo el pathname (sin slash inicial)
+          if (parsed.hostname && parsed.hostname.includes("vercel-storage.com")) {
+            normalizedTarget = parsed.pathname.replace(/^\/+/, "")
+          } else {
+            // Mantener la URL completa para del() si no es vercel blob
+            normalizedTarget = target
+          }
+        } catch (e) {
+          // Si no se puede parsear, seguir con el target original
+          normalizedTarget = target
+        }
+      } else {
+        // Es un pathname: asegurarnos que no tenga barras iniciales
+        normalizedTarget = String(target).replace(/^\/+/, "")
+      }
+    } catch (e) {
+      normalizedTarget = target
+    }
+
+    console.log("Eliminando archivo de Blob (normalized):", normalizedTarget)
+
+    await del(normalizedTarget, {
       token: process.env.BLOB_READ_WRITE_TOKEN,
     })
 

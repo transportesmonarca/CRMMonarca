@@ -9,7 +9,10 @@ import type {
 } from "@/components/ui/toast"
 
 const TOAST_LIMIT = 1
-const TOAST_REMOVE_DELAY = 1000000
+// Time before the toast is automatically dismissed (ms)
+const TOAST_REMOVE_DELAY = 5000
+// Small delay to allow close animation before removing from DOM (ms)
+const TOAST_HIDE_ANIMATION_DELAY = 300
 
 type ToasterToast = ToastProps & {
   id: string
@@ -57,6 +60,7 @@ interface State {
 }
 
 const toastTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
+const dismissTimeouts = new Map<string, ReturnType<typeof setTimeout>>()
 
 const addToRemoveQueue = (toastId: string) => {
   if (toastTimeouts.has(toastId)) {
@@ -69,7 +73,7 @@ const addToRemoveQueue = (toastId: string) => {
       type: "REMOVE_TOAST",
       toastId: toastId,
     })
-  }, TOAST_REMOVE_DELAY)
+  }, TOAST_HIDE_ANIMATION_DELAY)
 
   toastTimeouts.set(toastId, timeout)
 }
@@ -103,6 +107,12 @@ export const reducer = (state: State, action: Action): State => {
         })
       }
 
+      // Clear any scheduled auto-dismiss for this id
+      if (toastId && dismissTimeouts.has(toastId)) {
+        clearTimeout(dismissTimeouts.get(toastId)!)
+        dismissTimeouts.delete(toastId)
+      }
+
       return {
         ...state,
         toasts: state.toasts.map((t) =>
@@ -121,6 +131,15 @@ export const reducer = (state: State, action: Action): State => {
           ...state,
           toasts: [],
         }
+      }
+      // Limpieza de timeouts asociados
+      if (action.toastId && toastTimeouts.has(action.toastId)) {
+        clearTimeout(toastTimeouts.get(action.toastId)!)
+        toastTimeouts.delete(action.toastId)
+      }
+      if (action.toastId && dismissTimeouts.has(action.toastId)) {
+        clearTimeout(dismissTimeouts.get(action.toastId)!)
+        dismissTimeouts.delete(action.toastId)
       }
       return {
         ...state,
@@ -163,6 +182,13 @@ function toast({ ...props }: Toast) {
       },
     },
   })
+
+  // Programar auto-dismiss
+  const dismissTimeout = setTimeout(() => {
+    dismissTimeouts.delete(id)
+    dispatch({ type: "DISMISS_TOAST", toastId: id })
+  }, TOAST_REMOVE_DELAY)
+  dismissTimeouts.set(id, dismissTimeout)
 
   return {
     id: id,

@@ -11,6 +11,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { toast } from "@/hooks/use-toast";
 
 import { DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -34,14 +35,18 @@ import {
   ChevronLeft,
   ChevronRight,
   Save,
+  Lock,
+  LockOpen,
   Search,
   Calendar,
   MapPin,
   Coins,
   Eye,
+  Trash,
   HelpCircle,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useRouter } from 'next/navigation';
 import * as XLSX from "xlsx";
 import {
   supabase,
@@ -51,6 +56,7 @@ import {
   obtenerFotosEmbarque,
   type FotoEmbarque,
 } from "@/lib/supabase";
+import { agregarAuditLog } from "@/lib/audit";
 import {
   Select,
   SelectContent,
@@ -69,28 +75,17 @@ interface EmbarqueAsignado {
   fechaEnganche: string;
   horaEnganche: string;
   comentarios: string;
-  operadorAsignado: {
-    id: string;
-    nombre: string;
-  };
-  camionAsignado: {
-    id: string;
-    marca: string;
-    modelo: string;
-    numeroEconomico: string;
-  };
+  operadorAsignado: { id: string; nombre: string };
+  camionAsignado?: { id?: string; marca?: string; modelo?: string; numeroEconomico?: string };
   // Remolque relacionado (si existe) o captura manual
-  remolque?: {
-    numero_economico?: string;
-    placas?: string;
-  };
+  remolque?: { numero_economico?: string; placas?: string };
   remolque_numero_economico?: string;
   remolque_placa?: string;
-  fechaAsignacion: string;
-  estado: string;
+  fechaAsignacion?: string;
+  estado?: string;
   montoFacturado?: number;
   fechaEntrega?: string;
-  observacionesFacturacion?: string;
+  observacionesFacturacion?: string | null;
   pagado?: boolean;
   fechaPago?: string;
   moneda_flete?: "MXN" | "USD";
@@ -102,87 +97,67 @@ interface EmbarqueAsignado {
   usuarioModificacion?: string;
   motivoModificacion?: string;
   // Nuevos campos
-  foliosFactura?: {
-    folio1?: string;
-    folio2?: string;
-    folio3?: string;
-    folio4?: string;
-  };
-  cantidadFinalFacturada?: number;
+  foliosFactura?: { folio1?: string; folio2?: string; folio3?: string; folio4?: string };
+  cantidadFinalFacturada?: number | null;
   tipoServicio?: string;
-  estado_facturacion?:
-    | "pendiente_facturacion"
-    | "facturado"
-    | "pagado"
-    | "archivado";
+  estado_facturacion?: "pendiente_facturacion" | "facturado" | "pagado" | "archivado";
   precioFlete?: number;
   tipo_servicio_id?: string;
   fechaArchivado?: string;
   usuarioArchivo?: string;
-  motivoArchivo?: string;
-  observacionesArchivo?: string;
-  fechaEnvioCliente?: string;
-  fechaPagoCliente?: string;
-  referenciaPago?: string;
-  // Aliases en snake_case presentes en consultas/uso
+
+  // Campos y aliases que pueden venir del backend (snake_case)
   precio_flete?: number;
-  fecha_pago?: string;
-  fecha_envio_cliente?: string;
-  folio_factura_1?: string;
-  folio_factura_2?: string;
-  folio_factura_3?: string;
-  direccionRecolecta?: string;
-  // Campos de la base de datos que pueden venir directamente
-  cliente_id?: string;
-  load_number?: string;
   direccion_recolecta?: string;
   direccion_entrega?: string;
   carta_porte?: string;
-  // Campos operativos adicionales
-  patente_agente_aduanal?: string;
-  aduana_cruce?: string;
-  dueno_mercancia?: string;
-  contenido?: string;
-  peso?: number | string;
+  cliente_id?: string;
+  load_number?: string;
   numero_factura_1?: string;
   numero_factura_2?: string;
   numero_factura_3?: string;
   numero_factura_4?: string;
-  cantidad_final_facturada?: number;
+
+  // Invoice folios — pueden ser null cuando vienen desde la DB
+  folio_factura_1?: string | null;
+  folio_factura_2?: string | null;
+  folio_factura_3?: string | null;
+  folio_factura_4?: string | null;
+  observaciones_facturacion?: string | null;
+
+  // Backend snake_case aliases used throughout the file (single declarations)
+  cantidad_final_facturada?: number | null;
+  fecha_envio_cliente?: string;
+  fecha_pago?: string;
   referencia_pago?: string;
-  // Nuevos campos por factura (1..4)
-  fecha_envio_cliente_1?: string;
-  fecha_envio_cliente_2?: string;
-  fecha_envio_cliente_3?: string;
-  fecha_envio_cliente_4?: string;
-  fecha_pago_1?: string;
-  fecha_pago_2?: string;
-  fecha_pago_3?: string;
-  fecha_pago_4?: string;
-  referencia_pago_1?: string;
-  referencia_pago_2?: string;
-  referencia_pago_3?: string;
-  referencia_pago_4?: string;
-  updated_at?: string;
-  fecha_creacion?: string; // Added for consistency with DB column
+
+  // camelCase friendly aliases used in UI
+  fechaEnvioCliente?: string;
+  referenciaPago?: string;
+
+  // Convenience alias used in UI
+  direccionRecolecta?: string;
+
   // QuickPaid
   quickpaid_enabled?: boolean;
   quickpaid_percent?: number;
   quickpaid_descuento?: number;
   precio_quickpaid?: number;
-  // Representante del cliente (cuando exista en el embarque)
+
+  // Contingency / other operational fields
   representante_cliente?: string;
   info_representante?: any;
-
-  // Campos para contingencia
   operadorOriginalId?: string;
   operadorOriginalNombre?: string;
   operadorReemplazoId?: string;
   operadorReemplazoNombre?: string;
   montoOriginalContingencia?: number;
   montoReemplazoContingencia?: number;
-  pagoOperador?: number; // Base payment for the service type
-  tipoServicioNombre?: string; // Added for easier access in tables
+  pagoOperador?: number;
+  tipoServicioNombre?: string;
+  peso?: number | string;
+  updated_at?: string;
+  fecha_creacion?: string;
 }
 
 const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
@@ -442,10 +417,127 @@ const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
   );
 };
 
+// --- Modal y lógica para actualizar precio manualmente ---
+const UpdatePriceModal = ({
+  open,
+  onOpenChange,
+  embarque,
+  initialRazon,
+}: {
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  embarque: any | null;
+  initialRazon?: string | null;
+}) => {
+  const [precio, setPrecio] = useState<string>("");
+  const [razon, setRazon] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+
+  useEffect(() => {
+    if (embarque) {
+      // Prefer mostrar/editar el precio_flete. Si no existe, caer a precio_quickpaid como respaldo.
+      const base = embarque.precio_flete ?? embarque.precio_quickpaid ?? '';
+      setPrecio(base !== null && base !== undefined ? String(base) : '');
+      setRazon(initialRazon ?? '');
+    }
+  }, [embarque, initialRazon]);
+
+  const submit = async () => {
+    if (!embarque) return;
+      if (!precio || isNaN(Number(precio))) {
+      toast({ title: 'Ingresa un precio válido', variant: 'destructive' });
+      return;
+    }
+      // La justificación ya fue ingresada en el prompt previo; no es obligatoria aquí
+    setLoading(true);
+    try {
+      const res = await fetch('/api/embarques/actualizar-precio', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ embarque_id: embarque.id, precio: Number(precio), razon }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || data?.message || 'Error');
+  onOpenChange(false);
+  // refrescar la página o datos locales
+  try { router.refresh(); } catch {}
+  toast({ title: 'Precio actualizado exitosamente', variant: 'destructive' });
+    } catch (error: any) {
+      console.error('Error actualizando precio:', error);
+  toast({ title: 'Error actualizando precio', description: error?.message || String(error), variant: 'destructive' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Actualizar Precio</DialogTitle>
+          <DialogDescription>
+            Captura un nuevo precio. La justificación ya fue registrada en el paso anterior.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3">
+          <div>
+            <Label>Precio</Label>
+            <Input type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} />
+          </div>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
+          <Button variant="destructive" onClick={submit} disabled={loading}>
+            {loading ? 'Guardando...' : 'Guardar actualización'}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
 export default function FacturacionCobranzaPage() {
+  const [showUpdatePriceModal, setShowUpdatePriceModal] = useState(false);
+  const [selectedEmbarqueForUpdate, setSelectedEmbarqueForUpdate] = useState<any | null>(null);
+  const [showJustificacionPrompt, setShowJustificacionPrompt] = useState(false);
+  const [justificacionDraft, setJustificacionDraft] = useState('');
+  const [initialRazonForModal, setInitialRazonForModal] = useState<string | null>(null);
   const mounted = useRef(true);
   // Helper: mostrar nombre legible de la moneda en la UI
   const monedaNombre = (code?: string) => (code === "USD" ? "Dólares Americanos" : "Pesos Mexicanos");
+
+  // Detectar si un embarque fue cancelado por otras áreas (Asignación / creación)
+  const esCancelado = (emb: any) => {
+    if (!emb) return false;
+    // Normalizar campos que pueden contener marcas de cancelación
+    const estado = (emb.estado || emb.estado_facturacion || "").toString().toLowerCase();
+    const obsCandidates = [
+      emb.observaciones,
+      emb.observaciones_facturacion,
+      emb.observacionesFacturacion,
+      emb.motivo_cancelacion,
+      emb.motivoCancelacion,
+    ]
+      .filter(Boolean)
+      .map((s: any) => s?.toString?.() || "")
+      .join(" ")
+      .toUpperCase();
+
+    const hasCancelDate = Boolean(emb.fecha_cancelacion || emb.fechaCancelacion || emb.cancelado_en);
+    const hasCancelBy = Boolean(emb.cancelado_por || emb.canceladoPor || emb.cancelado_por_nombre);
+
+    // Buscar palabras clave comunes
+    const containsCancelKeyword = /CANCELA|CANCELADO|CANCELACIÓN|CANCELLED|CANCEL/.test(obsCandidates);
+
+    return Boolean(
+      estado.includes('cancel') ||
+      estado === 'cancelado' ||
+      hasCancelDate ||
+      hasCancelBy ||
+      containsCancelKeyword
+    );
+  };
 
   const [contingencyPaymentsDb, setContingencyPaymentsDb] = useState<{
     [embarqueId: string]: {
@@ -460,6 +552,13 @@ export default function FacturacionCobranzaPage() {
   >([]);
   // IDs de embarques archivados para ocultarlos en la lista principal
   const [archivadosIds, setArchivadosIds] = useState<string[]>([]);
+
+  // Confirmation dialog for archiving an embarque (replace window.confirm)
+  const [embarqueAArchivar, setEmbarqueAArchivar] = useState<EmbarqueAsignado | null>(null);
+  const [showConfirmArchivarDialog, setShowConfirmArchivarDialog] = useState(false);
+  // Confirmation dialog for permanent deletion of an archived embarque
+  const [embarqueAEliminar, setEmbarqueAEliminar] = useState<EmbarqueAsignado | null>(null);
+  const [showConfirmDeleteDialog, setShowConfirmDeleteDialog] = useState(false);
 
   const [loadingEmbarques, setLoadingEmbarques] = useState(true);
   const [loadingTiposServicio, setLoadingTiposServicio] = useState(true);
@@ -505,7 +604,7 @@ export default function FacturacionCobranzaPage() {
   const [currentPageAnalisisOp, setCurrentPageAnalisisOp] = useState(1);
   // Paginación para la sección "Detalle"
   const [itemsPerPageAnalisisDetalle, setItemsPerPageAnalisisDetalle] =
-    useState(10);
+    useState(5);
   const [currentPageAnalisisDetalle, setCurrentPageAnalisisDetalle] =
     useState(1);
   // Ayuda modal para Casos de Contingencia
@@ -540,7 +639,7 @@ export default function FacturacionCobranzaPage() {
   const [loadingPagos, setLoadingPagos] = useState(false);
   const [activePagosTab, setActivePagosTab] = useState("detalle");
   const [filtroPeriodoPagos, setFiltroPeriodoPagos] = useState("custom");
-  const [periodoAnalisis, setPeriodoAnalisis] = useState("mes");
+  const [periodoAnalisis, setPeriodoAnalisis] = useState("año");
 
   const setPeriodoActual = (tipo: string) => {
     const hoy = new Date();
@@ -612,13 +711,33 @@ export default function FacturacionCobranzaPage() {
       const fechaFin = new Date(fechaFinAnalisis);
       fechaFin.setHours(23, 59, 59, 999);
 
-      const embarquesFiltrados = embarquesAnaliticos.filter((embarque: any) => {
-        const fechaEmbarque = new Date(embarque.fecha_creacion!);
-        const coincideFecha =
-          fechaEmbarque >= fechaInicio && fechaEmbarque <= fechaFin;
-        return (
-          coincideFecha && embarque.estado_facturacion !== "archivado"
+      // Combinar embarques de Facturación/Cobranza y de Asignación, deduplicar por id
+      const fuenteCombinada = [
+        ...(embarquesAnaliticos || []),
+        ...(embarquesAsignados || []),
+      ];
+      const uniqueByIdMap: Record<string, any> = {};
+      for (const e of fuenteCombinada) {
+        if (!e) continue;
+  const id = String((e as any).id || "");
+        if (!id) continue;
+        // Preferir la primera aparición (embarquesAnaliticos viene primero en la lista)
+        if (!uniqueByIdMap[id]) uniqueByIdMap[id] = e;
+      }
+      const todosEmbarques = Object.values(uniqueByIdMap);
+
+      // Filtrar por rango de fechas, excluir archivados y asegurarse de que tengan operador asignado
+      const embarquesFiltrados = (todosEmbarques || []).filter((embarque: any) => {
+        const fechaEmbarque = new Date(embarque.fecha_creacion || embarque.fechaAsignacion || embarque.created_at || "");
+        const coincideFecha = fechaEmbarque >= fechaInicio && fechaEmbarque <= fechaFin;
+        const noArchivado = embarque.estado_facturacion !== "archivado";
+        const tieneOperador = !!(
+          embarque.operadorAsignado?.id ||
+          embarque.operadorAsignado?.nombre ||
+          embarque.operador_original_id ||
+          embarque.operador_original_nombre
         );
+        return coincideFecha && noArchivado && tieneOperador;
       });
 
       // Traer últimas modificaciones por embarque para conocer operador original y de reemplazo
@@ -670,7 +789,7 @@ export default function FacturacionCobranzaPage() {
           embarque.modificadoPorEmergencia ||
           embarquesModificadosIds.includes(embarque.id);
 
-        if (esContingencia) {
+  if (esContingencia) {
           const duplicados: any[] = [];
           const nombreOriginal =
             base.operadorOriginalNombre ||
@@ -704,13 +823,16 @@ export default function FacturacionCobranzaPage() {
             : [{ ...base, pagoOperador: 0, modificadoPorEmergencia: true }];
         }
 
-        // Caso normal: mantener cálculo automático según tipo de servicio
-        return [
-          {
-            ...base,
-            pagoOperador: tipoServicio?.precio_base || 0,
-          },
-        ];
+  // Caso normal: preferir un valor persistido en el embarque (pago_operador)
+  // para garantizar inmutabilidad histórica; si no existe, caer a precio_base.
+  const pagoPersistido = (embarque as any)?.pago_operador ?? (embarque as any)?.pagoOperador;
+  const precioPorTipoRaw = pagoPersistido != null
+    ? pagoPersistido
+    : tipoServicio?.precio_base ?? 0;
+  const precioPorTipo = typeof precioPorTipoRaw === 'number' ? precioPorTipoRaw : Number(precioPorTipoRaw) || 0;
+
+  // Si el embarque está cancelado, igualmente mostramos el pago calculado
+  return [{ ...base, pagoOperador: precioPorTipo }];
       });
 
       // Filtro por operador después de duplicar por contingencia
@@ -722,7 +844,11 @@ export default function FacturacionCobranzaPage() {
 
       const operadoresMap: Map<string, any[]> = new Map();
       for (const embarque of embarquesParaAnalisis as any[]) {
-        const nombre = embarque.operadorAsignado?.nombre || "Sin asignar";
+        let nombre = embarque.operadorAsignado?.nombre || "Sin asignar";
+        // Si el embarque está cancelado y no tiene operador asignado, mostrar etiqueta explícita
+        if ((nombre === "Sin asignar" || !nombre) && esCancelado(embarque)) {
+          nombre = "Sin Asignar - Cancelados";
+        }
         if (!operadoresMap.has(nombre)) {
           operadoresMap.set(nombre, []);
         }
@@ -790,9 +916,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Error al generar el análisis de operadores:", error);
-      alert(
-        "Error al generar el análisis de operadores. Por favor, intente de nuevo."
-      );
+      toast({ title: 'Error al generar el análisis de operadores', description: String((error as any)?.message || String(error) || ''), variant: 'destructive' });
     } finally {
       if (mounted.current) setLoadingAnalisis(false);
     }
@@ -868,6 +992,8 @@ export default function FacturacionCobranzaPage() {
   const [embarquesArchivados, setEmbarquesArchivados] = useState<
     EmbarqueAsignado[]
   >([]);
+  // Global oldest archived id (fetched from DB) to ensure the oldest record is always deletable
+  const [globalMasViejoArchivadoId, setGlobalMasViejoArchivadoId] = useState<string | null>(null);
   const [loadingArchivados, setLoadingArchivados] = useState(false);
 
   // UI/UX: filtros, orden y paginación para modal de Archivados (diseño alineado a Crear Embarques)
@@ -1027,7 +1153,7 @@ export default function FacturacionCobranzaPage() {
   const endIdx = Math.min(totalArchivados, startIdx + archivadosPageSize);
   const paginatedArchivados = archivadosFilteredSorted.slice(startIdx, endIdx);
 
-  // Elegibilidad de eliminación: habilitado si cumple 1 año o es el más antiguo
+  // Elegibilidad de eliminación: habilitado si es el registro más antiguo o ya pasaron 6 meses desde su archivo
   const masViejoArchivadoId = useMemo(() => {
     if (!embarquesArchivados || embarquesArchivados.length === 0) return null;
     let minId: string | null = null;
@@ -1045,25 +1171,19 @@ export default function FacturacionCobranzaPage() {
   }, [embarquesArchivados]);
 
   const puedeEliminarArchivadoFC = (e: EmbarqueAsignado) => {
-    const fechaStr = (e as any).fecha_archivado || e.fechaArchivado || e.fecha_creacion || e.updated_at;
-    if (!fechaStr) return false;
-    const t = new Date(fechaStr).getTime();
-    if (!isFinite(t)) return false;
-    const unAnioMs = 365 * 24 * 60 * 60 * 1000;
-    const ageMs = Date.now() - t;
-    return ageMs >= unAnioMs || e.id === masViejoArchivadoId;
+    // Only the globally oldest archived record can be deleted — enabled immediately
+    const oldestIdToCheck = globalMasViejoArchivadoId || masViejoArchivadoId;
+    if (!oldestIdToCheck) return false;
+    return e.id === oldestIdToCheck;
   };
 
   const eliminarArchivadoDefinitivoFC = async (e: EmbarqueAsignado) => {
+    // Perform deletion (confirmation is handled by an in-UI modal)
     if (!puedeEliminarArchivadoFC(e)) return;
-    const ok = confirm(
-      `¿Eliminar definitivamente el embarque folio ${e.folio}?\nEsta acción no se puede deshacer.`
-    );
-    if (!ok) return;
     try {
       const { error } = await supabase.from("embarques").delete().eq("id", e.id);
       if (error) {
-        alert("Error al eliminar en Supabase: " + (error.message || ""));
+        toast({ title: 'Error al eliminar en Supabase', description: String(error.message || ''), variant: 'destructive' });
         return;
       }
       setEmbarquesArchivados((prev) => (prev || []).filter((x) => x.id !== e.id));
@@ -1076,19 +1196,29 @@ export default function FacturacionCobranzaPage() {
           `Eliminación definitiva de embarque archivado folio ${e.folio}`
         );
       } catch {}
-      alert("Registro eliminado definitivamente.");
+      toast({ title: 'Registro eliminado definitivamente', variant: 'default' });
     } catch (err) {
       console.error(err);
-      alert("Error inesperado al eliminar el registro.");
+      const _e: any = err;
+      toast({ title: 'Error inesperado al eliminar el registro', description: String(_e?.message || _e || ''), variant: 'destructive' });
     }
   };
 
   useEffect(() => {
+    // Re-fetch archivados whenever modal is opened or pagination / filters change
     if (!showArchivadosModal) return;
     setLoadingArchivados(true);
+    let active = true;
+
     const cargarArchivados = async () => {
       try {
-  const { data, error } = await supabase
+        // Server-side pagination using range
+        const page = Math.max(1, Number(archivadosPage || 1));
+        const pageSize = Math.max(1, Number(archivadosPageSize || 25));
+        const start = (page - 1) * pageSize;
+        const end = start + pageSize - 1;
+
+        let query = supabase
           .from("embarques")
           .select(
             `*,
@@ -1098,9 +1228,22 @@ export default function FacturacionCobranzaPage() {
        remolque:remolques(*)`
           )
           .eq("estado_facturacion", "archivado")
-          .order("fecha_archivado", { ascending: false });
+          .order("fecha_archivado", { ascending: false })
+          .range(start, end);
 
-        if (error) {
+        // If a quick search is provided, try to push it to the DB where possible
+        const s = (archivadosSearch || "").trim();
+        if (s) {
+          // Use ilike on folio and load_number server-side to reduce payload when possible
+          const like = `%${s.replace(/%/g, '')}%`;
+          query = query.or(`folio.ilike.${like},load_number.ilike.${like}`);
+        }
+
+        const { data, error } = await query;
+
+        if (!active) return;
+
+  if (error) {
           console.error("Error cargando embarques archivados:", error);
           if (mounted.current) setEmbarquesArchivados([]);
         } else {
@@ -1114,7 +1257,7 @@ export default function FacturacionCobranzaPage() {
                 ? (embarque as any).precio_flete
                 : undefined,
             clienteNombre:
-              embarque.cliente?.nombre || "Cliente no especificado", // Corrected field name
+              embarque.cliente?.nombre || "Cliente no especificado",
             operadorAsignado: embarque.operador
               ? {
                   id: embarque.operador.id,
@@ -1137,17 +1280,60 @@ export default function FacturacionCobranzaPage() {
                   numeroEconomico: "",
                 },
           }));
-          if (mounted.current) setEmbarquesArchivados(embarquesFormateados);
+          if (mounted.current) {
+            setEmbarquesArchivados(embarquesFormateados);
+          }
+          // Además, obtener el registro más antiguo archivado globalmente para permitir su eliminación inmediata
+          try {
+            // Prefer records that have fecha_archivado set (non-null). Nulls sort first in some DBs,
+            // so filter them out to get the true oldest archived date.
+            let oldestId: string | null = null;
+            const { data: oldestByFecha, error: oldestByFechaError } = await supabase
+              .from('embarques')
+              .select('id, fecha_archivado')
+              .eq('estado_facturacion', 'archivado')
+              .not('fecha_archivado', 'is', null)
+              .order('fecha_archivado', { ascending: true })
+              .limit(1)
+              .maybeSingle();
+            if (!oldestByFechaError && oldestByFecha && oldestByFecha.id) {
+              oldestId = oldestByFecha.id;
+            } else {
+              // Fallback: order by fecha_creacion (creation date) if no fecha_archivado available
+              const { data: oldestByCreacion, error: oldestByCreacionError } = await supabase
+                .from('embarques')
+                .select('id, fecha_creacion')
+                .eq('estado_facturacion', 'archivado')
+                .not('fecha_creacion', 'is', null)
+                .order('fecha_creacion', { ascending: true })
+                .limit(1)
+                .maybeSingle();
+              if (!oldestByCreacionError && oldestByCreacion && oldestByCreacion.id) {
+                oldestId = oldestByCreacion.id;
+              }
+            }
+            if (mounted.current) setGlobalMasViejoArchivadoId(oldestId);
+          } catch (err) {
+            console.error('Error fetching global oldest archivado id:', err);
+            if (mounted.current) setGlobalMasViejoArchivadoId(null);
+          }
+          console.log(`cargarArchivados: fetched ${embarquesFormateados.length} rows (page ${page})`);
         }
       } catch (error) {
-        console.error("Error cargando embarques archivados:", error);
+        if (!active) return;
+        console.error("Error cargando embarques archivados (excepción):", error);
         if (mounted.current) setEmbarquesArchivados([]);
       } finally {
-        if (mounted.current) setLoadingArchivados(false);
+        if (active && mounted.current) setLoadingArchivados(false);
       }
     };
+
     cargarArchivados();
-  }, [showArchivadosModal]);
+
+    return () => {
+      active = false;
+    };
+  }, [showArchivadosModal, archivadosPage, archivadosPageSize, archivadosSearch, archivadosPeriodo]);
 
   async function archivarEmbarque(embarque: EmbarqueAsignado) {
 
@@ -1175,10 +1361,9 @@ export default function FacturacionCobranzaPage() {
       .eq("id", embarque.id);
 
     if (error) {
-      alert(
-        "Error al archivar el embarque en Supabase: " + (error.message || "")
-      );
-      return;
+      // Use toast for non-blocking error notification and rethrow so caller can handle
+      toast({ title: 'Error al archivar embarque', description: error.message || String(error), variant: 'destructive' });
+      throw error;
     }
 
     const actualizados: EmbarqueAsignado[] = embarquesAsignados.map((e) =>
@@ -1505,12 +1690,15 @@ export default function FacturacionCobranzaPage() {
       try {
         const desde = `${currentYear}-01-01`;
         const hasta = `${currentYear}-12-31`;
+        // Traer todos los embarques del año (incluyendo archivados en facturación).
+        // Filtrado fino se hace en el cliente para asegurar que incluimos los registros
+        // que pertenecen a Facturación/Cobranza (estado_facturacion definido) y
+        // también aquellos operativos finalizados.
         const { data, error } = await supabase
           .from("embarques")
           .select(
             `precio_flete, moneda_flete, fecha_creacion, cantidad_final_facturada, estado, estado_facturacion, quickpaid_enabled, precio_quickpaid`
           )
-          .eq("estado", "finalizado")
           .gte("fecha_creacion", desde)
           .lte("fecha_creacion", hasta);
 
@@ -1519,14 +1707,32 @@ export default function FacturacionCobranzaPage() {
           return;
         }
 
-        let sumMXN = 0;
-        let sumUSD = 0;
+  let sumMXN = 0;
+  let sumUSD = 0;
+  let fetchedCount = (data || []).length;
+  console.log(`cargarTotalesAnuales: fetched ${fetchedCount} records from supabase for year ${currentYear}`);
+        // Incluir sólo los embarques que estén dentro del flujo de Facturación/Cobranza
+        // (tengan estado_facturacion definido, incluyendo 'archivado') o los que
+        // estén marcados como operativamente 'finalizado'. Así nos aseguramos de
+        // contabilizar también los archivados en facturación.
+        let includedCount = 0;
         (data || []).forEach((e: any) => {
+          const inFacturacion = e && e.estado_facturacion != null;
+          const isFinalizado = String(e?.estado || "").toLowerCase().includes("finalizado");
+          if (!inFacturacion && !isFinalizado) return; // saltar registros no relevantes
+
+          includedCount++;
+
           const currency = e?.moneda_flete || "MXN";
+          // getMontoContable ya prioriza precio_quickpaid cuando quickpaid_enabled=true
           const monto = getMontoContable(e) || 0;
           if (currency === "USD") sumUSD += monto;
           else sumMXN += monto;
         });
+
+        console.log(
+          `cargarTotalesAnuales: included ${includedCount} records -> MXN: ${sumMXN}, USD: ${sumUSD}`
+        );
 
         if (mounted.current) {
           setYearlyFleteMXN(sumMXN);
@@ -2018,7 +2224,7 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error updating tipo servicio:", error);
-        alert(`Error al actualizar el tipo de servicio: ${error.message}`);
+        toast({ title: 'Error al actualizar el tipo de servicio', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
 
@@ -2036,9 +2242,69 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al actualizar el tipo de servicio");
+      toast({ title: 'Error al actualizar el tipo de servicio', description: String((error as any)?.message || ''), variant: 'destructive' });
     }
   };
+
+  // Componente local: fila de detalles con candado y guardar
+  function DetallesTipoRow({
+    tipo,
+    onSave,
+  }: {
+    tipo: TipoServicio;
+    onSave: (monto: number) => void;
+  }) {
+    const [locked, setLocked] = useState(true);
+    const [value, setValue] = useState<number>(tipo.precio_base || 0);
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+      // si el tipo cambia externamente, sincronizar el input
+      setValue(tipo.precio_base || 0);
+    }, [tipo.precio_base]);
+
+    const handleSave = async () => {
+      const monto = Number(value) || 0;
+      setSaving(true);
+      try {
+        await onSave(monto);
+        // después de guardar, volver a bloquear
+        setLocked(true);
+      } catch (e) {
+        console.error('Error guardando detalle tipo:', e);
+      } finally {
+        setSaving(false);
+      }
+    };
+
+    return (
+      <div className="flex items-center justify-end gap-2">
+        <Input
+          type="number"
+          value={String(value)}
+          onChange={(e) => setValue(Number(e.target.value))}
+          className="w-28 text-right"
+          disabled={locked}
+        />
+        <Button
+          size="icon"
+          variant="outline"
+          onClick={() => setLocked((l) => !l)}
+          title={locked ? 'Desbloquear para editar' : 'Bloquear'}
+        >
+          {locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+        </Button>
+        <Button
+          size="sm"
+          onClick={handleSave}
+          disabled={locked || saving}
+          className="bg-green-600 hover:bg-green-700 text-white"
+        >
+          {saving ? 'Guardando...' : 'Guardar'}
+        </Button>
+      </div>
+    );
+  }
 
   const normalizarIdDesdeNombre = (nombre: string) => {
     return nombre
@@ -2052,7 +2318,7 @@ export default function FacturacionCobranzaPage() {
 
   const crearNuevoTipoServicio = async () => {
     if (!nuevoTipo.nombre.trim()) {
-      alert("Ingresa un nombre para el tipo de servicio");
+      toast({ title: 'Ingresa un nombre para el tipo de servicio', variant: 'destructive' });
       return;
     }
     setGuardandoNuevoTipo(true);
@@ -2086,7 +2352,7 @@ export default function FacturacionCobranzaPage() {
         .single();
       if (error) {
         console.error("Error creando tipo de servicio:", error);
-        alert("No se pudo crear el tipo de servicio: " + (error.message || ""));
+        toast({ title: 'No se pudo crear el tipo de servicio', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
 
@@ -2116,7 +2382,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (e) {
       console.error(e);
-      alert("Ocurrió un error creando el tipo de servicio.");
+      toast({ title: 'Ocurrió un error creando el tipo de servicio.', description: String((e as any)?.message || ''), variant: 'destructive' });
     } finally {
       if (mounted.current) setGuardandoNuevoTipo(false);
     }
@@ -2138,17 +2404,12 @@ export default function FacturacionCobranzaPage() {
 
       if (countError) {
         console.error("Error verificando uso de tipo de servicio:", countError);
-        alert(
-          "No se pudo verificar el uso del tipo de servicio: " +
-            (countError.message || "")
-        );
+        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((countError as any)?.message || ''), variant: 'destructive' });
         return;
       }
 
       if ((countActivos || 0) > 0) {
-        alert(
-          `No se puede eliminar. Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`
-        );
+        toast({ title: 'No se puede eliminar', description: `Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`, variant: 'destructive' });
         return;
       }
 
@@ -2161,24 +2422,21 @@ export default function FacturacionCobranzaPage() {
         console.error("Error verificando referencias históricas:", countAllError);
       }
 
-      if ((countTotal || 0) > 0) {
+  if ((countTotal || 0) > 0) {
         // Si hay referencias históricas, la eliminación puede fallar por restricción FK. Ofrecer desactivar.
         const desactivar = confirm(
           `Este tipo de servicio está referenciado por ${countTotal} embarque(s) histórico(s).\n` +
             "Para mantener la integridad de datos, se recomienda desactivarlo en lugar de eliminarlo.\n" +
             "¿Deseas desactivarlo para ocultarlo de nuevas selecciones?"
         );
-        if (!desactivar) return;
+  if (!desactivar) return;
         const { error: inactError } = await supabase
           .from("tipos_servicio")
           .update({ activo: false, updated_at: new Date().toISOString() })
           .eq("id", tipo.id);
         if (inactError) {
           console.error("Error desactivando tipo de servicio:", inactError);
-          alert(
-            "No se pudo desactivar el tipo de servicio: " +
-              (inactError.message || "")
-          );
+          toast({ title: 'No se pudo desactivar el tipo de servicio', description: String((inactError as any)?.message || ''), variant: 'destructive' });
           return;
         }
         if (mounted.current) {
@@ -2186,7 +2444,7 @@ export default function FacturacionCobranzaPage() {
             prev.map((t) => (t.id === tipo.id ? { ...t, activo: false } : t))
           );
         }
-        alert("Tipo de servicio desactivado.");
+  toast({ title: 'Tipo de servicio desactivado', variant: 'default' });
         return;
       }
 
@@ -2202,9 +2460,7 @@ export default function FacturacionCobranzaPage() {
         .eq("id", tipo.id);
       if (delError) {
         console.error("Error eliminando tipo de servicio:", delError);
-        alert(
-          "Error al eliminar el tipo de servicio (puede estar protegido por integridad de datos)." 
-        );
+        toast({ title: 'Error al eliminar el tipo de servicio', description: 'Puede estar protegido por integridad de datos.', variant: 'destructive' });
         return;
       }
 
@@ -2225,7 +2481,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (e) {
       console.error("Error inesperado al eliminar tipo de servicio:", e);
-      alert("Error inesperado al eliminar el tipo de servicio.");
+      toast({ title: 'Error inesperado al eliminar el tipo de servicio', description: String((e as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -2283,7 +2539,7 @@ export default function FacturacionCobranzaPage() {
       XLSX.writeFile(wb, fileName);
     } catch (e) {
       console.error("Error exportando tipos de servicio:", e);
-      alert("No se pudo exportar el archivo Excel.");
+      toast({ title: 'No se pudo exportar el archivo Excel', description: String((e as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -2337,9 +2593,11 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error actualizando embarque:", error);
-        alert("Error al guardar los cambios");
+        toast({ title: 'Error al guardar los cambios', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
+      // Notificar éxito
+      toast({ title: 'Cambios guardados exitosamente', variant: 'default' });
 
       const embarquesActualizados = embarquesAsignados.map((embarque) =>
         embarque.id === embarqueEditando.id
@@ -2375,10 +2633,10 @@ export default function FacturacionCobranzaPage() {
           `Modificación de embarque folio ${embarqueEditando.folio} por usuario ${usuarioActual}`
         );
       } catch {}
-      alert("Cambios guardados exitosamente");
+  // success already shown via toast
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al guardar los cambios");
+      toast({ title: 'Error al guardar los cambios', description: String((error as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -2439,7 +2697,7 @@ export default function FacturacionCobranzaPage() {
       // Validación: Observaciones obligatoria
       const obs = (facturacionData.observacionesFacturacion || "").trim();
       if (!obs) {
-        alert("Las Observaciones son obligatorias para guardar la captura de facturación.");
+        toast({ title: 'Las Observaciones son obligatorias', description: 'Agrega observaciones antes de guardar la captura de facturación.', variant: 'destructive' });
         return;
       }
 
@@ -2496,10 +2754,7 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error actualizando datos de facturación:", error);
-        alert(
-          "Error: los datos de facturación NO se guardaron en la base de datos.\n\n" +
-            (error.message || error.details || "")
-        );
+        toast({ title: 'Error guardando facturación', description: String((error as any)?.message || (error as any)?.details || ''), variant: 'destructive' });
         return;
       }
 
@@ -2575,6 +2830,11 @@ export default function FacturacionCobranzaPage() {
   setShowFacturacionModal(false);
         setEmbarqueFacturacion(null);
 
+        // Mostrar toast de éxito al guardar facturación
+        try {
+          toast({ title: 'Facturas capturadas correctamente', variant: 'success' });
+        } catch {}
+
         setFacturacionData({
           numeroFactura1: "",
           numeroFactura2: "",
@@ -2601,7 +2861,7 @@ export default function FacturacionCobranzaPage() {
       if (typeof error === "object" && error && "message" in error) {
         msg = (error as any).message;
       }
-      alert("Error al guardar los datos de facturación.\n\n" + msg);
+  toast({ title: 'Error al guardar los datos de facturación', description: msg, variant: 'destructive' });
     } finally {
       setSavingFacturacion(false);
     }
@@ -2656,7 +2916,7 @@ export default function FacturacionCobranzaPage() {
       );
 
       if (!listaNoArchivados.length) {
-        alert("No hay embarques no archivados para exportar");
+        toast({ title: 'No hay embarques no archivados para exportar', variant: 'destructive' });
         return;
       }
 
@@ -2781,7 +3041,7 @@ export default function FacturacionCobranzaPage() {
       } catch {}
     } catch (error) {
       console.error("Error al generar el reporte Excel:", error);
-      alert("Error al generar el reporte Excel");
+      toast({ title: 'Error al generar el reporte Excel', description: String((error as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -2840,7 +3100,7 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error actualizando información de facturación:", error);
-        alert("Error al guardar la información de facturación");
+        toast({ title: 'Error al guardar la información de facturación', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
 
@@ -2899,7 +3159,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al guardar la información de facturación");
+      toast({ title: 'Error al guardar la información de facturación', description: String((error as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -2930,8 +3190,14 @@ export default function FacturacionCobranzaPage() {
     desde: null,
     hasta: null,
   });
-  const [controlClientesRango, setControlClientesRango] = useState<string>("mes_actual");
+  // Default to 'custom' so user sees all records unless they choose a range
+  const [controlClientesRango, setControlClientesRango] = useState<string>("custom");
   const [controlClientesGenerado, setControlClientesGenerado] = useState(false);
+  const [controlIncluirArchivados, setControlIncluirArchivados] = useState(false);
+  const [controlMostrarCancelados, setControlMostrarCancelados] = useState(false);
+  // If the user requests to include archivados, we fetch an ad-hoc dataset from the server
+  // instead of relying solely on `embarquesAsignados` which may not contain archived items.
+  const [controlClientesFetched, setControlClientesFetched] = useState<any[] | null>(null);
 
   const setRangoControlClientes = (value: string) => {
     setControlClientesRango(value);
@@ -3074,20 +3340,20 @@ export default function FacturacionCobranzaPage() {
 
   // Filtered/sorted lists per tab
   const controlClientesFiltradosActivos = useMemo(() => {
-    if (!controlClientesGenerado) return [] as any[];
-    const base = (embarquesAsignados || [])
-      // Excluir cancelados
+  if (!controlClientesGenerado) return [] as any[];
+  const source = controlClientesFetched || embarquesAsignados || [];
+  const base = (source as any[])
+      // Excluir cancelados (a menos que el usuario solicite verlos)
       .filter((e: any) => {
-        const estadoNorm = String(e?.estado || "").toLowerCase();
-        // Incluir cualquier estado excepto cancelados (permite finalizado, archivado, tránsito, etc.)
-        return !(/cancel/.test(estadoNorm));
+        if (!controlMostrarCancelados && esCancelado(e)) return false;
+        return true;
       })
-      // Debe tener operador y precio asignados
+      // Debe tener operador o precio asignado (permitir asignados sin precio para que usuario los revise)
       .filter((e: any) => {
         const tieneOperador = Boolean(e?.operadorAsignado?.id || e?.operadorAsignado?.nombre);
-  const precio = getMontoContable(e);
+        const precio = getMontoContable(e);
         const tienePrecio = typeof precio === "number" ? precio > 0 : Number(precio) > 0;
-        return tieneOperador && tienePrecio;
+        return tieneOperador || tienePrecio;
       })
       // Filtro por cliente si aplica
       .filter((e) => (controlClienteSeleccionado ? e.cliente_id === controlClienteSeleccionado : true))
@@ -3117,10 +3383,7 @@ export default function FacturacionCobranzaPage() {
   ]);
 
   // Total pages
-  const totalPagesControlActivos = Math.max(
-    1,
-    Math.ceil((controlClientesFiltradosActivos.length || 0) / (itemsPerPageControl || 1))
-  );
+  const totalPagesControlActivos = Math.max(1, Math.ceil((controlClientesFiltradosActivos.length || 0) / (itemsPerPageControl || 1)));
 
   // Paginated slices
   const paginatedControlActivos = useMemo(() => {
@@ -3227,7 +3490,7 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error al consultar embarques por cliente:", error);
-        alert("Error al consultar embarques por cliente: " + error.message);
+        toast({ title: 'Error al consultar embarques por cliente', description: String((error as any)?.message || ''), variant: 'destructive' });
         if (mounted.current) setEmbarquesClienteFiltrados([]);
         return;
       }
@@ -3276,7 +3539,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Excepción al consultar embarques por cliente:", error);
-      alert("Error inesperado al consultar embarques por cliente.");
+      toast({ title: 'Error inesperado al consultar embarques por cliente', description: String((error as any)?.message || ''), variant: 'destructive' });
     } finally {
       if (mounted.current) setLoadingClienteEmbarques(false);
     }
@@ -3340,7 +3603,7 @@ export default function FacturacionCobranzaPage() {
 
   const operacionesPorPeriodo = embarquesAsignados.filter((e) => {
     if (!clientesPeriodo.desde && !clientesPeriodo.hasta) return true;
-    const fecha = new Date(e.fechaAsignacion);
+  const fecha = new Date(e.fechaAsignacion || "");
     const desde = clientesPeriodo.desde
       ? new Date(clientesPeriodo.desde)
       : null;
@@ -3617,14 +3880,12 @@ export default function FacturacionCobranzaPage() {
   const saveContingencyPayment = async (embarque: EmbarqueAsignado) => {
     const currentDivision = operadoresContingencia[embarque.id];
     if (!currentDivision) {
-      alert("No hay división de pago para guardar.");
+      toast({ title: 'No hay división de pago para guardar.', variant: 'destructive' });
       return;
     }
 
     if (currentDivision.original <= 0 && currentDivision.reemplazo <= 0) {
-      alert(
-        "Debe asignar un monto mayor a 0 para al menos uno de los operadores."
-      );
+      toast({ title: 'Asignar monto requerido', description: 'Debe asignar un monto mayor a 0 para al menos uno de los operadores.', variant: 'destructive' });
       return;
     }
 
@@ -3646,14 +3907,14 @@ export default function FacturacionCobranzaPage() {
           { onConflict: "embarque_id", ignoreDuplicates: false }
         );
 
-      if (error) {
+        if (error) {
         console.error(
           "Error guardando división de pago de contingencia:",
           error
         );
-        alert("Error al guardar la división de pago: " + error.message);
+        toast({ title: 'Error al guardar la división de pago', description: String((error as any)?.message || ''), variant: 'destructive' });
       } else {
-        alert("División de pago guardada exitosamente.");
+        toast({ title: 'División de pago guardada exitosamente', variant: 'default' });
         if (mounted.current) {
           setEmbarquesOperadorFiltrados((prev) =>
             prev.map((e) =>
@@ -3670,7 +3931,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Error en saveContingencyPayment:", error);
-      alert("Error inesperado al guardar la división de pago.");
+      toast({ title: 'Error inesperado al guardar la división de pago', description: String((error as any)?.message || ''), variant: 'destructive' });
     }
   };
 
@@ -3756,7 +4017,7 @@ export default function FacturacionCobranzaPage() {
 
       if (error) {
         console.error("Error al consultar pagos de operador:", error);
-        alert("Error al consultar pagos de operador: " + error.message);
+        toast({ title: 'Error al consultar pagos de operador', description: String((error as any)?.message || ''), variant: 'destructive' });
         if (mounted.current) setEmbarquesOperadorFiltrados([]);
         return;
       }
@@ -3882,7 +4143,7 @@ export default function FacturacionCobranzaPage() {
       }
     } catch (error) {
       console.error("Excepción al consultar pagos de operador:", error);
-      alert("Error inesperado al consultar pagos de operador.");
+      toast({ title: 'Error inesperado al consultar pagos de operador', description: String((error as any)?.message || ''), variant: 'destructive' });
     } finally {
       if (mounted.current) setLoadingPagos(false);
     }
@@ -4013,12 +4274,10 @@ export default function FacturacionCobranzaPage() {
                         disabled={loadingEmbarques}
                       >
                         <option value="todos">Todos los operadores</option>
-                        {(operadoresUnicosAnalisis.length
-                          ? operadoresUnicosAnalisis
-                          : operadoresUnicos.map((o) => o.nombre)
-                        ).map((nombre) => (
-                          <option key={nombre} value={nombre}>
-                            {nombre}
+                        {/* Siempre mostrar la lista completa de operadores registrada en el sistema */}
+                        {operadoresUnicos.map((o) => (
+                          <option key={o.id || o.nombre} value={o.nombre}>
+                            {o.nombre}
                           </option>
                         ))}
                       </select>
@@ -4259,7 +4518,7 @@ export default function FacturacionCobranzaPage() {
                             <table className="min-w-full text-sm">
                               <thead>
                                 <tr className="bg-gray-100">
-                                  <th className="px-2 py-1 text-left">
+                                  <th className="px-2 py-1 text-left min-w-[100px]">
                                     Operador
                                   </th>
                                   <th className="px-2 py-1 text-center">
@@ -4465,14 +4724,14 @@ export default function FacturacionCobranzaPage() {
                                   </th>
                                   <th className="px-2 py-1 text-left">Load</th>
                                   <th className="px-2 py-1 text-left">Fecha</th>
-                                  <th className="px-2 py-1 text-left w-28">
+                                  <th className="px-2 py-1 text-left min-w-[24px]">
                                     Tipo Servicio
                                   </th>
                                   <th className="px-2 py-1 text-center w-40">
                                     Pago Operador
                                   </th>
                                   <th className="px-2 py-1 text-center w-40">
-                                    Contingencia
+                                    Contingencia/Cancelado
                                   </th>
                                   <th className="px-2 py-1 text-center">
                                     Acciones
@@ -4481,28 +4740,21 @@ export default function FacturacionCobranzaPage() {
                               </thead>
                               <tbody>
                                 {(() => {
-                                  const lista =
-                                    analisisData.embarquesFiltradosAnalisis;
-                                  const startIndex =
-                                    (currentPageAnalisisDetalle - 1) *
-                                    itemsPerPageAnalisisDetalle;
-                                  const endIndex =
-                                    startIndex + itemsPerPageAnalisisDetalle;
-                                  const pageItems = lista.slice(
-                                    startIndex,
-                                    endIndex
-                                  );
+                                  const lista = analisisData.embarquesFiltradosAnalisis || [];
+                                  const startIndex = (currentPageAnalisisDetalle - 1) * itemsPerPageAnalisisDetalle;
+                                  const endIndex = startIndex + itemsPerPageAnalisisDetalle;
+                                  const pageItems = lista.slice(startIndex, endIndex);
                                   return pageItems.map((e: any) => (
                                     <tr
-                                      key={`${e.id}-${
-                                        e.rolContingencia || "normal"
-                                      }`}
+                                      key={`${e.id}-${e.rolContingencia || "normal"}`}
                                       className="border-b"
                                     >
                                       <td className="px-2 py-1 min-w-[120px]">
-                                        {e.folio}
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-mono">{e.folio}</span>
+                                        </div>
                                       </td>
-                                      <td className="px-2 py-1">
+                                      <td className="px-2 py-1 min-w-[100px] break-words">
                                         {e.operadorAsignado?.nombre}
                                       </td>
                                       <td className="px-2 py-1 w-56 truncate whitespace-nowrap">
@@ -4513,56 +4765,54 @@ export default function FacturacionCobranzaPage() {
                                       </td>
                                       <td className="px-2 py-1">
                                         {e.fechaAsignacion
-                                          ? new Date(
-                                              e.fechaAsignacion
-                                            ).toLocaleDateString("es-MX")
+                                          ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
                                           : ""}
                                       </td>
-                                      <td className="px-2 py-1 w-28 truncate whitespace-nowrap">
+                                      <td className="px-2 py-1 min-w-[24px] break-words">
                                         {e.tipoServicioNombre}
                                       </td>
                                       <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
                                         {(() => {
                                           if (e.modificadoPorEmergencia) {
-                                            const m =
-                                              operadoresContingencia[e.id] ||
-                                              {};
-                                            const monto =
-                                              e.rolContingencia === "original"
-                                                ? m.original || 0
-                                                : m.reemplazo || 0;
-                                            return `$${Number(
-                                              monto || 0
-                                            ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                            const m = operadoresContingencia[e.id] || {};
+                                            const monto = e.rolContingencia === "original" ? (m.original || 0) : (m.reemplazo || 0);
+                                            return `$${Number(monto || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                                           }
-                                          return `$${Number(
-                                            e.pagoOperador || 0
-                                          ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                          return `$${Number(e.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                                         })()}
                                       </td>
                                       <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
                                         {(() => {
-                                          if (!e.modificadoPorEmergencia) return "No";
-                                          const folio = e.folio || "";
-                                          const folioShort = folio.includes("-")
-                                            ? folio.split("-").slice(1).join("-")
-                                            : folio;
-                                          return (
-                                            <Badge variant="destructive">
-                                              {`Sí${folioShort ? ` / ${folioShort}` : ""}`}
-                                            </Badge>
-                                          );
+                                          const elementos: any[] = [];
+                                          if (e.modificadoPorEmergencia) {
+                                            const folio = e.folio || "";
+                                            const folioShort = folio.includes("-") ? folio.split("-").slice(1).join("-") : folio;
+                                            elementos.push(
+                                              <Badge key="contingencia" variant="destructive">{`Sí${folioShort ? ` / ${folioShort}` : ""}`}</Badge>
+                                            );
+                                          } else {
+                                            elementos.push(<span key="no">No</span>);
+                                          }
+
+                                          if (esCancelado(e)) {
+                                            elementos.push(<span key="sep-cancelado" className="text-gray-400">/</span>);
+                                            elementos.push(<Badge key="cancelado" className="bg-purple-600 text-white">Cancelado</Badge>);
+                                          }
+
+                                          return (<div className="flex items-center justify-center gap-2">{elementos}</div>);
                                         })()}
                                       </td>
                                       <td className="px-2 py-1 text-center">
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => verDetallesEmbarque(e)}
-                                          aria-label="Ver detalles"
-                                        >
-                                          <Eye className="h-4 w-4" aria-hidden="true" />
-                                        </Button>
+                                        <div className="flex items-center gap-2">
+                                          <Button
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => verDetallesEmbarque(e)}
+                                            aria-label="Ver detalles"
+                                          >
+                                            <Eye className="h-4 w-4" aria-hidden="true" />
+                                          </Button>
+                                        </div>
                                       </td>
                                     </tr>
                                   ));
@@ -4655,148 +4905,118 @@ export default function FacturacionCobranzaPage() {
                                 .map((embarque: EmbarqueAsignado) => (
                                   <Card
                                     key={embarque.id}
-                                    className="border-red-300 bg-red-50"
+                                    className="border border-gray-200 bg-white"
                                   >
                                     <CardHeader>
                                       <div className="flex justify-between items-center">
-                                        <CardTitle className="text-lg text-red-800 flex items-center">
-                                          <AlertTriangle className="h-5 w-5 mr-2" />
-                                          Caso de Contingencia -{" "}
-                                          {embarque.folio}
+                                        <CardTitle className="text-lg text-gray-800 flex items-center">
+                                          <AlertTriangle className="h-5 w-5 mr-2 text-red-600" />
+                                          <span className="font-medium text-red-600">Caso de Contingencia</span>
+                                          <span className="ml-3 font-mono text-sm text-red-600">{embarque.folio}</span>
+                                          {esCancelado(embarque) && (
+                                            <Badge className="ml-2 bg-gray-700 text-white">Cancelado</Badge>
+                                          )}
                                         </CardTitle>
-                                        <Badge variant="destructive">
-                                          Requiere Atención
-                                        </Badge>
+                                        {/* removed 'Requiere atención' badge as requested */}
                                       </div>
                                     </CardHeader>
                                     <CardContent>
-                                      {/* Información en línea: filas/columnas al estilo Detalles del Embarque */}
-                                      <h4 className="font-medium text-gray-700 mb-3">
-                                        Información del Embarque
-                                      </h4>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-x-4 gap-y-0.5 mb-3.5">
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Folio</label>
-                                          <p className="text-sm font-mono font-medium text-gray-900">{embarque.folio}</p>
+                                      {/* Compacta: información clave en una cuadrícula ligera */}
+                                      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm text-gray-700">
+                                        <div>
+                                          <div className="text-xs text-gray-500">Cliente</div>
+                                          <div className="font-medium">{embarque.clienteNombre}</div>
                                         </div>
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cliente</label>
-                                          <p className="text-sm text-gray-700">{embarque.clienteNombre}</p>
+                                        <div>
+                                          <div className="text-xs text-gray-500">Fecha</div>
+                                          <div className="font-medium">{new Date(embarque.fechaAsignacion || "").toLocaleDateString("es-MX")}</div>
                                         </div>
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
-                                          <p className="text-sm text-gray-700">{new Date(embarque.fechaAsignacion).toLocaleDateString("es-MX")}</p>
+                                        <div>
+                                          <div className="text-xs text-gray-500">Tipo de Servicio</div>
+                                          <div className="font-medium">{embarque.tipoServicioNombre || "Sin especificar"}</div>
                                         </div>
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Tipo de Servicio</label>
-                                          <p className="text-sm text-gray-700">{embarque.tipoServicioNombre || "Sin especificar"}</p>
-                                        </div>
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Pago Base</label>
-                                          <p className="text-sm text-gray-700">{`$${Number(embarque.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
-                                        </div>
-                                        <div className="space-y-1">
-                                          <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Operador Original</label>
-                                          <p className="text-sm text-gray-700">{embarque.operadorOriginalNombre || embarque.operadorAsignado?.nombre || "No especificado"}</p>
+                                        <div>
+                                          <div className="text-xs text-gray-500">Operador Original</div>
+                                          <div className="font-medium">{embarque.operadorOriginalNombre || embarque.operadorAsignado?.nombre || "No especificado"}</div>
                                         </div>
                                         {embarque.operadorReemplazoNombre && (
-                                          <div className="space-y-1">
-                                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Operador de Reemplazo</label>
-                                            <p className="text-sm text-gray-700">{embarque.operadorReemplazoNombre}</p>
+                                          <div>
+                                            <div className="text-xs text-gray-500">Operador Reemplazo</div>
+                                            <div className="font-medium">{embarque.operadorReemplazoNombre}</div>
                                           </div>
                                         )}
+                                        <div>
+                                          <div className="text-xs text-gray-500">Pago Base</div>
+                                          <div className="font-medium">{`$${Number(embarque.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
+                                        </div>
                                         {embarque.motivoModificacion && (
-                                          <div className="space-y-1 lg:col-span-4">
-                                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Motivo</label>
-                                            <p className="text-sm text-gray-700">{embarque.motivoModificacion}</p>
+                                          <div className="md:col-span-3 text-sm text-gray-600">
+                                            <div className="text-xs text-gray-500">Motivo</div>
+                                            <div>{embarque.motivoModificacion}</div>
                                           </div>
                                         )}
                                       </div>
 
-                                      <h4 className="font-medium text-gray-700 mb-3">División de Pago</h4>
-                                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                        {/* Pago Original */}
-                                        <div className="bg-white p-3 rounded border">
-                                          <div className="flex justify-between items-center mb-2">
-                                            <span className="text-sm font-medium text-gray-700">Operador Original</span>
-                                            <Badge variant="outline">Original</Badge>
-                                          </div>
-                                          <div className="flex items-center gap-1">
-                                            <p className="text-sm text-gray-600 truncate">
-                                              {embarque.operadorOriginalNombre || embarque.operadorAsignado?.nombre || "No especificado"}
-                                            </p>
+                                      {/* División de Pago compacta */}
+                                      <div className="flex flex-col md:flex-row md:items-center gap-3 mt-4">
+                                        <div className="flex items-center gap-3">
+                                          <div className="text-xs text-gray-500">Original</div>
+                                          <Input
+                                            type="number"
+                                            id={`pago-original-${embarque.id}`}
+                                            aria-label="Pago operador original"
+                                            placeholder="$"
+                                            value={operadoresContingencia[embarque.id]?.original || 0}
+                                            onChange={(e) => {
+                                              const valor = Number(e.target.value);
+                                              if (!isNaN(valor)) {
+                                                handleContingencyPaymentChange(embarque.id, "original", valor);
+                                              }
+                                            }}
+                                            className="w-24 text-right text-sm"
+                                          />
+                                        </div>
+
+                                        {embarque.operadorReemplazoNombre && (
+                                          <div className="flex items-center gap-3">
+                                            <div className="text-xs text-gray-500">Reemplazo</div>
                                             <Input
                                               type="number"
-                                              id={`pago-original-${embarque.id}`}
-                                              aria-label="Pago operador original"
+                                              id={`pago-reemplazo-${embarque.id}`}
+                                              aria-label="Pago operador de reemplazo"
                                               placeholder="$"
-                                              value={operadoresContingencia[embarque.id]?.original || 0}
+                                              value={operadoresContingencia[embarque.id]?.reemplazo || 0}
                                               onChange={(e) => {
                                                 const valor = Number(e.target.value);
                                                 if (!isNaN(valor)) {
-                                                  handleContingencyPaymentChange(embarque.id, "original", valor);
+                                                  handleContingencyPaymentChange(embarque.id, "reemplazo", valor);
                                                 }
                                               }}
-                                              className="w-28 text-right text-sm"
+                                              className="w-24 text-right text-sm"
                                             />
                                           </div>
-                                        </div>
-
-                                        {/* Pago Reemplazo */}
-                                        {embarque.operadorReemplazoNombre && (
-                                          <div className="bg-white p-3 rounded border">
-                                            <div className="flex justify-between items-center mb-2">
-                                              <span className="text-sm font-medium text-gray-700">Operador de Reemplazo</span>
-                                              <Badge variant="default">Reemplazo</Badge>
-                                            </div>
-                                            <div className="flex items-center gap-1">
-                                              <p className="text-sm text-gray-600 truncate">{embarque.operadorReemplazoNombre}</p>
-                                              <Input
-                                                type="number"
-                                                id={`pago-reemplazo-${embarque.id}`}
-                                                aria-label="Pago operador de reemplazo"
-                                                placeholder="$"
-                                                value={operadoresContingencia[embarque.id]?.reemplazo || 0}
-                                                onChange={(e) => {
-                                                  const valor = Number(e.target.value);
-                                                  if (!isNaN(valor)) {
-                                                    handleContingencyPaymentChange(embarque.id, "reemplazo", valor);
-                                                  }
-                                                }}
-                                                className="w-28 text-right text-sm"
-                                              />
-                                            </div>
-                                          </div>
                                         )}
-                                      </div>
 
-                                      {/* Resumen */}
-                                      <div className="bg-gray-100 p-3 rounded border border-gray-200 mt-4">
-                                        <div className="flex items-start justify-between gap-3">
-                                          <div>
-                                            <p className="text-sm font-medium text-gray-700">
-                                              {(() => {
-                                                const orig = operadoresContingencia[embarque.id]?.original || 0;
-                                                const repl = embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) : 0;
-                                                const total = orig + repl;
-                                                return `Total División: $${Number(total).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                                              })()}
-                                            </p>
-                                            <p className="text-xs text-gray-600">
-                                              Pago base del servicio: {`$${Number(embarque.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`} (solo referencia)
-                                            </p>
-                                            <p className="text-xs text-blue-600 font-medium mt-1">
-                                              En casos de contingencia, puedes asignar cualquier monto según las circunstancias.
-                                            </p>
+                                        <div className="ml-auto text-right">
+                                          <div className="text-sm font-medium">
+                                            {(() => {
+                                              const orig = operadoresContingencia[embarque.id]?.original || 0;
+                                              const repl = embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) : 0;
+                                              const total = orig + repl;
+                                              return `Total: $${Number(total).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                            })()}
                                           </div>
-                                          <Button
-                                            size="sm"
-                                            onClick={() => saveContingencyPayment(embarque)}
-                                            disabled={(operadoresContingencia[embarque.id]?.original || 0) <= 0 && (!!embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) <= 0 : true)}
-                                          >
-                                            <Save className="h-4 w-4 mr-2" />
-                                            Guardar División de Pago
-                                          </Button>
+                                          <div className="mt-2">
+                                            <Button
+                                              size="sm"
+                                              onClick={() => saveContingencyPayment(embarque)}
+                                              disabled={(operadoresContingencia[embarque.id]?.original || 0) <= 0 && (!!embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) <= 0 : true)}
+                                              className="bg-green-600 hover:bg-green-700 text-white"
+                                            >
+                                              <Save className="h-4 w-4 mr-2" />
+                                              Guardar
+                                            </Button>
+                                          </div>
                                         </div>
                                       </div>
                                     </CardContent>
@@ -5011,7 +5231,12 @@ export default function FacturacionCobranzaPage() {
                               {embarquesOperadorFiltrados.map((embarque) => (
                                 <tr key={embarque.id} className="border-b">
                                   <td className="px-2 py-1">
-                                    {embarque.folio}
+                                    <div className="flex items-center gap-2">
+                                      {embarque.folio}
+                                      {esCancelado(embarque) && (
+                                        <Badge className="bg-purple-600 text-white">Cancelado</Badge>
+                                      )}
+                                    </div>
                                   </td>
                                   <td className="px-2 py-1">
                                     {embarque.clienteNombre}
@@ -5399,8 +5624,18 @@ export default function FacturacionCobranzaPage() {
                           </tr>
                         ) : (
                           paginatedArchivados.map((embarque) => (
-                            <tr key={embarque.id} className="border-b hover:bg-purple-50">
-                              <td className="px-1 py-1 whitespace-nowrap w-32 md:w-40 font-mono">{embarque.folio}</td>
+                            <tr
+                              key={embarque.id}
+                              className={`border-b hover:bg-purple-50 ${esCancelado(embarque) ? 'bg-red-50 border-l-4 border-red-200' : ''}`}
+                            >
+                              <td className="px-1 py-1 whitespace-nowrap w-32 md:w-40">
+                                <div className="flex items-center">
+                                  <span className="font-mono">{embarque.folio}</span>
+                                  {esCancelado(embarque) && (
+                                    <Badge className="ml-2 bg-purple-600 text-white">Cancelado</Badge>
+                                  )}
+                                </div>
+                              </td>
                               <td className="px-0 py-1 w-40 md:w-48 truncate">{embarque.clienteNombre}</td>
                               <td className="px-2 py-1 w-14 md:w-16 truncate text-left font-mono">{(embarque as any).load_number || embarque.numeroLoad || ""}</td>
                               <td className="px-2 py-1 w-36 truncate">
@@ -5438,23 +5673,39 @@ export default function FacturacionCobranzaPage() {
                                     setEmbarqueDetalle(embarque);
                                     setShowDetailModal(true);
                                   }}
+                                  title="Ver detalles"
+                                  aria-label="Ver detalles"
                                 >
-                                  Ver Detalles
+                                  <Eye className="h-4 w-4" />
                                 </Button>
                               </td>
                               <td className="px-2 py-1 text-left">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => eliminarArchivadoDefinitivoFC(embarque)}
-                                  disabled={!puedeEliminarArchivadoFC(embarque)}
-                                  className={`border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black${
-                                    !puedeEliminarArchivadoFC(embarque) ? " opacity-50 cursor-not-allowed" : ""
-                                  }`}
-                                >
-                                  Eliminar
-                                </Button>
-                              </td>
+                                    {(() => {
+                                      const disponibleAhora = puedeEliminarArchivadoFC(embarque);
+                                      const fechaStr = (embarque as any).fecha_archivado || embarque.fechaArchivado || embarque.fecha_creacion || embarque.updated_at;
+                                      let title = '';
+                                      if (embarque.id === globalMasViejoArchivadoId) {
+                                        title = 'Registro más antiguo: eliminación disponible';
+                                      } else {
+                                        title = 'Solo el registro más antiguo puede eliminarse';
+                                      }
+                                      return (
+                                        <Button
+                                          variant="outline"
+                                          size="sm"
+                                          onClick={() => { setEmbarqueAEliminar(embarque); setShowConfirmDeleteDialog(true); }}
+                                          disabled={!disponibleAhora}
+                                          title={title}
+                                          aria-label="Eliminar embarque"
+                                          className={`border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black${
+                                            !disponibleAhora ? " opacity-50 cursor-not-allowed" : ""
+                                          }`}
+                                        >
+                                          <Trash className="h-4 w-4 text-red-600" />
+                                        </Button>
+                                      );
+                                    })()}
+                                  </td>
                             </tr>
                           ))
                         )}
@@ -5492,6 +5743,40 @@ export default function FacturacionCobranzaPage() {
                   </div>
                 </>
               )}
+            </DialogContent>
+          </Dialog>
+
+          {/* Confirmar eliminación permanente de archivado (reemplaza window.confirm) */}
+          <Dialog open={showConfirmDeleteDialog} onOpenChange={(v) => { if(!v) { setShowConfirmDeleteDialog(false); setEmbarqueAEliminar(null); } }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Eliminar registro definitivamente</DialogTitle>
+                <DialogDescription>
+                  Esta acción eliminará el embarque seleccionado de la base de datos de forma permanente. No se puede deshacer.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-2">
+                <p className="font-medium">Folio: {embarqueAEliminar?.folio || "-"}</p>
+                <p className="text-sm text-gray-600">Cliente: {embarqueAEliminar?.clienteNombre || embarqueAEliminar?.cliente_id || '-'}</p>
+                <p className="text-sm text-gray-600">Operador: {embarqueAEliminar?.operadorAsignado?.nombre || '-'}</p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowConfirmDeleteDialog(false); setEmbarqueAEliminar(null); }}>Cancelar</Button>
+                <Button className="bg-red-600 hover:bg-red-700 text-white" onClick={async () => {
+                  const emb = embarqueAEliminar;
+                  if (!emb) return;
+                  setShowConfirmDeleteDialog(false);
+                  try {
+                    await eliminarArchivadoDefinitivoFC(emb);
+                    toast({ title: 'Embarque eliminado', description: `Folio: ${emb.folio}`, variant: 'success' });
+                  } catch (err: any) {
+                    console.error('Error eliminando embarque:', err);
+                    toast({ title: 'Error al eliminar', description: err?.message || String(err), variant: 'destructive' });
+                  } finally {
+                    setEmbarqueAEliminar(null);
+                  }
+                }}>Eliminar</Button>
+              </DialogFooter>
             </DialogContent>
           </Dialog>
           {/* Botón Clientes: abre gestión de crédito de clientes */}
@@ -5910,6 +6195,16 @@ export default function FacturacionCobranzaPage() {
             </Button>
           </div>
         </div>
+        {/* Modal para actualizar precio (instanciado una vez en la página) */}
+        <UpdatePriceModal
+          open={showUpdatePriceModal}
+          onOpenChange={(v: boolean) => {
+            setShowUpdatePriceModal(v);
+            if (!v) setInitialRazonForModal(null);
+          }}
+          embarque={selectedEmbarqueForUpdate}
+          initialRazon={initialRazonForModal ?? undefined}
+        />
 
         <Card>
           <CardHeader>
@@ -5965,9 +6260,14 @@ export default function FacturacionCobranzaPage() {
                           <Package className="h-8 w-8 text-blue-600" />
                           <div>
                             <div className="flex items-center">
-                              <p className="font-bold text-lg text-blue-600">
-                                {embarque.folio}
-                              </p>
+                              <div className="flex items-center">
+                                <p className="font-bold text-lg text-blue-600">
+                                  {embarque.folio}
+                                </p>
+                                {esCancelado(embarque) && (
+                                  <Badge className="ml-2 bg-purple-600 text-white">Cancelado</Badge>
+                                )}
+                              </div>
                               {embarquesModificadosIds.includes(
                                 embarque.id
                               ) && (
@@ -6086,31 +6386,78 @@ export default function FacturacionCobranzaPage() {
                             <FileText className="h-4 w-4 mr-1" />
                             Facturación
                           </Button>
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                // Abrir prompt de justificación primero
+                                setSelectedEmbarqueForUpdate(embarque);
+                                setJustificacionDraft('');
+                                setShowJustificacionPrompt(true);
+                              }}
+                              title="Actualizar precio"
+                            >
+                              <DollarSign className="h-4 w-4 mr-1" />
+                              Precio
+                            </Button>
+                            {/* Prompt pequeño que solicita justificación antes de abrir el modal principal */}
+                                            <Dialog open={showJustificacionPrompt && selectedEmbarqueForUpdate?.id === embarque.id} onOpenChange={(v) => { if(!v) { setShowJustificacionPrompt(false); setSelectedEmbarqueForUpdate(null); } }}>
+                              <DialogContent className="max-w-lg bg-red-50 border border-red-300">
+                                <DialogHeader>
+                                  <DialogTitle className="text-red-800">Confirmar actualización de precio</DialogTitle>
+                                  <DialogDescription className="text-red-700">
+                                    Estás a punto de cambiar el precio del embarque {embarque.folio || embarque.id}. Por favor ingresa una justificación breve antes de continuar.
+                                  </DialogDescription>
+                                </DialogHeader>
+                                <div className="space-y-3">
+                                  <div>
+                                    <Label>Justificación</Label>
+                                    <Textarea value={justificacionDraft} onChange={(ev) => setJustificacionDraft(ev.target.value)} placeholder="Explica brevemente por qué se actualizará el precio" />
+                                  </div>
+                                </div>
+                                <DialogFooter>
+                                  <Button variant="outline" onClick={() => { setShowJustificacionPrompt(false); setSelectedEmbarqueForUpdate(null); }}>Cancelar</Button>
+                                  <Button variant="destructive" onClick={() => {
+                                    if (!justificacionDraft || justificacionDraft.trim().length < 3) {
+                                      toast({ title: 'Ingresa una justificación (mínimo 3 caracteres)', variant: 'destructive' });
+                                      return;
+                                    }
+                                    // Abrir modal principal para editar precio, pasando la justificación inicial
+                                    setInitialRazonForModal(justificacionDraft.trim());
+                                    setShowJustificacionPrompt(false);
+                                    setShowUpdatePriceModal(true);
+                                  }}>
+                                    Aceptar
+                                  </Button>
+                                </DialogFooter>
+                              </DialogContent>
+                            </Dialog>
+                          </>
                           <Button
                             variant="outline"
                             size="sm"
                             onClick={() => verDetallesEmbarque(embarque)}
+                            aria-label="Ver detalles"
                           >
-                            <FileText className="h-4 w-4 mr-1" />
-                            Ver Detalles
+                            <Eye className="h-4 w-4 mr-1" aria-hidden="true" />
+                            Detalles
                           </Button>
                           {/* Botón Modificar oculto según requerimiento */}
                           {(embarque.estado_facturacion === "pagado" ||
                             (embarque.pagado &&
-                              (embarque as any).estado_facturacion == null)) && (
+                              (embarque as any).estado_facturacion == null) ||
+                            esCancelado(embarque)) && (
                             <Button
                               variant="outline"
                               size="sm"
-                              className="border-purple-600 text-purple-700 hover:bg-purple-50 bg-transparent"
                               onClick={() => {
-                                const ok = window.confirm(
-                                  "¿Seguro que deseas archivar este embarque? Se moverá al historial de archivados."
-                                );
-                                if (!ok) return;
-                                archivarEmbarque(embarque);
+                                // Open confirm dialog instead of blocking window.confirm
+                                setEmbarqueAArchivar(embarque);
+                                setShowConfirmArchivarDialog(true);
                               }}
                             >
-                              <Package className="h-4 w-4 mr-1 text-purple-600" />
+                              <Package className="h-4 w-4 mr-1" />
                               Archivar
                             </Button>
                           )}
@@ -6401,7 +6748,7 @@ export default function FacturacionCobranzaPage() {
 
         {/* Control Clientes */}
         <Dialog open={showControlClientesModal} onOpenChange={setShowControlClientesModal}>
-          <DialogContent className="max-w-7xl">
+  <DialogContent className="max-w-[1400px] w-[95vw] max-h-[95vh]">
             <DialogHeader>
               <DialogTitle>Control de Clientes</DialogTitle>
               <DialogDescription>
@@ -6471,13 +6818,99 @@ export default function FacturacionCobranzaPage() {
                     <div className="ml-auto flex items-end gap-3">
                       <Button
                         className="bg-green-600 hover:bg-green-700 text-white"
-                        onClick={() => setControlClientesGenerado(true)}
+                        onClick={async () => {
+                          const desde = controlClientesPeriodo.desde;
+                          const hasta = controlClientesPeriodo.hasta;
+                            try {
+                              setLoadingClienteEmbarques(true);
+                              console.log("control clientes - fetching raw dataset desde:", desde, "hasta:", hasta, "cliente:", controlClienteSeleccionado, "incluirArchivados:", controlIncluirArchivados);
+                              // Fetch a broader dataset server-side and apply the inclusion rules client-side
+                              let query = supabase
+                                .from("embarques")
+                                .select(`
+                                *,
+                                cliente:clientes(id, nombre),
+                                operador:operadores(id, nombre, apellidos)
+                              `)
+                                .order("fecha_creacion", { ascending: false });
+
+                            if (controlClienteSeleccionado) query = query.eq("cliente_id", controlClienteSeleccionado);
+                            if (controlClientesEstadoFiltro && controlClientesEstadoFiltro !== "todos") {
+                              query = query.eq("estado_facturacion", controlClientesEstadoFiltro);
+                            }
+                            if (desde) query = query.gte("fecha_creacion", desde);
+                            if (hasta) query = query.lte("fecha_creacion", hasta);
+
+                            const { data, error } = await query;
+                            if (error) {
+                              console.error("Error fetching control clientes:", error);
+                              setControlClientesFetched([]);
+                            } else {
+                              console.log("control clientes - raw rows returned:", (data || []).length);
+                              const formattedRaw = (data || []).map((embarque: any) => ({
+                                ...embarque,
+                                clienteNombre: embarque.cliente?.nombre || "Cliente no especificado",
+                                operadorAsignado: embarque.operador
+                                  ? { id: embarque.operador.id, nombre: `${embarque.operador.nombre} ${embarque.operador.apellidos || ""}`.trim() }
+                                  : { id: "", nombre: "Sin asignar" },
+                                precioFlete: getMontoContable(embarque),
+                                fechaAsignacion: embarque.fecha_creacion,
+                              }));
+
+                              // Apply inclusion rules client-side: include 'asignado' OR 'finalizado',
+                              // or any record that participates in facturación (estado_facturacion not null and not 'archivado')
+                              // or records that have a precio_quickpaid (fallback). Archivados en facturación se incluyen sólo si checkbox está activo.
+                              const filtered = (formattedRaw || []).filter((e: any) => {
+                                if (!controlMostrarCancelados && esCancelado(e)) return false;
+                                const estadoNorm = String(e?.estado || "").toLowerCase();
+                                const isAssigned = /asignado/.test(estadoNorm);
+                                const isFinalizado = /finalizado/.test(estadoNorm);
+                                const estadoFact = String(e?.estado_facturacion || "").toLowerCase();
+                                const inFacturacion = e?.estado_facturacion != null;
+                                const isArchivedInFact = estadoFact === "archivado";
+                                // Detectar precio_quickpaid robusto (number o string con valor)
+                                const hasPrecioQuickpaid = (e?.precio_quickpaid !== null && e?.precio_quickpaid !== undefined && String(e.precio_quickpaid).trim() !== "") || false;
+
+                                // Include if assigned or finalizado
+                                if (isAssigned || isFinalizado) return true;
+
+                                // Include if it's part of facturación flow (but exclude archived unless user requested it)
+                                if (inFacturacion) {
+                                  if (isArchivedInFact) {
+                                    return controlIncluirArchivados === true;
+                                  }
+                                  return true;
+                                }
+
+                                // Include if quickpaid price exists (fallback for records that only have quickpaid)
+                                if (hasPrecioQuickpaid) return true;
+
+                                // Otherwise exclude
+                                return false;
+                              });
+
+                              console.log('control clientes - filtered rows count:', filtered.length);
+                              try {
+                                console.log('control clientes - filtered folios:', (filtered || []).map((r: any) => r.folio).slice(0,50));
+                              } catch (e) {}
+                              setControlClientesFetched(filtered);
+                            }
+                          } catch (err) {
+                            console.error(err);
+                            setControlClientesFetched([]);
+                          } finally {
+                            setLoadingClienteEmbarques(false);
+                            setControlClientesGenerado(true);
+                            console.log('control clientes - generation completed, generated flag set = true');
+                            setCurrentPageControlActivos(1);
+                          }
+                        }}
                       >
                         Generar
                       </Button>
                       <Button
                         variant="outline"
-                        onClick={() => {
+                          onClick={() => {
                           const inRange = (e: any) => {
                             const fechaStr = e.fechaAsignacion || e.fecha_creacion || e.updated_at;
                             if (!fechaStr) return true;
@@ -6492,46 +6925,108 @@ export default function FacturacionCobranzaPage() {
                             if (hasta && d > hasta) return false;
                             return true;
                           };
-                          const base = (embarquesAsignados || [])
-                            .filter((e: any) => {
-                              const estadoNorm = String(e?.estado || "").toLowerCase();
-                              return !(/cancel/.test(estadoNorm));
-                            })
-                            .filter((e: any) => {
-                              const tieneOperador = Boolean(e?.operadorAsignado?.id || e?.operadorAsignado?.nombre);
-                              const precio = getMontoContable(e);
-                              const tienePrecio = typeof precio === "number" ? precio > 0 : Number(precio) > 0;
-                              return tieneOperador && tienePrecio;
-                            })
-                            .filter((e) => (controlClienteSeleccionado ? e.cliente_id === controlClienteSeleccionado : true))
-                            .filter(inRange)
-                            .filter((e) => {
-                              if (controlClientesEstadoFiltro === "todos") return true;
-                              if (controlClientesEstadoFiltro === "archivado") return e.estado_facturacion === "archivado";
-                              if (controlClientesEstadoFiltro === "pendiente_facturacion") return (e.estado_facturacion || "pendiente_facturacion") === "pendiente_facturacion";
-                              if (controlClientesEstadoFiltro === "pagado") return (e.estado_facturacion || "").toLowerCase().includes("pagado");
-                              if (controlClientesEstadoFiltro === "facturado") return (e.estado_facturacion || "").toLowerCase().includes("facturado");
-                              if (controlClientesEstadoFiltro === "transito") return (String(e.estado || "").toLowerCase()).includes("transit");
-                              return true;
-                            })
-                            .sort(compareControlClientes);
 
-                          const rows = base.map((e) => ({
-                            folio: e.folio,
-                            cliente: (e as any).clienteNombre,
-                            load: (e as any).load_number || "-",
-                            tipo: (tiposServicio.find((t) => t.id === (e as any).tipo_servicio_id)?.nombre) ||
-                              (e as any).tipoServicioNombre ||
-                              (e as any).tipoServicio || "-",
-                            fecha: new Date((e as any).fechaAsignacion || (e as any).fecha_creacion || (e as any).updated_at || Date.now()).toLocaleDateString(),
-                            monto: getMontoContable(e),
-                            moneda: (e as any).moneda_flete || "MXN",
-                            estado: (e as any).estado_facturacion || "pendiente_facturacion",
+                          // Use the filtered memo when available to respect all UI filters/sorts
+                          const primarySource = controlClientesFetched ? controlClientesFetched : controlClientesFiltradosActivos;
+                          const base = (primarySource || []).filter((e: any) => (controlClienteSeleccionado ? e.cliente_id === controlClienteSeleccionado : true)).filter(inRange).filter((e) => {
+                            if (controlClientesEstadoFiltro === "todos") return true;
+                            if (controlClientesEstadoFiltro === "archivado") return e.estado_facturacion === "archivado";
+                            if (controlClientesEstadoFiltro === "pendiente_facturacion") return (e.estado_facturacion || "pendiente_facturacion") === "pendiente_facturacion";
+                            if (controlClientesEstadoFiltro === "pagado") return (e.estado_facturacion || "").toLowerCase().includes("pagado");
+                            if (controlClientesEstadoFiltro === "facturado") return (e.estado_facturacion || "").toLowerCase().includes("facturado");
+                            if (controlClientesEstadoFiltro === "transito") return (String(e.estado || "").toLowerCase()).includes("transit");
+                            return true;
+                          }).sort(compareControlClientes);
+
+                          // If user requested to include canceled, append canceled records from the broader source
+                          let rowsSource = [...base];
+                          if (controlMostrarCancelados) {
+                            const broader = (controlClientesFetched || embarquesAsignados || controlClientesFiltradosActivos || []) as any[];
+                            const canceledOnly = broader.filter((e) => esCancelado(e));
+                            // append canceled rows not already present
+                            const existingIds = new Set(rowsSource.map((r: any) => r.id));
+                            for (const c of canceledOnly) {
+                              if (!existingIds.has(c.id)) rowsSource.push(c);
+                            }
+                          }
+
+                          // Map to a detailed row shape
+                          const mapped = (rowsSource || []).map((e: any) => ({
+                            folio: e.folio || "",
+                            cliente: e.clienteNombre || (e.cliente && e.cliente.nombre) || "",
+                            load: e.load_number || e.numeroLoad || "",
+                            tipo: (tiposServicio.find((t) => t.id === (e as any).tipo_servicio_id)?.nombre) || e.tipoServicioNombre || e.tipoServicio || "",
+                            fecha: new Date(e.fechaAsignacion || e.fecha_creacion || e.updated_at || Date.now()).toLocaleDateString(),
+                            monto: getMontoContable(e) || 0,
+                            moneda: e.moneda_flete || "MXN",
+                            estado_operativo: e.estado || "",
+                            estado_facturacion: e.estado_facturacion || "",
+                            quickpaid_enabled: !!e.quickpaid_enabled,
+                            precio_quickpaid: e.precio_quickpaid ?? "",
+                            precio_flete: e.precio_flete ?? e.precioFlete ?? "",
+                            operador: e.operadorAsignado?.nombre || (e.operador && `${e.operador.nombre} ${e.operador.apellidos || ''}`) || "",
+                            camion: e.camionAsignado?.numeroEconomico || (e.camion && e.camion.numero_economico) || e.camion_numero_economico || "",
+                            remolque: (e.remolque && e.remolque.numero_economico) || e.remolque_numero_economico || e.remolque_placa || "",
+                            observaciones: e.observacionesFacturacion || e.observaciones_facturacion || e.observaciones || "",
+                            fecha_pago: e.fecha_pago || e.fechaPago || "",
+                            fecha_archivado: e.fecha_archivado || e.fechaArchivado || "",
+                            id: e.id || "",
                           }));
-                          let csv = "Folio,Cliente,Load,Tipo Servicio,Fecha,Monto,Moneda,Estado\n";
-                          rows.forEach((r) => {
-                            csv += `${r.folio},${r.cliente},${r.load},${r.tipo},${r.fecha},${r.monto},${r.moneda},${r.estado}\n`;
+
+                          // CSV build with escaping
+                          const esc = (v: any) => {
+                            const s = v == null ? "" : String(v);
+                            return '"' + s.replace(/"/g, '""') + '"';
+                          };
+
+                          const headers = [
+                            "Folio",
+                            "Cliente",
+                            "Load",
+                            "Tipo Servicio",
+                            "Fecha",
+                            "Monto",
+                            "Moneda",
+                            "Estado Operativo",
+                            "Estado Facturacion",
+                            "QuickPaid",
+                            "Precio QuickPaid",
+                            "Precio Flete",
+                            "Operador",
+                            "Camion",
+                            "Remolque",
+                            "Observaciones",
+                            "Fecha Pago",
+                            "Fecha Archivado",
+                            "ID",
+                          ];
+
+                          let csv = headers.map(esc).join(",") + "\n";
+                          mapped.forEach((r) => {
+                            const row = [
+                              esc(r.folio),
+                              esc(r.cliente),
+                              esc(r.load),
+                              esc(r.tipo),
+                              esc(r.fecha),
+                              esc(r.monto),
+                              esc(r.moneda),
+                              esc(r.estado_operativo),
+                              esc(r.estado_facturacion),
+                              esc(r.quickpaid_enabled),
+                              esc(r.precio_quickpaid),
+                              esc(r.precio_flete),
+                              esc(r.operador),
+                              esc(r.camion),
+                              esc(r.remolque),
+                              esc(r.observaciones),
+                              esc(r.fecha_pago),
+                              esc(r.fecha_archivado),
+                              esc(r.id),
+                            ].join(",");
+                            csv += row + "\n";
                           });
+
                           const blob = new Blob([csv], { type: "text/csv" });
                           const url = URL.createObjectURL(blob);
                           const a = document.createElement("a");
@@ -6574,6 +7069,24 @@ export default function FacturacionCobranzaPage() {
                         }}
                       />
                     </div>
+                    <div className="flex items-center gap-4 ml-2">
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={controlIncluirArchivados}
+                          onChange={(e) => setControlIncluirArchivados(e.target.checked)}
+                        />
+                        <span className="text-sm">Incluir archivados</span>
+                      </label>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={controlMostrarCancelados}
+                          onChange={(e) => setControlMostrarCancelados(e.target.checked)}
+                        />
+                        <span className="text-sm">Mostrar cancelados</span>
+                      </label>
+                    </div>
                   </div>
                 </div>
 
@@ -6581,23 +7094,63 @@ export default function FacturacionCobranzaPage() {
               </div>
 
       <div>
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm border-collapse">
+                    <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm border-collapse divide-y divide-gray-200">
                       <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
-                          <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Folio", "folio")}</th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-700 w-[60px]">{renderSortHeader("Folio", "folio")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">Empresa</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Load", "load")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Tipo Servicio", "tipo")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Fecha", "fecha")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Monto", "monto")}</th>
-                          <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Estado", "estado")}</th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-700 w-[120px]">{renderSortHeader("Estado", "estado")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">Acciones</th>
                         </tr>
                       </thead>
                       <tbody>
-        {controlClientesGenerado && paginatedControlActivos
-                          .map((e) => {
+        {controlClientesGenerado && (controlClientesFetched ? (
+                          // When fetched dataset is present, paginate that instead
+                          controlClientesFetched.slice((currentPageControlActivos - 1) * itemsPerPageControl, (currentPageControlActivos - 1) * itemsPerPageControl + itemsPerPageControl).map((e: any) => {
+                          
+                          const tipoNombre = getTipoNombreFor(e as any);
+                          const amount = typeof e.precioFlete === 'number' ? e.precioFlete : Number(e.precioFlete || 0);
+                          return (
+                            <tr key={e.id} className={`border-b ${esCancelado(e) ? 'bg-red-50 border-red-200' : 'border-gray-100'}`}>
+                              <td className="px-3 py-2 text-blue-700 font-medium w-[60px] whitespace-nowrap">{e.folio}</td>
+                              <td className="px-3 py-2 text-gray-700">{(e as any).clienteNombre || "-"}</td>
+                              <td className="px-3 py-2 text-gray-700">{e.load_number || "-"}</td>
+                              <td className="px-3 py-2 text-gray-700">{tipoNombre}</td>
+                              <td className="px-3 py-2 text-gray-700">{new Date(e.fechaAsignacion || e.fecha_creacion || e.updated_at || Date.now()).toLocaleDateString()}</td>
+                              <td className="px-3 py-2 text-gray-800 font-semibold">${amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {e.moneda_flete || 'MXN'}</td>
+                              <td className="px-3 py-2 text-gray-700 w-[120px]">
+                                <div className="whitespace-nowrap">{e.estado_facturacion || "pendiente_facturacion"}</div>
+                                {!String(e.estado || e.estado_facturacion || "").toLowerCase().includes("finalizado") && (
+                                  <div className="text-xs text-yellow-700 font-medium mt-1">Aún no finalizado</div>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 flex gap-2">
+                                <Button size="sm" variant="outline" onClick={() => verDetallesEmbarque(e as any)} aria-label="Ver detalles">
+                                  <Eye className="h-4 w-4" aria-hidden="true" />
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSelectedEmbarqueForUpdate(e);
+                                    setInitialRazonForModal('Precio agregado desde Control Clientes');
+                                    setShowUpdatePriceModal(true);
+                                  }}
+                                  title="Asignar/editar precio"
+                                >
+                                  <DollarSign className="h-4 w-4 mr-1" /> Precio
+                                </Button>
+                              </td>
+                            </tr>
+                          );
+                          })
+                        ) : (
+                          paginatedControlActivos.map((e) => {
                             const currency = e.moneda_flete || "MXN";
                             const amount =
                               (typeof (e as any).montoFacturado === "number"
@@ -6612,8 +7165,8 @@ export default function FacturacionCobranzaPage() {
                                 : 0);
                             const tipoNombre = getTipoNombreFor(e as any);
                             return (
-                              <tr key={e.id} className="border-b border-gray-100">
-                                <td className="px-3 py-2 text-blue-700 font-medium">{e.folio}</td>
+                              <tr key={e.id} className={`border-b ${esCancelado(e) ? 'bg-red-50 border-red-200' : 'border-gray-100'}`}>
+                                <td className="px-3 py-2 text-blue-700 font-medium w-[60px] whitespace-nowrap">{e.folio}</td>
                                 <td className="px-3 py-2 text-gray-700">{(e as any).clienteNombre || "-"}</td>
                                 <td className="px-3 py-2 text-gray-700">{e.load_number || "-"}</td>
                                 <td className="px-3 py-2 text-gray-700">{tipoNombre}</td>
@@ -6621,7 +7174,12 @@ export default function FacturacionCobranzaPage() {
                                 <td className="px-3 py-2 text-gray-800 font-semibold">
                                   ${amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
                                 </td>
-            <td className="px-3 py-2 text-gray-700">{e.estado_facturacion || "pendiente_facturacion"}</td>
+            <td className="px-3 py-2 text-gray-700 w-[120px]">
+              <div className="whitespace-nowrap">{e.estado_facturacion || "pendiente_facturacion"}</div>
+              {!String(e.estado || e.estado_facturacion || "").toLowerCase().includes("finalizado") && (
+                <div className="text-xs text-yellow-700 font-medium mt-1">Aún no finalizado</div>
+              )}
+            </td>
                                 <td className="px-3 py-2">
                                   <Button size="sm" variant="outline" onClick={() => verDetallesEmbarque(e as any)} aria-label="Ver detalles">
                                     <Eye className="h-4 w-4" aria-hidden="true" />
@@ -6629,7 +7187,8 @@ export default function FacturacionCobranzaPage() {
                                 </td>
                               </tr>
                             );
-                          })}
+                          })
+                        ))}
                       </tbody>
                     </table>
                   </div>
@@ -6677,7 +7236,41 @@ export default function FacturacionCobranzaPage() {
 
             </div>
           </DialogContent>
-        </Dialog>
+          </Dialog>
+
+          {/* Confirmar archivado: reutilizable dialog */}
+          <Dialog open={showConfirmArchivarDialog} onOpenChange={(v) => { if(!v) { setShowConfirmArchivarDialog(false); setEmbarqueAArchivar(null); } }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Confirmar archivado</DialogTitle>
+                <DialogDescription>
+                  ¿Seguro que deseas archivar este embarque? Se moverá al historial de archivados.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-2">
+                <p className="font-medium">Folio: {embarqueAArchivar?.folio || "-"}</p>
+                <p className="text-sm text-gray-600">Cliente: {embarqueAArchivar?.clienteNombre || embarqueAArchivar?.cliente_id || '-'}</p>
+                <p className="text-sm text-gray-600">Operador: {embarqueAArchivar?.operadorAsignado?.nombre || '-'}</p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowConfirmArchivarDialog(false); setEmbarqueAArchivar(null); }}>Cancelar</Button>
+                <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={async () => {
+                  const emb = embarqueAArchivar;
+                  if (!emb) return;
+                  setShowConfirmArchivarDialog(false);
+                  try {
+                    await archivarEmbarque(emb);
+                    toast({ title: 'Embarque archivado', description: `Folio: ${emb.folio}`, variant: 'success' });
+                  } catch (err: any) {
+                    console.error('Error archivando embarque:', err);
+                    toast({ title: 'Error al archivar', description: err?.message || String(err), variant: 'destructive' });
+                  } finally {
+                    setEmbarqueAArchivar(null);
+                  }
+                }}>Confirmar</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
         <Dialog
           open={showTiposServicioModal}
@@ -6804,6 +7397,9 @@ export default function FacturacionCobranzaPage() {
                           Pago Operador (MXN)
                         </th>
                         <th className="px-3 py-2 text-center font-semibold text-gray-700">
+                          Detalles
+                        </th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">
                           Eliminar
                         </th>
                       </tr>
@@ -6823,20 +7419,18 @@ export default function FacturacionCobranzaPage() {
                           <td className="px-3 py-2 text-gray-700">
                             {tipo.subcategoria || "-"}
                           </td>
+                          <td className="px-3 py-2 text-right text-gray-800 font-medium">
+                            {/* Pago Operador (MXN) */}
+                            {typeof tipo.precio_base === 'number'
+                              ? `$${tipo.precio_base.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                              : `$${Number(tipo.precio_base || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                          </td>
                           <td className="px-3 py-2">
-                            <div className="flex justify-end">
-                              <Input
-                                type="number"
-                                defaultValue={tipo.precio_base || 0}
-                                onChange={(e) => {
-                                  const nuevoMonto = Number(e.target.value);
-                                  if (!isNaN(nuevoMonto)) {
-                                    guardarTipoServicio(tipo.id, nuevoMonto);
-                                  }
-                                }}
-                                className="w-28 text-right"
-                              />
-                            </div>
+                            {/* Detalles column: lock + edit + save */}
+                            <DetallesTipoRow
+                              tipo={tipo}
+                              onSave={(nuevoMonto) => guardarTipoServicio(tipo.id, nuevoMonto)}
+                            />
                           </td>
                           <td className="px-3 py-2 text-center">
                             <Button
@@ -7123,11 +7717,13 @@ export default function FacturacionCobranzaPage() {
                             <div className="text-right">
                               <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Facturado</div>
                               <div className="text-3xl md:text-4xl font-bold text-blue-600 leading-tight">
-                                ${
-                                  (
-                                    (embarqueDetalle.cantidad_final_facturada ?? embarqueDetalle.precio_flete ?? 0) as number
-                                  ).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
-                                } {embarqueDetalle.moneda_flete || "MXN"}
+                                ${(() => {
+                                  const isQuick = (embarqueDetalle as any)?.quickpaid_enabled;
+                                  const quick = (embarqueDetalle as any)?.precio_quickpaid;
+                                  const base = (embarqueDetalle.cantidad_final_facturada ?? embarqueDetalle.precio_flete ?? 0) as number;
+                                  const amount = isQuick && (typeof quick === 'number' || typeof quick === 'string') ? (typeof quick === 'number' ? quick : Number(quick) || 0) : base;
+                                  return amount.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+                                })()} {embarqueDetalle.moneda_flete || "MXN"}
                               </div>
                               <div className="text-xs text-gray-500 mt-1">
                                 {monedaNombre(embarqueDetalle.moneda_flete)}
@@ -7202,30 +7798,38 @@ export default function FacturacionCobranzaPage() {
                             <Select
                               value={embarqueDetalle.estado_facturacion || "pendiente_facturacion"}
                               onValueChange={async (value) => {
-                                try {
-                                  const v = (["pendiente_facturacion", "facturado", "pagado"] as const).includes(value as any)
-                                    ? (value as "pendiente_facturacion" | "facturado" | "pagado")
-                                    : "pendiente_facturacion";
-                                  const embarquesActualizados = embarquesAsignados.map((e) =>
-                                    e.id === embarqueDetalle.id ? { ...e, estado_facturacion: v } : e
-                                  );
-                                  if (mounted.current) {
-                                    setEmbarquesAsignados(embarquesActualizados);
-                                    localStorage.setItem(
-                                      "embarquesAsignados",
-                                      JSON.stringify(embarquesActualizados)
+                                  try {
+                                    // If user selected 'archivar' from the detalle select,
+                                    // open the confirm dialog for this embarque instead of
+                                    // immediately updating the DB.
+                                    if (value === 'archivar') {
+                                      setEmbarqueAArchivar(embarqueDetalle);
+                                      setShowConfirmArchivarDialog(true);
+                                      return;
+                                    }
+                                    const v = (["pendiente_facturacion", "facturado", "pagado"] as const).includes(value as any)
+                                      ? (value as "pendiente_facturacion" | "facturado" | "pagado")
+                                      : "pendiente_facturacion";
+                                    const embarquesActualizados = embarquesAsignados.map((e) =>
+                                      e.id === embarqueDetalle.id ? { ...e, estado_facturacion: v } : e
                                     );
-                                    setEmbarqueDetalle({ ...embarqueDetalle, estado_facturacion: v });
+                                    if (mounted.current) {
+                                      setEmbarquesAsignados(embarquesActualizados);
+                                      localStorage.setItem(
+                                        "embarquesAsignados",
+                                        JSON.stringify(embarquesActualizados)
+                                      );
+                                      setEmbarqueDetalle({ ...embarqueDetalle, estado_facturacion: v });
+                                    }
+                                    await supabase
+                                      .from("embarques")
+                                      .update({ estado_facturacion: v, updated_at: new Date().toISOString() })
+                                      .eq("id", embarqueDetalle.id);
+                                  } catch (error) {
+                                    console.error("Error actualizando estado de facturación:", error);
+                                    toast({ title: 'Error al actualizar el estado de facturación', description: String((error as any)?.message || ''), variant: 'destructive' });
                                   }
-                                  await supabase
-                                    .from("embarques")
-                                    .update({ estado_facturacion: v, updated_at: new Date().toISOString() })
-                                    .eq("id", embarqueDetalle.id);
-                                } catch (error) {
-                                  console.error("Error actualizando estado de facturación:", error);
-                                  alert("Error al actualizar el estado de facturación.");
-                                }
-                              }}
+                                }}
                             >
                               <SelectTrigger className="w-44 h-8">
                                 <SelectValue />
@@ -7714,7 +8318,7 @@ export default function FacturacionCobranzaPage() {
               </div>
               <div>
                 <Label htmlFor="estado_facturacion">Estado Facturación</Label>
-                <Select
+                  <Select
                   value={formData.estado_facturacion}
                   onValueChange={(value) =>
                     setFormData({

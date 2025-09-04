@@ -1,4 +1,5 @@
 import { del, list } from "@vercel/blob"
+import { supabase } from "@/lib/supabase"
 
 export async function subirFotoEmbarque(
   file: File,
@@ -240,31 +241,209 @@ export async function subirDocumentoOperador(
 export async function eliminarDocumentoOperador(target: string): Promise<void> {
   try {
     console.log("Eliminando documento de operador:", target)
+    // Normalize target to a pathname that the server-side blob deleter expects.
+    // Accepts full URLs, /api/blob-proxy?pathname=..., or raw pathnames like "operadores/...".
+    let pathnameToDelete = String(target || "");
 
-    const response = await fetch("/api/upload", {
-      method: "DELETE",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(
-        /^https?:\/\//i.test(target)
-          ? { url: target }
-          : { pathname: target }
-      ),
+    try {
+      // Proxy URL form: /api/blob-proxy?pathname=ENCODED
+      if (pathnameToDelete.startsWith('/api/blob-proxy')) {
+        const u = new URL(window.location.origin + pathnameToDelete)
+        const p = u.searchParams.get('pathname') || ''
+        pathnameToDelete = tryDecode(p) || p || pathnameToDelete
+      } else if (/^https?:\/\//i.test(pathnameToDelete)) {
+        // Full URL to storage: extract pathname portion
+        const u = new URL(pathnameToDelete)
+        pathnameToDelete = u.pathname.replace(/^\/+/, '')
+      }
+
+    } catch (e) {
+      // If parsing fails, fall back to the raw target string
+      console.warn('No se pudo normalizar target para eliminación, usando raw target:', e)
+    }
+
+    const response = await fetch('/api/blob/eliminar', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pathname: pathnameToDelete }),
     })
 
     if (!response.ok) {
       const errorText = await response.text()
-      console.error("Error eliminando archivo:", errorText)
+      console.error('Error eliminando archivo (blob/eliminar):', errorText)
       if (response.status === 507) {
-        throw new Error("El almacenamiento está lleno y no se pudo completar la operación.")
+        throw new Error('El almacenamiento está lleno y no se pudo completar la operación.')
       }
       throw new Error(`Error al eliminar archivo: ${response.status}`)
     }
 
-  console.log("Documento eliminado exitosamente")
+    console.log('Documento eliminado exitosamente (blob/eliminar)')
   } catch (error) {
     console.error("Error al eliminar documento:", error)
     throw error
   }
 }
+
+function tryDecode(v: string) {
+  try {
+    return decodeURIComponent(v || '')
+  } catch { return v }
+}
+
+// ================= Helpers para Foto de Perfil de Operador =================
+// Guarda la foto en Blob (usando API /api/upload) y crea la fila en imagenes_perfil_operador
+export async function subirFotoPerfilOperador(operadorId: string, file: File): Promise<{ id: string | null; url: string; pathname: string }> {
+  if (!operadorId) throw new Error('OperadorId requerido')
+  try {
+    // Guardar en folder específico por operador
+    const timestamp = Date.now()
+    const extension = file.name.split('.').pop() || 'jpg'
+    const fileName = `operadores/${operadorId}/perfil/perfil_operador_${timestamp}.${extension}`
+
+    const { url, pathname } = await uploadFile(fileName, file)
+
+    // Desactivar otras fotos activas
+    await supabase.from('imagenes_perfil_operador').update({ activo: false }).eq('operador_id', operadorId).eq('activo', true)
+
+    // Insertar nueva fila
+    const { data, error } = await supabase.from('imagenes_perfil_operador').insert({
+      operador_id: operadorId,
+      pathname,
+      url_blob: url,
+      activo: true,
+    }).select().single()
+
+    if (error) throw error
+
+    return { id: data?.id || null, url, pathname }
+  } catch (error) {
+    console.error('Error subirFotoPerfilOperador:', error)
+    throw error
+  }
+}
+
+// Elimina la foto de perfil: busca por id o pathname, elimina el blob y marca inactiva la fila
+export async function eliminarFotoPerfilOperador(opts: { id?: string; pathname?: string; operadorId?: string }): Promise<void> {
+  try {
+    let record: any = null
+    if (opts.id) {
+      const { data } = await supabase.from('imagenes_perfil_operador').select('*').eq('id', opts.id).maybeSingle()
+      record = data
+    } else if (opts.pathname) {
+      const { data } = await supabase.from('imagenes_perfil_operador').select('*').eq('pathname', opts.pathname).maybeSingle()
+      record = data
+    } else if (opts.operadorId) {
+      const { data } = await supabase.from('imagenes_perfil_operador').select('*').eq('operador_id', opts.operadorId).order('created_at', { ascending: false }).limit(1).maybeSingle()
+      record = data
+    }
+
+    if (!record) {
+      console.warn('No se encontró registro de imagen de perfil para eliminar', opts)
+      return
+    }
+
+    // Eliminar blob (intenta por pathname)
+    try {
+      await eliminarDocumentoOperador(record.pathname || record.url_blob || '')
+    } catch (e) {
+      console.warn('Fallo al eliminar blob para imagen de perfil:', e)
+      // continuar para marcar inactivo igualmente
+    }
+
+    // Marcar como inactivo
+    await supabase.from('imagenes_perfil_operador').update({ activo: false }).eq('id', record.id)
+  } catch (error) {
+    console.error('Error eliminarFotoPerfilOperador:', error)
+    throw error
+  }
+}
+
+// ================= Helpers para archivos de operador (no perfil) =================
+// Guarda archivo en blob bajo operadores/{operadorId}/archivos/ y crea fila en archivos_operadores
+export async function subirArchivoOperador(
+  operadorId: string,
+  file: File,
+  opts?: { subfolder?: string; subidoPor?: string }
+): Promise<{ id: string | null; url: string; pathname: string }> {
+  if (!operadorId) throw new Error('OperadorId requerido')
+  try {
+    const timestamp = Date.now()
+    const extension = (file.name.split('.').pop() || 'bin').replace(/[^a-z0-9]/gi, '')
+    const sub = opts?.subfolder ? `${opts.subfolder.replace(/[^a-z0-9_-]/gi, '')}` : 'archivos'
+    const safeName = file.name.replace(/\s+/g, '_').replace(/[^a-zA-Z0-9._-]/g, '')
+    const fileName = `operadores/${operadorId}/${sub}/${timestamp}_${safeName}`
+
+    const { url, pathname } = await uploadFile(fileName, file)
+
+    // Insertar fila en archivos_operadores
+    const { data, error } = await supabase.from('archivos_operadores').insert({
+      operador_id: operadorId,
+      pathname,
+      url_blob: url,
+      nombre_archivo: file.name,
+      tamano_bytes: file.size,
+      tipo_mime: file.type,
+      metadata: null,
+      subido_por: opts?.subidoPor || 'Usuario',
+      activo: true,
+    }).select().single()
+
+    if (error) {
+      console.warn('Advertencia: no se pudo insertar metadata en archivos_operadores, pero el blob fue subido', error)
+      return { id: null, url, pathname }
+    }
+
+    return { id: data?.id || null, url, pathname }
+  } catch (error) {
+    console.error('Error subirArchivoOperador:', error)
+    throw error
+  }
+}
+
+// Listar archivos de un operador
+export async function listarArchivosOperador(operadorId: string) {
+  try {
+    const { data, error } = await supabase.from('archivos_operadores').select('*').eq('operador_id', operadorId).eq('activo', true).order('fecha_subida', { ascending: false })
+    if (error) throw error
+    return data || []
+  } catch (error) {
+    console.error('Error listarArchivosOperador:', error)
+    throw error
+  }
+}
+
+// Eliminar un archivo de la tabla archivos_operadores y del blob
+export async function eliminarArchivoOperador(opts: { id?: string; pathname?: string; operadorId?: string }): Promise<void> {
+  try {
+    let record: any = null
+    if (opts.id) {
+      const { data } = await supabase.from('archivos_operadores').select('*').eq('id', opts.id).maybeSingle()
+      record = data
+    } else if (opts.pathname) {
+      const { data } = await supabase.from('archivos_operadores').select('*').eq('pathname', opts.pathname).maybeSingle()
+      record = data
+    } else if (opts.operadorId) {
+      const { data } = await supabase.from('archivos_operadores').select('*').eq('operador_id', opts.operadorId).limit(100)
+      record = data && data.length ? data[0] : null
+    }
+
+    if (!record) {
+      console.warn('No se encontró registro en archivos_operadores para eliminar', opts)
+      return
+    }
+
+    // Intentar eliminar blob
+    try {
+      await eliminarDocumentoOperador(record.pathname || record.url_blob || '')
+    } catch (e) {
+      console.warn('Fallo al eliminar blob para archivo operador:', e)
+    }
+
+    // Marcar inactivo
+    await supabase.from('archivos_operadores').update({ activo: false, updated_at: new Date().toISOString() }).eq('id', record.id)
+  } catch (error) {
+    console.error('Error eliminarArchivoOperador:', error)
+    throw error
+  }
+}
+
