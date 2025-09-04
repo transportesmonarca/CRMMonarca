@@ -29,6 +29,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { toast } from "@/hooks/use-toast";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,6 +51,7 @@ import {
   CheckCircle,
   Clock,
   Download,
+  RotateCw,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import {
@@ -89,9 +91,21 @@ export default function RecordatoriosPage() {
   const [filtroPrioridad, setFiltroPrioridad] = useState<"todas" | "alta" | "media" | "baja">("todas");
   // Filtro estado
   const [filtroEstado, setFiltroEstado] = useState<"todos" | "pendiente" | "completado" | "vencido">("todos");
+  // Número de tarjetas por fila (2 a 6)
+  const [cardsPerRow, setCardsPerRow] = useState<2 | 3 | 4 | 5 | 6>(3);
   // Utilidad para saber si está vencido (mover arriba para evitar ReferenceError)
   const esVencido = (fechaVencimiento: string) => {
     return new Date(fechaVencimiento) < new Date();
+  };
+
+  // Formatear fechas en formato México (día/mes/año)
+  const formatFechaMX = (fecha?: string | null) => {
+    if (!fecha) return "";
+    try {
+      return new Date(fecha).toLocaleDateString("es-MX");
+    } catch {
+      return String(fecha);
+    }
   };
   // Paginación
   const [page, setPage] = useState(1);
@@ -189,8 +203,6 @@ export default function RecordatoriosPage() {
         tipo: formData.tipo || null,
         prioridad: formData.prioridad,
         estado: formData.estado,
-        operador_id: formData.operador_id || null,
-        camion_id: formData.camion_id || null,
         updated_at: new Date().toISOString(),
       };
 
@@ -225,32 +237,28 @@ export default function RecordatoriosPage() {
           alert("Error al crear recordatorio");
           return;
         }
-        // Audit: creación de recordatorio
+        // Audit: creación de recordatorio (sin operador/camión)
         try {
-          const op = formData.operador_id
-            ? operadores.find((o) => o.id === formData.operador_id)
-            : undefined;
-          const cam = formData.camion_id
-            ? camiones.find((c) => c.id === formData.camion_id)
-            : undefined;
           const partes: string[] = [
             `"${formData.titulo}"`,
             `vence: ${formData.fecha_vencimiento}`,
           ];
-          if (op) partes.push(`operador: ${op.nombre} ${op.apellidos}`);
-          if (cam) partes.push(`camión: ${cam.numero_economico}`);
           agregarAuditLog("CREAR", "Recordatorios", `Creó recordatorio ${partes.join(", ")}`);
         } catch {}
       }
 
-      alert(
-        editingRecordatorio
-          ? "Recordatorio actualizado exitosamente"
-          : "Recordatorio creado exitosamente"
-      );
-      limpiarFormulario();
-      setShowForm(false);
-      await cargarDatos(); // Recargar la lista
+        if (editingRecordatorio) {
+          // Close form, reload list and show success toast
+          limpiarFormulario();
+          setShowForm(false);
+          await cargarDatos(); // Recargar la lista
+          toast({ title: 'Recordatorio actualizado exitosamente', variant: 'success' });
+        } else {
+          alert("Recordatorio creado exitosamente");
+          limpiarFormulario();
+          setShowForm(false);
+          await cargarDatos(); // Recargar la lista
+        }
     } catch (error) {
       console.error("Error guardando recordatorio:", error);
       alert("Error al guardar recordatorio");
@@ -267,8 +275,8 @@ export default function RecordatoriosPage() {
       tipo: recordatorio.tipo || "",
       prioridad: recordatorio.prioridad,
       estado: recordatorio.estado,
-      operador_id: recordatorio.operador_id || "",
-      camion_id: recordatorio.camion_id || "",
+  operador_id: recordatorio.operador_id || "",
+  camion_id: recordatorio.camion_id || "",
     });
     setEditingRecordatorio(recordatorio);
     setShowForm(true);
@@ -288,7 +296,7 @@ export default function RecordatoriosPage() {
         return;
       }
 
-      alert("Recordatorio eliminado exitosamente");
+  toast({ title: 'Recordatorio eliminado exitosamente', variant: 'destructive' });
       // Audit: eliminación de recordatorio
       try {
         agregarAuditLog(
@@ -333,6 +341,38 @@ export default function RecordatoriosPage() {
     } catch (error) {
       console.error("Error:", error);
       alert("Error al marcar como completado");
+    }
+  };
+
+  const desmarcarRecordatorio = async (id: string) => {
+    try {
+      const rec = recordatorios.find((r) => r.id === id);
+      const { error } = await supabase
+        .from("recordatorios")
+        .update({
+          estado: "pendiente",
+          updated_at: new Date().toISOString(),
+        })
+        .eq("id", id);
+
+      if (error) {
+        console.error("Error desmarcando recordatorio:", error);
+        alert("Error al desmarcar el recordatorio");
+        return;
+      }
+
+      try {
+        agregarAuditLog(
+          "ACTUALIZAR",
+          "Recordatorios",
+          `Desmarcó como completado el recordatorio ${id}${rec?.titulo ? ` - "${rec.titulo}"` : ""}`
+        );
+      } catch {}
+
+      await cargarDatos(); // Recargar la lista
+    } catch (error) {
+      console.error("Error:", error);
+      alert("Error al desmarcar el recordatorio");
     }
   };
 
@@ -612,51 +652,7 @@ export default function RecordatoriosPage() {
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="operador_id">Operador (Opcional)</Label>
-                      <Select
-                        value={formData.operador_id}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, operador_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar operador" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Sin asignar</SelectItem>
-                          {operadores.map((operador) => (
-                            <SelectItem key={operador.id} value={operador.id}>
-                              {operador.nombre} {operador.apellidos}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="camion_id">Camión (Opcional)</Label>
-                      <Select
-                        value={formData.camion_id}
-                        onValueChange={(value) =>
-                          setFormData({ ...formData, camion_id: value })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Seleccionar camión" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="none">Sin asignar</SelectItem>
-                          {camiones.map((camion) => (
-                            <SelectItem key={camion.id} value={camion.id}>
-                              {camion.numero_economico} - {camion.marca}{" "}
-                              {camion.modelo}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  </div>
+                  {/* Operador y Camión removidos del formulario por solicitud */}
 
                   <div className="flex justify-end space-x-2">
                     <Button
@@ -666,7 +662,7 @@ export default function RecordatoriosPage() {
                     >
                       Cancelar
                     </Button>
-                    <Button onClick={guardarRecordatorio} disabled={saving}>
+                    <Button onClick={guardarRecordatorio} disabled={saving} className="bg-green-600 hover:bg-green-700 text-white">
                       {saving ? (
                         <>
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
@@ -684,6 +680,7 @@ export default function RecordatoriosPage() {
             </Dialog>
           </div>
         </div>
+  {/* success toast will be shown on update */}
 
         {/* Estadísticas rápidas */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
@@ -811,18 +808,41 @@ export default function RecordatoriosPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                <Label htmlFor="pageSize" className="text-xs text-gray-500">Por página</Label>
-                <select
-                  id="pageSize"
-                  value={pageSize}
-                  onChange={(e) => setPageSize(Number(e.target.value))}
-                  className="border rounded px-2 py-1 text-sm bg-white"
-                >
-                  {[6,12,24,48].map(n => <option key={n} value={n}>{n}</option>)}
-                </select>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="pageSize" className="text-xs text-gray-500">Por página</Label>
+                  <select
+                    id="pageSize"
+                    value={pageSize}
+                    onChange={(e) => setPageSize(Number(e.target.value))}
+                    className="border rounded px-2 py-1 text-sm bg-white"
+                  >
+                    {[6,12,24,48].map(n => <option key={n} value={n}>{n}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Label htmlFor="cardsPerRow" className="text-xs text-gray-500">Elementos por fila</Label>
+                  <Select value={String(cardsPerRow)} onValueChange={(v: any) => setCardsPerRow(Number(v) as 2|3|4|5|6)}>
+                    <SelectTrigger id="cardsPerRow" className="w-28">
+                      <SelectValue placeholder="Elementos por fila" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="2">2</SelectItem>
+                      <SelectItem value="3">3</SelectItem>
+                      <SelectItem value="4">4</SelectItem>
+                      <SelectItem value="5">5</SelectItem>
+                      <SelectItem value="6">6</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4">
+            <div className={"grid grid-cols-1 gap-4 " + (
+              cardsPerRow === 2 ? 'sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-2' :
+              cardsPerRow === 3 ? 'sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3' :
+              cardsPerRow === 4 ? 'sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-4' :
+              cardsPerRow === 5 ? 'sm:grid-cols-2 lg:grid-cols-5 2xl:grid-cols-5' :
+              'sm:grid-cols-2 lg:grid-cols-6 2xl:grid-cols-6'
+            )}>
               {paginatedRecordatorios.map((recordatorio: Recordatorio) => (
                 <Card
                   key={recordatorio.id}
@@ -843,7 +863,7 @@ export default function RecordatoriosPage() {
                           {recordatorio.titulo}
                         </CardTitle>
                         <CardDescription className="text-xs leading-tight space-y-0.5">
-                          <span className="block">Vence: {new Date(recordatorio.fecha_vencimiento).toLocaleDateString()}</span>
+                          <span className="block">Vence: {formatFechaMX(recordatorio.fecha_vencimiento)}</span>
                           {recordatorio.operador && (
                             <span className="block truncate">Op: {recordatorio.operador.nombre} {recordatorio.operador.apellidos}</span>
                           )}
@@ -878,7 +898,7 @@ export default function RecordatoriosPage() {
                         {recordatorio.descripcion.slice(0,140)}{recordatorio.descripcion.length>140 && '…'}
                       </p>
                       <div className="mt-2 flex items-center justify-between">
-                        <span className="text-[10px] text-gray-400">Creado: {new Date(recordatorio.fecha_creacion).toLocaleDateString()}</span>
+                        <span className="text-[10px] text-gray-400">Creado: {formatFechaMX(recordatorio.fecha_creacion)}</span>
                         <div className="flex space-x-1">
                           {recordatorio.estado === 'pendiente' && (
                             <AlertDialog>
@@ -903,6 +923,37 @@ export default function RecordatoriosPage() {
                                   <AlertDialogAction
                                     className="bg-green-600 hover:bg-green-700 text-white"
                                     onClick={() => marcarComoCompletado(recordatorio.id)}
+                                  >
+                                    Confirmar
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          )}
+                          {recordatorio.estado === 'completado' && (
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="h-7 w-7 text-gray-600 hover:text-gray-700"
+                                  title="Desmarcar como completado"
+                                >
+                                  <RotateCw className="h-3.5 w-3.5" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Confirmar desmarcado</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    ¿Deseas marcar este recordatorio nuevamente como pendiente? Esto revertirá el estado.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    className="bg-gray-600 hover:bg-gray-700 text-white"
+                                    onClick={() => desmarcarRecordatorio(recordatorio.id)}
                                   >
                                     Confirmar
                                   </AlertDialogAction>

@@ -31,7 +31,7 @@ create table if not exists public.security_settings (
   id smallint primary key default 1,
   max_failed_attempts int not null default 5,
   lockout_minutes int not null default 15,
-  session_timeout_minutes int not null default 30,
+  session_timeout_minutes int not null default 60,
   updated_at timestamptz not null default now()
 );
 

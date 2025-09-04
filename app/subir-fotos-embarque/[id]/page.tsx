@@ -67,6 +67,7 @@ export default function SubirFotosEmbarquePage() {
   const [openSuccessDialog, setOpenSuccessDialog] = useState(false)
   const [successMessage, setSuccessMessage] = useState("")
   const [successType, setSuccessType] = useState<"upload" | "delete">("upload")
+  const [generatingLink, setGeneratingLink] = useState(false)
 
   // Geolocalización
   const [latitud, setLatitud] = useState<number | null>(null)
@@ -412,10 +413,7 @@ export default function SubirFotosEmbarquePage() {
           <AlertTriangle className="h-16 w-16 mx-auto mb-4 text-red-500" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Embarque no encontrado</h1>
           <p className="text-gray-600 mb-4">No se pudo encontrar el embarque especificado</p>
-          <Button onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Regresar
-          </Button>
+          {/* Regresar removido para evitar que el usuario salga desde el móvil */}
         </div>
       </MainLayout>
     )
@@ -432,10 +430,23 @@ export default function SubirFotosEmbarquePage() {
               Folio: <span className="font-semibold">{embarque.folio}</span>
             </p>
           </div>
-          <Button variant="outline" onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Regresar
-          </Button>
+          <div className="flex items-center gap-2">
+            {/* Discrete antenna button to manually request geolocation when needed */}
+            <button
+              type="button"
+              onClick={() => solicitarUbicacion(true)}
+              aria-label="Activar ubicación"
+              title="Activar ubicación"
+              className="p-2 rounded-md hover:bg-gray-100"
+            >
+              {/* Small antenna-like icon using simple SVG */}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600">
+                <path d="M12 20v-6" />
+                <path d="M5 9a7 7 0 0 1 14 0" />
+                <path d="M8 12a4 4 0 0 1 8 0" />
+              </svg>
+            </button>
+          </div>
         </div>
 
         {/* Información del embarque */}
@@ -471,8 +482,18 @@ export default function SubirFotosEmbarquePage() {
                 <p className="text-sm">{embarque.camion?.numero_economico || "No asignado"}</p>
               </div>
               <div>
+                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Recolecta</Label>
+                <p className="text-sm">{embarque.fecha_recolecta ? new Date(embarque.fecha_recolecta).toLocaleDateString() : '—'}{embarque.hora_recolecta ? ` ${embarque.hora_recolecta}` : ''}</p>
+              </div>
+              <div>
                 <Label className="text-sm font-medium text-gray-600">No. Remolque</Label>
-                <p className="text-sm">{embarque.remolque?.numero_economico || embarque.remolque?.placas || "No asignado"}</p>
+                <p className="text-sm">
+                  {embarque.remolque?.numero_economico || (embarque as any).remolque_numero_economico || embarque.remolque?.placas || (embarque as any).remolque_placa || "No asignado"}
+                </p>
+              </div>
+              <div>
+                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Entrega</Label>
+                <p className="text-sm">{embarque.fecha_entrega ? new Date(embarque.fecha_entrega).toLocaleDateString() : '—'}{embarque.hora_entrega ? ` ${embarque.hora_entrega}` : ''}</p>
               </div>
             </div>
           </CardContent>
@@ -712,10 +733,10 @@ export default function SubirFotosEmbarquePage() {
                                 Esta acción no se puede deshacer. La foto se eliminará permanentemente.
                               </AlertDialogDescription>
                             </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction onClick={() => eliminarFoto(foto)}>Eliminar</AlertDialogAction>
-                            </AlertDialogFooter>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => eliminarFoto(foto)}>Eliminar</AlertDialogAction>
+                              </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
                       </div>
@@ -823,7 +844,7 @@ export default function SubirFotosEmbarquePage() {
                               </AlertDialogHeader>
                               <AlertDialogFooter>
                                 <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => eliminarFoto(foto)}>
+                                <AlertDialogAction className="bg-red-600 text-white hover:bg-red-700" onClick={() => eliminarFoto(foto)}>
                                   Eliminar
                                 </AlertDialogAction>
                               </AlertDialogFooter>
@@ -837,6 +858,67 @@ export default function SubirFotosEmbarquePage() {
             )}
           </CardContent>
         </Card>
+
+        {/* Botón para abrir vista pública (enviable al dueño de la mercancía) */}
+        <div className="mt-4">
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={async () => {
+                try {
+                  const res = await fetch('/api/public-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ embarqueId: embarqueId, hours: 72 }) })
+                  const json = await res.json()
+                  if (json?.token) {
+                    window.open(json.url, '_blank')
+                  } else {
+                    setError('No se pudo generar el enlace público: ' + (json?.error || 'error'))
+                  }
+                } catch (e) { setError('Error generando enlace público') }
+              }}
+              className="inline-block w-full sm:w-auto flex-1 text-center bg-green-600 hover:bg-green-700 text-white py-2 rounded"
+            >
+              Ver reporte para el cliente
+            </button>
+
+            <button
+              onClick={async () => {
+                try {
+                  setGeneratingLink(true)
+                  const res = await fetch('/api/public-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ embarqueId: embarqueId, hours: 72 }) })
+                  const json = await res.json()
+                  if (json?.url) {
+                    try {
+                      await navigator.clipboard.writeText(json.url)
+                      setSuccess('Enlace copiado al portapapeles')
+                      // clear after 3s
+                      setTimeout(() => setSuccess(''), 3000)
+                    } catch (err) {
+                      // Fallback: create temporary input
+                      const input = document.createElement('input')
+                      input.value = json.url
+                      document.body.appendChild(input)
+                      input.select()
+                      document.execCommand('copy')
+                      document.body.removeChild(input)
+                      setSuccess('Enlace copiado al portapapeles')
+                      setTimeout(() => setSuccess(''), 3000)
+                    }
+                  } else {
+                    setError('No se pudo generar la liga: ' + (json?.error || 'error'))
+                  }
+                } catch (e) {
+                  console.error('Error generando/copiando enlace', e)
+                  setError('Error generando la liga pública')
+                } finally {
+                  setGeneratingLink(false)
+                }
+              }}
+              disabled={generatingLink}
+              className="inline-block w-full sm:w-auto flex-1 text-center bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded"
+            >
+              {generatingLink ? 'Generando...' : 'Copiar liga para cliente'}
+            </button>
+          </div>
+        </div>
         
         {/* Estadísticas */}
         {fotos.length > 0 && (

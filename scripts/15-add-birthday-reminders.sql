@@ -9,6 +9,7 @@ DECLARE
     fecha_cumpleanos DATE;
     año_actual INTEGER;
     recordatorios_creados INTEGER := 0;
+    vencimiento DATE;
 BEGIN
     año_actual := EXTRACT(YEAR FROM CURRENT_DATE);
     
@@ -31,14 +32,18 @@ BEGIN
                                     EXTRACT(DAY FROM operador_record.fecha_nacimiento));
         END IF;
         
-        -- Verificar si ya existe un recordatorio para este cumpleaños
+    -- Calcular vencimiento: siempre una semana (7 días) después de la fecha de cumpleaños
+    -- y formatear fechas para la descripción (DD/MM/YYYY)
+    vencimiento := fecha_cumpleanos + 7;
+
+        -- Verificar si ya existe un recordatorio para este cumpleaños con el vencimiento objetivo
         IF NOT EXISTS (
             SELECT 1 FROM recordatorios 
             WHERE operador_id = operador_record.id 
             AND tipo = 'cumpleanos'
-            AND fecha_vencimiento = fecha_cumpleanos - INTERVAL '1 day' * dias_anticipacion
+            AND fecha_vencimiento = vencimiento
         ) THEN
-            -- Crear el recordatorio
+            -- Crear el recordatorio con descripción que incluye la fecha de nacimiento del operador
             INSERT INTO recordatorios (
                 titulo,
                 descripcion,
@@ -51,9 +56,10 @@ BEGIN
                 updated_at
             ) VALUES (
                 'Cumpleaños de ' || operador_record.nombre || ' ' || operador_record.apellidos,
-                'Recordatorio: El ' || fecha_cumpleanos || ' es el cumpleaños de ' || 
-                operador_record.nombre || ' ' || operador_record.apellidos,
-                fecha_cumpleanos - INTERVAL '1 day' * dias_anticipacion,
+                'El cumpleaños de este operador es ' || to_char(operador_record.fecha_nacimiento, 'DD/MM/YYYY') ||
+                  '. Fecha de cumpleaños para este año: ' || to_char(fecha_cumpleanos, 'DD/MM/YYYY') ||
+                  '. Vencimiento del recordatorio: ' || to_char(vencimiento, 'DD/MM/YYYY'),
+                vencimiento,
                 'cumpleanos',
                 'baja',
                 'pendiente',
@@ -61,7 +67,7 @@ BEGIN
                 NOW(),
                 NOW()
             );
-            
+
             recordatorios_creados := recordatorios_creados + 1;
         END IF;
     END LOOP;

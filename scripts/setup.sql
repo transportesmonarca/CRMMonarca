@@ -983,7 +983,7 @@ CREATE TABLE IF NOT EXISTS security_settings (
   id SMALLINT PRIMARY KEY DEFAULT 1,
   max_failed_attempts INT NOT NULL DEFAULT 5,
   lockout_minutes INT NOT NULL DEFAULT 15,
-  session_timeout_minutes INT NOT NULL DEFAULT 30,
+  session_timeout_minutes INT NOT NULL DEFAULT 60,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 INSERT INTO security_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING;

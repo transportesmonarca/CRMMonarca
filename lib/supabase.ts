@@ -444,6 +444,102 @@ export const obtenerTiposServicio = async (): Promise<TipoServicio[]> => {
   }
 };
 
+// Tipos para formas de facturación
+export interface FormaFacturacion {
+  id: string;
+  nombre: string;
+  descripcion?: string;
+  fecha_creacion?: string;
+  updated_at?: string;
+  activo?: boolean;
+}
+
+// Obtener formas de facturación desde la tabla "formas_facturacion"
+export const obtenerFormasFacturacion = async (): Promise<FormaFacturacion[]> => {
+  try {
+    const { data, error } = await supabase
+      .from("formas_facturacion")
+      .select("*")
+      .order("nombre", { ascending: true });
+
+    if (error) {
+      // Si la tabla no existe, devolver array vacío en lugar de fallar
+      if (error.message && error.message.includes('relation "public.formas_facturacion" does not exist')) {
+        console.warn("Tabla formas_facturacion no existe aún. Ejecuta el script SQL correspondiente si quieres persistirlas.");
+        return [];
+      }
+      console.error("Error obteniendo formas de facturación:", error);
+      return [];
+    }
+
+    return (data as FormaFacturacion[]) || [];
+  } catch (error) {
+    console.error("Excepción obteniendo formas de facturación:", error);
+    return [];
+  }
+};
+
+// Guardar (upsert) formas de facturación y eliminar las que ya no están
+export const guardarFormasFacturacion = async (
+  formas: Partial<FormaFacturacion>[]
+): Promise<boolean> => {
+  try {
+    // Upsert de las formas (mantener id si existe)
+    const payload = formas.map((f) => ({
+      id: f.id,
+      nombre: f.nombre,
+      descripcion: f.descripcion || null,
+      updated_at: new Date().toISOString(),
+    }));
+
+    if (payload.length > 0) {
+      const { error: upsertError } = await supabase
+        .from("formas_facturacion")
+        .upsert(payload);
+
+      if (upsertError) {
+        console.error("Error al upsertear formas de facturación:", upsertError);
+        return false;
+      }
+    }
+
+    // Borrar las formas que ya no están en la lista (si la tabla existe)
+    const { data: existentes, error: existingError } = await supabase
+      .from("formas_facturacion")
+      .select("id");
+
+    if (existingError) {
+      if (existingError.message && existingError.message.includes('relation "public.formas_facturacion" does not exist')) {
+        // Tabla no existe; nada que eliminar
+        return true;
+      }
+      console.error("Error obteniendo existentes para limpieza:", existingError);
+      return false;
+    }
+
+    const existingIds: string[] = (existentes || []).map((r: any) => r.id);
+    const incomingIds = formas.map((f) => f.id).filter(Boolean) as string[];
+    const toDelete = existingIds.filter((id) => !incomingIds.includes(id));
+
+    if (toDelete.length > 0) {
+      const { error: deleteError } = await supabase
+        .from("formas_facturacion")
+        .delete()
+        .in("id", toDelete);
+
+      if (deleteError) {
+        console.error("Error eliminando formas obsoletas:", deleteError);
+        // No devolvemos false necesariamente, pero reportamos
+      }
+    }
+
+    return true;
+  } catch (error) {
+    console.error("Excepción guardando formas de facturación:", error);
+    return false;
+  }
+};
+
 // Función para guardar contactos de un cliente
 export const guardarContactosCliente = async (
   clienteId: string,
@@ -462,13 +558,23 @@ export const guardarContactosCliente = async (
     }
 
     // Luego, insertar los nuevos contactos
+    // Considerar puesto y notas como datos válidos para insertar
     const contactosParaInsertar = contactos
-      .filter((c) => c.nombre.trim() || c.telefono.trim() || c.email.trim())
+      .filter(
+        (c) =>
+          c.nombre.trim() ||
+          c.telefono.trim() ||
+          c.email.trim() ||
+          (c.puesto && c.puesto.trim()) ||
+          (c.notas && c.notas.trim())
+      )
       .map((contacto, index) => ({
         cliente_id: clienteId,
         nombre: contacto.nombre.trim(),
         telefono: contacto.telefono.trim() || null,
         email: contacto.email.trim() || null,
+        puesto: contacto.puesto?.trim() || null,
+        notas: contacto.notas?.trim() || null,
         es_principal: index === 0, // El primer contacto es principal
         activo: true,
       }));
@@ -525,7 +631,10 @@ export const obtenerNotificaciones = async () => {
       .eq("estado", "pendiente");
 
     if (countError) {
-      console.error("Error contando recordatorios:", countError);
+      // Evitar pasar objetos crudos a console.error en el cliente (Next puede elevarlo a un error no manejado)
+    const countErr: any = countError;
+    const msg = (countErr && (countErr.message || JSON.stringify(countErr))) || String(countErr);
+      console.warn(`Error contando recordatorios: ${msg}`);
       return { recordatorios: [], total: 0 };
     }
 
@@ -539,6 +648,9 @@ export const obtenerNotificaciones = async () => {
 
     if (listError) {
       // Si falla la lista, al menos devolvemos el total
+  const listErr: any = listError;
+  const msg = (listErr && (listErr.message || JSON.stringify(listErr))) || String(listErr);
+      console.warn(`Error obteniendo lista de recordatorios: ${msg}`);
       return { recordatorios: [], total: count || 0 };
     }
 
@@ -572,7 +684,9 @@ export const obtenerNotificaciones = async () => {
 
     return { recordatorios: recordatoriosConInfo, total: count || 0 };
   } catch (error) {
-    console.error("Error en obtenerNotificaciones:", error);
+  const err: any = error;
+  const msg = (err && (err.message || JSON.stringify(err))) || String(err);
+    console.warn(`Excepción en obtenerNotificaciones: ${msg}`);
     return { recordatorios: [], total: 0 };
   }
 };

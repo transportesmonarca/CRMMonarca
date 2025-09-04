@@ -311,45 +311,45 @@ export default function ConsultasPage() {
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Package className="h-8 w-8 text-blue-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-gray-600">Total Embarques</p>
                   <p className="text-2xl font-bold">{estadisticasGenerales.totalEmbarques}</p>
                 </div>
-                <Package className="h-8 w-8 text-blue-600" />
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Users className="h-8 w-8 text-green-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-gray-600">Operadores</p>
                   <p className="text-2xl font-bold">{estadisticasGenerales.totalOperadores}</p>
                 </div>
-                <Users className="h-8 w-8 text-green-600" />
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Truck className="h-8 w-8 text-orange-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-gray-600">Camiones</p>
                   <p className="text-2xl font-bold">{estadisticasGenerales.totalCamiones}</p>
                 </div>
-                <Truck className="h-8 w-8 text-orange-600" />
               </div>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <Users className="h-8 w-8 text-purple-600 flex-shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-gray-600">Clientes</p>
                   <p className="text-2xl font-bold">{estadisticasGenerales.totalClientes}</p>
                 </div>
-                <Users className="h-8 w-8 text-purple-600" />
               </div>
             </CardContent>
           </Card>
@@ -358,7 +358,7 @@ export default function ConsultasPage() {
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-blue-600" />
+              <TrendingUp className="h-5 w-5 text-blue-600 flex-shrink-0" />
               Top 5 Clientes
             </CardTitle>
             <CardDescription>Clientes con mayor actividad e ingresos</CardDescription>
@@ -394,10 +394,10 @@ export default function ConsultasPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Truck className="h-5 w-5 text-orange-600" />
-                Camiones Más Utilizados
-              </CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <Truck className="h-5 w-5 text-orange-600 flex-shrink-0" />
+                  Camiones Más Utilizados
+                </CardTitle>
               <CardDescription>Unidades con mayor actividad</CardDescription>
             </CardHeader>
             <CardContent>
@@ -423,7 +423,7 @@ export default function ConsultasPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5 text-green-600" />
+                <Users className="h-5 w-5 text-green-600 flex-shrink-0" />
                 Rendimiento de Operadores
               </CardTitle>
               <CardDescription>Operadores con más y menos embarques</CardDescription>
@@ -461,7 +461,7 @@ export default function ConsultasPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Container className="h-5 w-5 text-purple-600" />
+                <Container className="h-5 w-5 text-purple-600 flex-shrink-0" />
                 Tipos de Servicio Más Solicitados
               </CardTitle>
               <CardDescription>Servicios con mayor demanda</CardDescription>
@@ -489,7 +489,7 @@ export default function ConsultasPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Package className="h-5 w-5 text-blue-600" />
+                <Package className="h-5 w-5 text-blue-600 flex-shrink-0" />
                 Distribución por Estado
               </CardTitle>
               <CardDescription>Estados actuales de embarques</CardDescription>
@@ -514,7 +514,7 @@ export default function ConsultasPage() {
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <AlertTriangle className="h-5 w-5 text-red-600" />
+                <AlertTriangle className="h-5 w-5 text-red-600 flex-shrink-0" />
                 Últimos Motivos de Contingencia
               </CardTitle>
               <CardDescription>Razones recientes de modificaciones</CardDescription>
@@ -541,10 +541,10 @@ export default function ConsultasPage() {
 
           <Card>
             <CardHeader>
-              <CardTitle className="flex items-center space-x-2">
-                <Users className="h-5 w-5 text-red-600" />
-                Clientes con menos operaciones (Histórico)
-              </CardTitle>
+                <CardTitle className="flex items-center gap-2">
+                  <Users className="h-5 w-5 text-red-600 flex-shrink-0" />
+                  Clientes con menos operaciones (Histórico)
+                </CardTitle>
               <CardDescription>Top 5 clientes con menor número de operaciones (incluye archivados)</CardDescription>
             </CardHeader>
             <CardContent>

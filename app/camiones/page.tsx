@@ -52,11 +52,14 @@ import {
   AlertTriangle,
   Eye,
   ClipboardList,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase, type Camion, type MarcaCamion } from "@/lib/supabase";
 import { v4 as uuidv4 } from "uuid";
 import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
 
 // Definir una interfaz para la estructura de los comentarios
 interface Comentario {
@@ -123,7 +126,15 @@ export default function CamionesPage() {
     "International",
     "Peterbilt",
   ];
+  // Estados y paginación para modal de marcas (se añadieron para evitar errores por referencias faltantes)
   const [showMarcasForm, setShowMarcasForm] = useState(false);
+  const [marcaPage, setMarcaPage] = useState<number>(1);
+  const [marcaPageSize, setMarcaPageSize] = useState<number>(10);
+  const [confirmEstadoCamionId, setConfirmEstadoCamionId] = useState<string | null>(null);
+  const [confirmEstadoCamionOpen, setConfirmEstadoCamionOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState("");
+  const [notificationFolios, setNotificationFolios] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState("basica");
   const [loading, setLoading] = useState(false);
   const [selectedCamionKilometraje, setSelectedCamionKilometraje] =
@@ -161,6 +172,36 @@ export default function CamionesPage() {
   });
   const [camionDetalle, setCamionDetalle] = useState<Camion | null>(null);
   const [showDetallesCamion, setShowDetallesCamion] = useState(false);
+
+  // Update helper moved above guardarCamion so it can be called from confirmation
+  async function performUpdate(camionDataToUpdate: any) {
+    if (!editingCamion) return;
+    setSaving(true);
+    try {
+      const { data: updatedRow, error: updateError } = await supabase
+        .from("camiones")
+        .update(camionDataToUpdate)
+        .eq("id", editingCamion.id)
+        .select("*")
+        .single();
+
+      if (updateError) {
+        console.error("Error actualizando camión:", updateError);
+        toast({ title: `Error al actualizar el camión: ${updateError.message || String(updateError)}`, variant: "destructive" });
+        setSaving(false);
+        return;
+      }
+
+      setCamiones(prev => prev.map(c => c.id === editingCamion.id ? { ...c, ...updatedRow } as any : c));
+      if (updatedRow) setCamionDetalle(updatedRow as any);
+      toast({ title: "Camión actualizado exitosamente", variant: "success" });
+    } catch (e) {
+      console.error("Error inesperado en performUpdate:", e);
+      toast({ title: "Error inesperado al actualizar el camión", variant: "destructive" });
+    } finally {
+      setSaving(false);
+    }
+  }
   const [editingRegistro, setEditingRegistro] = useState<any>(null);
   const [editRegistroFormData, setEditRegistroFormData] = useState({
     kilometraje_agregado: "",
@@ -254,6 +295,25 @@ export default function CamionesPage() {
     }
   };
 
+  // Helper: safely parse observaciones whether stored as string or object
+  const safeParseObservaciones = (obs: any) => {
+    if (!obs) return {};
+    if (typeof obs === "object") return obs;
+    if (typeof obs === "string") {
+      try {
+        return JSON.parse(obs);
+      } catch (e) {
+        try {
+          // sometimes double-escaped strings can appear, try unescaping
+          return JSON.parse(obs.replace(/\\"/g, '"'));
+        } catch (e2) {
+          return {};
+        }
+      }
+    }
+    return {};
+  };
+
   // Limpiar formulario de camión
   const limpiarFormulario = () => {
     setFormData({ ...initialFormData });
@@ -266,10 +326,22 @@ export default function CamionesPage() {
     let datosAdicionales: any = {};
     if (camion.observaciones) {
       try {
-        datosAdicionales = JSON.parse(camion.observaciones);
+        datosAdicionales = safeParseObservaciones(camion.observaciones);
       } catch (error) {
         console.error("Error parsing observaciones:", error);
       }
+    }
+
+    // Prefer historial_comentarios when populating the edit form so comments are consistent
+    let initialComentarios = datosAdicionales.comentarios || "";
+    try {
+      if ((!initialComentarios || initialComentarios === "") && Array.isArray(datosAdicionales.historial_comentarios) && datosAdicionales.historial_comentarios.length > 0) {
+        // populate with the last comment for compatibility
+        const last = datosAdicionales.historial_comentarios[datosAdicionales.historial_comentarios.length - 1];
+        initialComentarios = last && last.text ? last.text : initialComentarios;
+      }
+    } catch (e) {
+      // ignore and fallback to comentarios
     }
 
     setFormData({
@@ -289,7 +361,7 @@ export default function CamionesPage() {
       poliza_seguro_americano: datosAdicionales.poliza_seguro_americano || "",
       fecha_vencimiento_seguro_americano:
         datosAdicionales.fecha_vencimiento_seguro_americano || "",
-      comentarios: datosAdicionales.comentarios || "",
+  comentarios: initialComentarios || "",
       tag_americano: datosAdicionales.tag_americano || "",
       tag_mexicano: datosAdicionales.tag_mexicano || "",
       numero_base: datosAdicionales.numero_base || "",
@@ -301,8 +373,11 @@ export default function CamionesPage() {
           }))
         : [],
     });
-    setEditingCamion(camion);
-    setShowForm(true);
+  setEditingCamion(camion);
+  // Ensure the basic tab is active before opening the modal so fields render immediately
+  setActiveTab("basica");
+  // open modal on next tick to allow tab state to apply
+  setTimeout(() => setShowForm(true), 0);
   };
 
   // Función para guardar camión
@@ -312,9 +387,7 @@ export default function CamionesPage() {
     try {
       // Validaciones básicas
       if (!formData.numero_economico || !formData.marca || !formData.modelo) {
-        alert(
-          "Por favor completa los campos obligatorios: Número Económico, Marca y Modelo"
-        );
+        toast({ title: "Por favor completa los campos obligatorios: Número Económico, Marca y Modelo", variant: "destructive" });
         setSaving(false);
         return;
       }
@@ -327,12 +400,61 @@ export default function CamionesPage() {
         .neq("id", editingCamion?.id || "");
 
       if (existingCamion && existingCamion.length > 0) {
-        alert("Ya existe un camión con este número económico");
+        toast({ title: "Ya existe un camión con este número económico", variant: "destructive" });
         setSaving(false);
         return;
       }
 
+      // Verificar duplicados de número de serie (almacenado en observaciones.numero_serie)
+      const serialTrim = (formData.numero_serie || "").trim();
+      if (serialTrim) {
+        try {
+          // Some Supabase clients do not accept JSON path in .eq; fetch observaciones and check client-side
+          const { data: all, error: allErr } = await supabase
+            .from("camiones")
+            .select("id, observaciones");
+
+          if (allErr) {
+            console.warn("Error fetching camiones for serial check:", allErr);
+            toast({ title: "Error al verificar número de serie", variant: "destructive" });
+            setSaving(false);
+            return;
+          }
+
+          const existingSerial = (all || []).filter((r: any) => {
+            try {
+              const obs = r.observaciones ? safeParseObservaciones(r.observaciones) : {};
+              return (obs.numero_serie || "").trim() === serialTrim;
+            } catch {
+              return false;
+            }
+          });
+
+          const serialDuplicateExists = editingCamion
+            ? existingSerial.some((r: any) => r.id !== editingCamion.id)
+            : existingSerial.length > 0;
+
+          if (serialDuplicateExists) {
+            toast({ title: "Ya existe un camión con ese número de serie", variant: "destructive" });
+            setSaving(false);
+            return;
+          }
+        } catch (e) {
+          console.warn("Error comprobando serial en camiones:", e);
+        }
+      }
+
       // Preparar datos adicionales para JSON
+      // Build datosAdicionales and preserve any existing historial_comentarios
+      let existingObservaciones: any = {};
+      if (editingCamion && editingCamion.observaciones) {
+        try {
+          existingObservaciones = safeParseObservaciones(editingCamion.observaciones);
+        } catch (e) {
+          existingObservaciones = {};
+        }
+      }
+
       const datosAdicionales = {
         numero_serie: formData.numero_serie || null,
         poliza_seguro_mexicano: formData.poliza_seguro_mexicano || null,
@@ -349,8 +471,31 @@ export default function CamionesPage() {
         numeros_adicionales: formData.numeros_adicionales.filter(
           (item) => item.nombre && item.numero
         ),
+        // We'll keep comentarios for backward compatibility, but maintain historial_comentarios as the source of truth.
         comentarios: formData.comentarios || null,
+        // Preserve existing historial_comentarios (array) and, if none exist but comentarios provided, initialize it.
+        historial_comentarios: Array.isArray(existingObservaciones.historial_comentarios)
+          ? existingObservaciones.historial_comentarios
+          : (existingObservaciones.comentarios ? [{ id: uuidv4(), text: existingObservaciones.comentarios, date: new Date().toISOString() }] : []),
       };
+
+      // If user edited the comentarios textarea, append/update the historial_comentarios with the latest comment
+      try {
+        if (formData.comentarios && formData.comentarios.trim() !== "") {
+          const last = datosAdicionales.historial_comentarios[datosAdicionales.historial_comentarios.length - 1];
+          // If last comment text differs, append a new entry; otherwise update last
+          if (!last || last.text !== formData.comentarios.trim()) {
+            datosAdicionales.historial_comentarios = [
+              ...datosAdicionales.historial_comentarios,
+              { id: uuidv4(), text: formData.comentarios.trim(), date: new Date().toISOString() },
+            ];
+          } else {
+            // keep as-is
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
 
       // Datos principales del camión - usar valores exactos que coincidan con la base de datos
       const kilometrajeValue = editingCamion
@@ -364,44 +509,26 @@ export default function CamionesPage() {
         año: formData.año ? Number.parseInt(formData.año) : null,
         placas: formData.placas || null,
         kilometraje: kilometrajeValue,
-        estado: formData.estado, // Usar el valor exacto del formulario
-        observaciones: JSON.stringify(datosAdicionales),
+        estado: formData.estado,
+        observaciones: datosAdicionales,
         updated_at: new Date().toISOString(),
       };
 
       if (editingCamion) {
-        // Actualizar camión existente
-        const { error } = await supabase
-          .from("camiones")
-          .update(camionData)
-          .eq("id", editingCamion.id);
-
-        if (error) {
-          console.error("Error actualizando camión:", error);
-          alert(`Error al actualizar el camión: ${error.message}`);
-          setSaving(false);
-          return;
+        // Show a confirmation with the payload so user can inspect without DevTools
+        try {
+          const pretty = JSON.stringify(camionData, null, 2);
+          const ok = confirm("Confirmar actualización del camión con el siguiente payload:\n\n" + pretty);
+          if (!ok) {
+            setSaving(false);
+            return;
+          }
+        } catch (e) {
+          // ignore confirm errors and proceed
         }
 
-        alert("Camión actualizado exitosamente");
-
-        // Audit log: actualización de camión
-        try {
-          agregarAuditLog(
-            "ACTUALIZAR",
-            "Camiones",
-            `Actualizó camión ${editingCamion.numero_economico} (ID: ${editingCamion.id})`
-          );
-        } catch {}
-
-        // Actualizar estados locales inmediatamente para reflejar cambios en el modal abierto
-        setCamiones(prev => prev.map(c => c.id === editingCamion.id ? { ...c, ...camionData } as any : c));
-        setCamionDetalle(prev => {
-          if (prev && prev.id === editingCamion.id) {
-            return { ...prev, ...camionData } as any;
-          }
-          return prev;
-        });
+        // Perform update using helper which updates local state
+        await performUpdate(camionData);
       } else {
         // Crear nuevo camión
         const newCamionData = {
@@ -409,42 +536,59 @@ export default function CamionesPage() {
           fecha_registro: new Date().toISOString(),
         };
 
-        const { error } = await supabase.from("camiones").insert(newCamionData);
+        const { data: inserted, error } = await supabase
+          .from("camiones")
+          .insert(newCamionData)
+          .select("*")
+          .single();
 
         if (error) {
-          console.error("Error creando camión:", error, JSON.stringify(error, null, 2));
-          alert(`Error al crear el camión: ${error.message || 'Error desconocido'}`);
+          console.warn("Error creando camión:", error);
+          const dbCode = (error as any)?.code || (error as any)?.status || "";
+          const details = (error as any)?.details || "";
+
+          if (dbCode === "23505" || details.includes("already exists") || details.includes("Key (numero_economico)")) {
+            toast({ title: "Ya existe un camión con ese número económico", variant: "destructive" });
+          } else if (dbCode === "23505" && details.includes("numero_serie")) {
+            toast({ title: "Ya existe un camión con ese número de serie", variant: "destructive" });
+          } else {
+            toast({ title: `Error al crear el camión: ${ (error as any)?.message || 'Error desconocido' }`, variant: "destructive" });
+          }
+
           setSaving(false);
           return;
         }
 
-        alert("Camión creado exitosamente");
+        if (inserted) {
+          setCamiones((prev) => [...prev, inserted as any]);
+          setCamionDetalle(inserted as any);
+        } else {
+          setCamiones((prev) => [...prev, { ...newCamionData } as any]);
+        }
 
-        // Audit log: creación de camión (sin ID, registramos número económico)
+        toast({ title: "Camión creado exitosamente", variant: "success" });
+
         try {
-          agregarAuditLog(
-            "CREAR",
-            "Camiones",
-            `Creó camión ${newCamionData.numero_economico}`
-          );
+          agregarAuditLog("CREAR", "Camiones", `Creó camión ${newCamionData.numero_economico}`);
         } catch {}
-
-  // Añadir a la lista local inmediatamente (la recarga posterior garantizará consistencia)
-  setCamiones(prev => [...prev, { ...newCamionData } as any]);
       }
 
       await cargarCamiones();
-  setShowForm(false);
-  // Restaurar pestaña del modal de detalles si estaba abierto
-  setActiveTab("informacion");
-  limpiarFormulario();
+      setShowForm(false);
+      if (editingCamion) {
+        setActiveTab("informacion");
+        setTimeout(() => setShowDetallesCamion(true), 60);
+      }
+      limpiarFormulario();
     } catch (error) {
       console.error("Error guardando camión:", error);
-      alert("Error inesperado al guardar el camión");
+      toast({ title: "Error inesperado al guardar el camión", variant: "destructive" });
     } finally {
       setSaving(false);
     }
   };
+
+  // performUpdate is defined earlier (moved above guardarCamion)
 
   // Funciones para gestión de marcas
   const limpiarFormularioMarca = () => {
@@ -454,7 +598,7 @@ export default function CamionesPage() {
 
   const guardarMarca = async () => {
     if (!marcaFormData.nombre.trim()) {
-      alert("Por favor ingresa el nombre de la marca");
+      toast({ title: "Por favor ingresa el nombre de la marca", variant: "destructive" });
       return;
     }
 
@@ -474,10 +618,10 @@ export default function CamionesPage() {
             .eq("id", marcaAEditar.id);
 
           if (error) {
-            alert("Error al actualizar la marca");
+            toast({ title: "Error al actualizar la marca", variant: "destructive" });
             return;
           }
-          alert("Marca actualizada exitosamente");
+          toast({ title: "Marca actualizada exitosamente", variant: "success" });
         }
       } else {
         // Crear nueva marca
@@ -488,20 +632,20 @@ export default function CamionesPage() {
 
         if (error) {
           if (error.code === "23505") {
-            alert("Ya existe una marca con este nombre");
+            toast({ title: "Ya existe una marca con este nombre", variant: "destructive" });
           } else {
-            alert("Error al crear la marca");
+            toast({ title: "Error al crear la marca", variant: "destructive" });
           }
           return;
         }
-        alert("Marca creada exitosamente");
+        toast({ title: "Marca creada exitosamente", variant: "success" });
       }
 
       await cargarMarcas();
       limpiarFormularioMarca();
     } catch (error) {
       console.error("Error guardando marca:", error);
-      alert("Error inesperado al guardar la marca");
+      toast({ title: "Error inesperado al guardar la marca", variant: "destructive" });
     }
   };
 
@@ -512,21 +656,49 @@ export default function CamionesPage() {
 
   const eliminarMarca = async (id: string) => {
     try {
+      // Check if any camiones are currently using this marca (do not modify them)
+      let marcaRecord: any = null;
+      try {
+        const { data: mx } = await supabase.from("marcas_camiones").select("*").eq("id", id).single();
+        marcaRecord = mx;
+      } catch (e) {
+        // ignore
+      }
+
+      const marcaNombre = marcaRecord?.nombre || null;
+      let inUseCount = 0;
+      if (marcaNombre) {
+        try {
+          const { data: camionesUsing } = await supabase.from("camiones").select("id").eq("marca", marcaNombre);
+          inUseCount = Array.isArray(camionesUsing) ? camionesUsing.length : 0;
+        } catch (e) {
+          // ignore count errors
+        }
+      }
+
       const { error } = await supabase
         .from("marcas_camiones")
         .update({ activa: false })
         .eq("id", id);
 
       if (error) {
-        alert("Error al eliminar la marca");
+        toast({ title: "Error al eliminar la marca", variant: "destructive" });
         return;
       }
 
-      alert("Marca eliminada exitosamente");
+      if (inUseCount > 0) {
+        toast({
+          title: `Marca desactivada. Esta marca está en uso en ${inUseCount} camión(es); los registros existentes NO fueron modificados. La desactivación sólo aplica a asignaciones futuras.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({ title: "Marca eliminada exitosamente", variant: "destructive" });
+      }
+
       await cargarMarcas();
     } catch (error) {
       console.error("Error eliminando marca:", error);
-      alert("Error inesperado al eliminar la marca");
+      toast({ title: "Error inesperado al eliminar la marca", variant: "destructive" });
     }
   };
 
@@ -542,7 +714,7 @@ export default function CamionesPage() {
     let currentObservaciones: any = {};
     try {
       currentObservaciones = camionDetalle.observaciones
-        ? JSON.parse(camionDetalle.observaciones)
+        ? safeParseObservaciones(camionDetalle.observaciones)
         : {};
     } catch (e) {
       console.error("Error parsing observaciones:", e);
@@ -561,27 +733,27 @@ export default function CamionesPage() {
       const { error } = await supabase
         .from("camiones")
         .update({
-          observaciones: JSON.stringify(updatedObservaciones),
+          observaciones: updatedObservaciones,
           updated_at: new Date().toISOString(),
         })
         .eq("id", camionDetalle.id);
 
       if (error) {
         console.error("Error adding comment:", error);
-        alert("Error al agregar comentario.");
+        toast({ title: "Error al agregar comentario.", variant: "destructive" });
       } else {
         setCamionDetalle((prev) => {
           if (!prev) return null;
           return {
             ...prev,
-            observaciones: JSON.stringify(updatedObservaciones),
+            observaciones: updatedObservaciones,
           };
         });
         setNewCommentText("");
       }
     } catch (error) {
       console.error("Error saving comment:", error);
-      alert("Error inesperado al guardar comentario.");
+      toast({ title: "Error inesperado al guardar comentario.", variant: "destructive" });
     }
   };
 
@@ -591,7 +763,7 @@ export default function CamionesPage() {
     let currentObservaciones: any = {};
     try {
       currentObservaciones = camionDetalle.observaciones
-        ? JSON.parse(camionDetalle.observaciones)
+        ? safeParseObservaciones(camionDetalle.observaciones)
         : {};
     } catch (e) {
       console.error("Error parsing observaciones:", e);
@@ -614,43 +786,40 @@ export default function CamionesPage() {
       const { error } = await supabase
         .from("camiones")
         .update({
-          observaciones: JSON.stringify(updatedObservaciones),
+          observaciones: updatedObservaciones,
           updated_at: new Date().toISOString(),
         })
         .eq("id", camionDetalle.id);
 
       if (error) {
         console.error("Error editing comment:", error);
-        alert("Error al editar comentario.");
+        toast({ title: "Error al editar comentario.", variant: "destructive" });
       } else {
         setCamionDetalle((prev) => {
           if (!prev) return null;
           return {
             ...prev,
-            observaciones: JSON.stringify(updatedObservaciones),
+            observaciones: updatedObservaciones,
           };
         });
-        setEditingCommentId(null);
-        setEditedCommentText("");
-        alert("Comentario editado exitosamente.");
+  setEditingCommentId(null);
+  setEditedCommentText("");
+  toast({ title: "Comentario editado exitosamente.", variant: "success" });
       }
     } catch (error) {
       console.error("Error saving edited comment:", error);
-      alert("Error inesperado al guardar comentario editado.");
+      toast({ title: "Error inesperado al guardar comentario editado.", variant: "destructive" });
     }
   };
 
   const handleDeleteComment = async (commentId: string) => {
-    if (
-      !camionDetalle ||
-      !confirm("¿Estás seguro de eliminar este comentario?")
-    )
-      return;
+  if (!camionDetalle) return;
+  if (!confirm("¿Estás seguro de eliminar este comentario?")) return;
 
     let currentObservaciones: any = {};
     try {
       currentObservaciones = camionDetalle.observaciones
-        ? JSON.parse(camionDetalle.observaciones)
+  ? safeParseObservaciones(camionDetalle.observaciones)
         : {};
     } catch (e) {
       console.error("Error parsing observaciones:", e);
@@ -669,27 +838,27 @@ export default function CamionesPage() {
       const { error } = await supabase
         .from("camiones")
         .update({
-          observaciones: JSON.stringify(updatedObservaciones),
+          observaciones: updatedObservaciones,
           updated_at: new Date().toISOString(),
         })
         .eq("id", camionDetalle.id);
 
       if (error) {
         console.error("Error deleting comment:", error);
-        alert("Error al eliminar comentario.");
+        toast({ title: "Error al eliminar comentario.", variant: "destructive" });
       } else {
         setCamionDetalle((prev) => {
           if (!prev) return null;
           return {
             ...prev,
-            observaciones: JSON.stringify(updatedObservaciones),
+            observaciones: updatedObservaciones,
           };
         });
-        alert("Comentario eliminado exitosamente.");
+  toast({ title: "Comentario eliminado exitosamente.", variant: "success" });
       }
     } catch (error) {
       console.error("Error deleting comment:", error);
-      alert("Error inesperado al eliminar comentario.");
+      toast({ title: "Error inesperado al eliminar comentario.", variant: "destructive" });
     }
   };
 
@@ -698,7 +867,7 @@ export default function CamionesPage() {
       // Obtener información del camión
       const camion = camiones.find((c) => c.id === id);
       if (!camion) {
-        alert("Camión no encontrado");
+        toast({ title: "Camión no encontrado", variant: "destructive" });
         return;
       }
 
@@ -710,22 +879,17 @@ export default function CamionesPage() {
 
       if (errorEmbarques) {
         console.error("Error verificando embarques:", errorEmbarques);
-        alert("Error al verificar si el camión está en uso");
+        toast({ title: "Error al verificar si el camión está en uso", variant: "destructive" });
         return;
       }
 
       if (embarquesAsociados && embarquesAsociados.length > 0) {
-        const folios = embarquesAsociados
-          .slice(0, 5)
-          .map((e) => e.folio)
-          .join(", ");
-        alert(
-          `❌ NO SE PUEDE ELIMINAR\n\nEl camión ${camion.numero_economico} tiene ${
-            embarquesAsociados.length
-          } embarque(s) asociado(s):\n${folios}${
-            embarquesAsociados.length > 5 ? "..." : ""
-          }\n\n🔄 ACCIÓN REQUERIDA:\nNo se puede eliminar una unidad que ha sido utilizada en embarques. Crea un nuevo camión y deja este como histórico.`
-        );
+        const folios = embarquesAsociados.map((e) => e.folio).filter(Boolean) as string[];
+        const mensaje = `No es posible eliminar el camión ${camion.numero_economico} porque tiene ${embarquesAsociados.length} embarque(s) asociado(s).`;
+        // Mostrar notificación en un pop-up (Dialog) en lugar de alert
+        setNotificationMessage(mensaje + "\n\nAcción recomendada: crea un nuevo camión para futuros movimientos y conserva este como histórico.");
+        setNotificationFolios(folios.slice(0, 20)); // limitar visual a primeros 20
+        setNotificationOpen(true);
         return;
       }
 
@@ -763,11 +927,11 @@ export default function CamionesPage() {
 
       if (error) {
         console.error("Error eliminando camión:", error?.message || error);
-        alert("Error al eliminar el camión");
+        toast({ title: "Error al eliminar el camión", variant: "destructive" });
         return;
       }
 
-      alert("Camión eliminado exitosamente");
+  toast({ title: "Camión eliminado exitosamente", variant: "destructive" });
       // Audit log: eliminación de camión
       try {
         agregarAuditLog(
@@ -782,7 +946,7 @@ export default function CamionesPage() {
         "Error en eliminación:",
         error instanceof Error ? error.message : error
       );
-      alert("Error inesperado al eliminar el camión");
+      toast({ title: "Error inesperado al eliminar el camión", variant: "destructive" });
     }
   };
 
@@ -806,17 +970,17 @@ export default function CamionesPage() {
 
       if (error) {
         console.error("Error cambiando estado:", error);
-        alert("Error al cambiar estado del camión");
+        setNotificationMessage("Error al cambiar estado del camión");
+        setNotificationOpen(true);
         return;
       }
 
-      alert(
+      setNotificationMessage(
         `Camión ${camion.numero_economico} ${
-          nuevoEstado === "fuera-de-servicio"
-            ? "marcado como fuera de servicio"
-            : "reactivado"
+          nuevoEstado === "fuera-de-servicio" ? "marcado como fuera de servicio" : "reactivado"
         }`
       );
+      setNotificationOpen(true);
       // Audit log: cambio de estado de camión
       try {
         agregarAuditLog(
@@ -828,7 +992,8 @@ export default function CamionesPage() {
       await cargarCamiones(); // Recargar la lista
     } catch (error) {
       console.error("Error:", error);
-      alert("Error al cambiar estado del camión");
+      setNotificationMessage("Error al cambiar estado del camión");
+      setNotificationOpen(true);
     }
   };
 
@@ -848,6 +1013,17 @@ export default function CamionesPage() {
   // Paginación para la lista de camiones
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12); // 12 cards por página
+  // Preferencia: cuántas cards mostrar por fila (2..6). Se persiste en localStorage.
+  const [cardsPerRow, setCardsPerRow] = useState<number>(() => {
+    try {
+      const v = typeof window !== 'undefined' ? window.localStorage.getItem('camiones.cardsPerRow') : null;
+      return v ? Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)) : 3;
+    } catch {
+      return 3;
+    }
+  });
+  // Detectar pantallas pequeñas para forzar 1 columna en mobile
+  const [isMobile, setIsMobile] = useState(false);
 
   const totalItems = camionesFiltrados.length;
   const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
@@ -859,6 +1035,37 @@ export default function CamionesPage() {
     // Reiniciar a la primera página cuando cambie la búsqueda
     setPage(1);
   }, [searchTerm]);
+
+  useEffect(() => {
+    // Guardar preferencia cuando cambie
+    try {
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem('camiones.cardsPerRow', String(cardsPerRow));
+      }
+    } catch {}
+  }, [cardsPerRow]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const mq = window.matchMedia('(max-width: 639px)');
+    const set = () => setIsMobile(Boolean(mq.matches));
+    set();
+    try {
+      mq.addEventListener('change', set);
+    } catch {
+      // Safari fallback
+      // @ts-ignore
+      mq.addListener(set);
+    }
+    return () => {
+      try {
+        mq.removeEventListener('change', set);
+      } catch {
+        // @ts-ignore
+        mq.removeListener(set);
+      }
+    };
+  }, []);
 
   const getEstadoBadge = (estado: string) => {
     const estados = {
@@ -891,7 +1098,7 @@ export default function CamionesPage() {
 
     if (camion.observaciones) {
       try {
-        const datos = JSON.parse(camion.observaciones);
+        const datos = safeParseObservaciones(camion.observaciones);
 
         // Verificar seguro mexicano
         if (datos.fecha_vencimiento_seguro_mexicano) {
@@ -977,7 +1184,7 @@ export default function CamionesPage() {
 
   const descargarExcel = async () => {
     if (camiones.length === 0) {
-      alert("No hay camiones para descargar");
+      toast({ title: "No hay camiones para descargar", variant: "destructive" });
       return;
     }
 
@@ -997,7 +1204,8 @@ export default function CamionesPage() {
   "Póliza Americana",
   "Vencimiento Seguro Mexicano",
   "Vencimiento Seguro Americano",
-  "Último Mantenimiento"
+  "Último Mantenimiento",
+  "Comentarios"
     ];
 
     // Helper para escapar y forzar texto (prefijo tab) evitando interpretación numérica en Excel
@@ -1035,7 +1243,7 @@ export default function CamionesPage() {
         let datos: any = {};
         if (camion.observaciones) {
           try {
-            datos = JSON.parse(camion.observaciones);
+            datos = safeParseObservaciones(camion.observaciones);
           } catch {
             datos = {};
           }
@@ -1061,6 +1269,7 @@ export default function CamionesPage() {
           esc(vencimientoMex),
           esc(vencimientoUs),
           esc(ultimaMant),
+          esc(datos.comentarios || ""),
         ].join(",");
       }),
     ].join("\n");
@@ -1170,9 +1379,7 @@ export default function CamionesPage() {
 
   const guardarKilometraje = async () => {
     if (!registrosKilometrajeTableExists) {
-      alert(
-        "La tabla de registros de kilometraje no existe. Por favor ejecuta el script de migración de base de datos."
-      );
+      toast({ title: "La tabla de registros de kilometraje no existe. Por favor ejecuta el script de migración de base de datos.", variant: "destructive" });
       return;
     }
 
@@ -1182,7 +1389,7 @@ export default function CamionesPage() {
       !kilometrajeFormData.tramo_recorrido ||
       !kilometrajeFormData.fecha_viaje
     ) {
-      alert("Por favor completa todos los campos obligatorios");
+      toast({ title: "Por favor completa todos los campos obligatorios", variant: "destructive" });
       return;
     }
 
@@ -1194,9 +1401,7 @@ export default function CamionesPage() {
         kilometrajeActual - selectedCamionKilometraje.kilometraje;
 
       if (kilometrajeAgregado <= 0) {
-        alert(
-          "El kilometraje actual debe ser mayor al kilometraje anterior del camión"
-        );
+        toast({ title: "El kilometraje actual debe ser mayor al kilometraje anterior del camión", variant: "destructive" });
         return;
       }
 
@@ -1211,7 +1416,7 @@ export default function CamionesPage() {
 
       if (errorCamion) {
         console.error("Error actualizando kilometraje:", errorCamion);
-        alert("Error al actualizar kilometraje del camión");
+        toast({ title: "Error al actualizar kilometraje del camión", variant: "destructive" });
         return;
       }
 
@@ -1273,7 +1478,7 @@ export default function CamionesPage() {
   // Mensaje de éxito silencioso (se eliminó alert visible)
     } catch (error) {
       console.error("Error guardando kilometraje:", error);
-      alert("Error al guardar kilometraje");
+      toast({ title: "Error al guardar kilometraje", variant: "destructive" });
     }
   };
 
@@ -1351,7 +1556,7 @@ export default function CamionesPage() {
         .eq("id", registroId);
 
       if (error) {
-        alert("Error al eliminar registro");
+        toast({ title: "Error al eliminar registro", variant: "destructive" });
         return;
       }
 
@@ -1425,7 +1630,7 @@ export default function CamionesPage() {
       cargarCamiones();
     } catch (error) {
       console.error("Error eliminando registro:", error);
-      alert("Error al eliminar registro");
+      toast({ title: "Error al eliminar registro", variant: "destructive" });
     }
   };
 
@@ -1447,7 +1652,7 @@ export default function CamionesPage() {
       !editRegistroFormData.tramo_recorrido ||
       !editRegistroFormData.fecha_viaje
     ) {
-      alert("Por favor completa todos los campos obligatorios");
+      toast({ title: "Por favor completa todos los campos obligatorios", variant: "destructive" });
       return;
     }
 
@@ -1473,7 +1678,7 @@ export default function CamionesPage() {
         .eq("id", editingRegistro.id);
 
       if (error) {
-        alert("Error al actualizar registro");
+        toast({ title: "Error al actualizar registro", variant: "destructive" });
         return;
       }
 
@@ -1490,7 +1695,7 @@ export default function CamionesPage() {
           .eq("id", camionDetalle.id);
       }
 
-      alert("Registro actualizado exitosamente");
+  toast({ title: "Registro actualizado exitosamente", variant: "success" });
       setShowEditRegistroForm(false);
       setEditingRegistro(null);
       await cargarCamiones();
@@ -1499,7 +1704,7 @@ export default function CamionesPage() {
       }
     } catch (error) {
       console.error("Error actualizando registro:", error);
-      alert("Error al actualizar registro");
+      toast({ title: "Error al actualizar registro", variant: "destructive" });
     }
   };
 
@@ -1531,7 +1736,7 @@ export default function CamionesPage() {
       !editMantenimientoFormData.fecha_mantenimiento ||
       !editMantenimientoFormData.detalles_mantenimiento
     ) {
-      alert("Por favor completa los campos obligatorios: fecha y detalles");
+      toast({ title: "Por favor completa los campos obligatorios: fecha y detalles", variant: "destructive" });
       return;
     }
 
@@ -1550,11 +1755,11 @@ export default function CamionesPage() {
         .eq("id", editingRegistroMantenimiento.id);
 
       if (error) {
-        alert("Error al actualizar registro de mantenimiento");
+        toast({ title: "Error al actualizar registro de mantenimiento", variant: "destructive" });
         return;
       }
 
-      alert("Registro de mantenimiento actualizado exitosamente");
+      toast({ title: "Registro de mantenimiento actualizado exitosamente", variant: "success" });
       setShowEditMantenimientoForm(false);
       setEditingRegistroMantenimiento(null);
       if (camionDetalle) {
@@ -1562,7 +1767,7 @@ export default function CamionesPage() {
       }
     } catch (error) {
       console.error("Error actualizando registro de mantenimiento:", error);
-      alert("Error al actualizar registro de mantenimiento");
+      toast({ title: "Error al actualizar registro de mantenimiento", variant: "destructive" });
     }
   };
 
@@ -1585,17 +1790,17 @@ export default function CamionesPage() {
         .eq("id", registroId);
 
       if (error) {
-        alert("Error al eliminar registro de mantenimiento");
+        toast({ title: "Error al eliminar registro de mantenimiento", variant: "destructive" });
         return;
       }
 
-      alert("Registro de mantenimiento eliminado exitosamente");
+      toast({ title: "Registro de mantenimiento eliminado exitosamente", variant: "success" });
       if (camionDetalle) {
         await cargarHistorialMantenimiento(camionDetalle.id);
       }
     } catch (error) {
       console.error("Error eliminando registro de mantenimiento:", error);
-      alert("Error al eliminar registro de mantenimiento");
+      toast({ title: "Error al eliminar registro de mantenimiento", variant: "destructive" });
     }
   };
 
@@ -1633,9 +1838,7 @@ export default function CamionesPage() {
       !mantenimientoFormData.fecha_mantenimiento ||
       !mantenimientoFormData.detalles_mantenimiento
     ) {
-      alert(
-        "Por favor completa los campos obligatorios: fecha de mantenimiento y detalles"
-      );
+  toast({ title: "Por favor completa los campos obligatorios: fecha de mantenimiento y detalles", variant: "destructive" });
       return;
     }
 
@@ -1668,9 +1871,8 @@ export default function CamionesPage() {
         }
       }
 
-      alert("Mantenimiento registrado exitosamente.");
-      limpiarFormularioMantenimiento();
-      setShowMantenimientoForm(false);
+  limpiarFormularioMantenimiento();
+  setShowMantenimientoForm(false);
 
       // Audit log: registro de mantenimiento
       try {
@@ -1692,71 +1894,295 @@ export default function CamionesPage() {
       }
     } catch (error:any) {
       console.error("Error guardando mantenimiento:", error);
-      alert(error?.message || "Error al guardar el mantenimiento");
+      toast({ title: error?.message || "Error al guardar el mantenimiento", variant: "destructive" });
     }
   };
 
-  const descargarExcelCamion = (camion: Camion) => {
+  const descargarExcelCamion = async (camion: Camion) => {
     if (!camion) {
-      alert("No hay información del camión para descargar");
+      toast({ title: "No hay información del camión para descargar", variant: "destructive" });
       return;
     }
 
-    // Preparar datos básicos del camión
-    let datosAdicionales: any = {};
-    if (camion.observaciones) {
+    // Helper: escape/serialize values for CSV cells
+    const esc = (v: any) => {
+      if (v === null || v === undefined) return "";
+      if (typeof v === "object") {
+        try {
+          return JSON.stringify(v).replace(/"/g, '""');
+        } catch {
+          return String(v).replace(/"/g, '""');
+        }
+      }
+      return String(v).replace(/"/g, '""');
+    };
+
+    const csvLines: string[] = [];
+
+    // 1) Basic, explicit camion information (prefer parsed values from observaciones)
+    csvLines.push("INFORMACIÓN BÁSICA DEL CAMIÓN");
+    csvLines.push("Campo,Valor");
+
+    let obs: any = {};
+    try {
+  obs = camion.observaciones ? safeParseObservaciones(camion.observaciones as any) : {};
+    } catch {
+      obs = {};
+    }
+
+    // Query latest kilometraje record and latest maintenance for this camion to include summary info
+    let latestTripDate = "";
+    let latestTripKm: any = "";
+    try {
+      const { data: lastTrip } = await supabase
+        .from("registros_kilometraje")
+        .select("fecha_viaje, kilometraje_nuevo, kilometraje_agregado")
+        .eq("camion_id", camion.id)
+        .order("fecha_viaje", { ascending: false })
+        .limit(1);
+      if (lastTrip && lastTrip.length > 0) {
+        latestTripDate = lastTrip[0].fecha_viaje || "";
+        latestTripKm = lastTrip[0].kilometraje_nuevo ?? lastTrip[0].kilometraje_agregado ?? "";
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    let latestMantDate = "";
+    try {
+      const { data: lastMant } = await supabase
+        .from("registros_mantenimiento")
+        .select("fecha_mantenimiento")
+        .eq("camion_id", camion.id)
+        .order("fecha_mantenimiento", { ascending: false })
+        .limit(1);
+      if (lastMant && lastMant.length > 0) {
+        latestMantDate = lastMant[0].fecha_mantenimiento || "";
+      }
+    } catch (e) {
+      // ignore
+    }
+
+    const basicRows: Array<[string, string]> = [
+      ["Número Económico", camion.numero_economico || "No especificado"],
+      ["Marca", camion.marca || "No especificado"],
+      ["Modelo", camion.modelo || "No especificado"],
+      // Preferir el campo explícito año, si no usar observaciones
+  ["Año", camion.año ? String(camion.año) : (obs.año ? String(obs.año) : "No especificado")],
+      ["Placas", camion.placas || "No especificado"],
+      // Kilometraje actual formateado para lectura humana
+      ["Kilometraje actual", camion.kilometraje != null ? (typeof camion.kilometraje === 'number' ? `${camion.kilometraje.toLocaleString('es-MX')} km` : String(camion.kilometraje)) : "No registrado"],
+      ["Número de serie", obs.numero_serie || obs.numeroSerie || "No especificado"],
+      ["Último viaje - Fecha", latestTripDate ? new Date(latestTripDate).toLocaleDateString('es-MX') : "No registrado"],
+      ["Último viaje - Kilometraje", latestTripKm ? (typeof latestTripKm === 'number' ? `${latestTripKm.toLocaleString('es-MX')} km` : String(latestTripKm)) : "No registrado"],
+      ["Último mantenimiento - Fecha", latestMantDate ? new Date(latestMantDate).toLocaleDateString('es-MX') : "No registrado"],
+      ["Comentarios", obs.comentarios || ""],
+    ];
+
+    for (const r of basicRows) {
+      csvLines.push(`"${r[0]}","${esc(r[1])}"`);
+    }
+
+    // 2) Query and export related tables fully (all columns for each record)
+    const relatedTables: { label: string; table: string; fk: string }[] = [
+      { label: "REGISTROS_KILOMETRAJE", table: "registros_kilometraje", fk: "camion_id" },
+      { label: "REGISTROS_MANTENIMIENTO", table: "registros_mantenimiento", fk: "camion_id" },
+      { label: "RECORDATORIOS", table: "recordatorios", fk: "camion_id" },
+      { label: "EMBARQUES", table: "embarques", fk: "camion_id" },
+      // NOTE: 'viajes' intentionally omitted from exports per request
+    ];
+
+    // Helper: collect any comment-like fields from a row into a single string
+    const gatherComments = (row: any) => {
+      if (!row) return "";
+      const candidates = [
+        row.comentarios,
+        row.comentarios_viaje,
+        row.descripcion,
+        row.notas,
+        row.detalles_mantenimiento,
+        row.detalles,
+        row.observaciones,
+      ];
+      return candidates.filter(Boolean).map((c: any) => String(c)).join(' | ');
+    };
+
+    for (const rel of relatedTables) {
+      csvLines.push(""); // blank line for separation
+      csvLines.push(rel.label);
       try {
-        datosAdicionales = JSON.parse(camion.observaciones);
-      } catch (error) {
-        console.log("No se pudieron parsear datos adicionales");
+        const { data, error } = await supabase.from(rel.table).select("*").eq(rel.fk, camion.id);
+        if (error) {
+          // Skip emitting error rows in CSV; continue to next related table
+          continue;
+        }
+
+        if (!data || (Array.isArray(data) && data.length === 0)) {
+          csvLines.push("No hay registros");
+          continue;
+        }
+
+        // Special-case friendly exports for kilometraje and mantenimiento
+        if (rel.table === "registros_kilometraje") {
+          // Columns: Fecha (+km agregado), Kilometraje anterior, Kilometraje nuevo, Tramo recorrido, Comentarios
+          csvLines.push(["Fecha (km+)", "Kilometraje anterior", "Kilometraje nuevo", "Tramo recorrido", "Comentarios"].map(h => `"${h}"`).join(","));
+          (data as any[]).forEach((row) => {
+            const fechaRaw = row?.fecha_viaje || row?.fecha_registro || "";
+            const fecha = fechaRaw ? new Date(fechaRaw).toLocaleDateString('es-MX') : "";
+
+            const kmAgregadoRaw = row?.kilometraje_agregado != null ? Number(row.kilometraje_agregado) : null;
+            const kmAgregadoDisplay = kmAgregadoRaw != null ? `(+${kmAgregadoRaw.toLocaleString('es-MX')} km)` : "";
+
+            // Mostrar fecha y el +km en la primera columna tal como pediste
+            const fechaYKm = `${fecha}${kmAgregadoDisplay ? ` ${kmAgregadoDisplay}` : ""}`.trim();
+
+            const kmAnteriorRaw = row?.kilometraje_anterior != null ? Number(row.kilometraje_anterior) : null;
+            const kmAnterior = kmAnteriorRaw != null ? `${kmAnteriorRaw.toLocaleString('es-MX')} km` : "";
+
+            const kmNuevoRaw = row?.kilometraje_nuevo != null ? Number(row.kilometraje_nuevo) : null;
+            const kmNuevo = kmNuevoRaw != null ? `${kmNuevoRaw.toLocaleString('es-MX')} km` : "";
+
+            const tramo = row?.tramo_recorrido || row?.tramo || "";
+            const comentarios = gatherComments(row);
+
+            csvLines.push([esc(fechaYKm), esc(kmAnterior), esc(kmNuevo), esc(tramo), esc(comentarios)].map(v => `"${v}"`).join(","));
+          });
+          continue;
+        }
+
+        if (rel.table === "registros_mantenimiento") {
+          // Columns: Fecha, Tipo, Detalles, Próximo mantenimiento, Kilometraje actual, Comentarios, Proveedor (if any)
+          csvLines.push(["Fecha", "Tipo", "Detalles", "Próximo mantenimiento", "Kilometraje actual", "Comentarios", "Proveedor"].map(h => `"${h}"`).join(","));
+          (data as any[]).forEach((row) => {
+            const fecha = row?.fecha_mantenimiento ? new Date(row.fecha_mantenimiento).toLocaleDateString('es-MX') : "";
+            const tipo = row?.tipo_mantenimiento || "";
+            const detalles = row?.detalles_mantenimiento || row?.detalles || "";
+            const prox = row?.proximo_mantenimiento ? new Date(row.proximo_mantenimiento).toLocaleDateString('es-MX') : "";
+            const kmActual = row?.kilometraje_actual != null ? `${Number(row.kilometraje_actual).toLocaleString('es-MX')} km` : "";
+            const comentarios = gatherComments(row);
+            const proveedor = row?.proveedor || row?.taller || "";
+            csvLines.push([esc(fecha), esc(tipo), esc(detalles), esc(prox), esc(kmActual), esc(comentarios), esc(proveedor)].map(v => `"${v}"`).join(","));
+          });
+          continue;
+        }
+
+        // Generic fallback: Build union of all keys across rows to ensure no field is omitted
+        const allKeys = new Set<string>();
+        (data as any[]).forEach((row) => Object.keys(row || {}).forEach((k) => allKeys.add(k)));
+        const headers = Array.from(allKeys);
+
+        // Resolve *_id fields to human-readable values to avoid exposing raw IDs
+        const idFieldMap: Record<string, Record<string, string>> = {};
+        const idFields = headers.filter((h) => /_id$/.test(h) || ['representante_cliente', 'info_representante'].includes(h));
+        if (idFields.length > 0) {
+          for (const f of idFields) {
+            try {
+              const ids = Array.from(new Set((data as any[]).map((r) => (r ? r[f] : null)).filter(Boolean)));
+              if (ids.length === 0) {
+                idFieldMap[f] = {};
+                continue;
+              }
+
+              let tableName = "";
+              if (f === 'cliente_id') tableName = 'clientes';
+              else if (f === 'operador_id') tableName = 'operadores';
+              else if (f === 'camion_id') tableName = 'camiones';
+              else if (f === 'remolque_id') tableName = 'remolques';
+              else if (f === 'tipo_servicio_id') tableName = 'tipos_servicio';
+              else if (f === 'representante_cliente' || f === 'representante_cliente_id') tableName = 'representantes_clientes';
+              else tableName = f.replace(/_id$/, 's');
+
+              const { data: ref, error: refErr } = await supabase.from(tableName).select('*').in('id', ids as any);
+              const map: Record<string, string> = {};
+              if (!refErr && ref) {
+                ref.forEach((r: any) => {
+                  let disp = '';
+                  if (tableName === 'clientes') disp = `${r.nombre || ''}${r.empresa ? ` (${r.empresa})` : ''}`.trim() || r.id;
+                  else if (tableName === 'operadores') disp = `${r.nombre || ''} ${r.apellidos || ''}`.trim() || r.id;
+                  else if (tableName === 'camiones' || tableName === 'remolques') disp = r.numero_economico || r.numero_serie || r.id;
+                  else if (tableName === 'tipos_servicio') disp = r.nombre || r.id;
+                  else if (tableName === 'representantes_clientes') disp = `${r.nombre || ''} ${r.apellidos || ''}`.trim() || r.id;
+                  else disp = r.nombre || r.id;
+                  map[String(r.id)] = disp;
+                });
+              }
+              idFieldMap[f] = map;
+            } catch (e) {
+              console.warn('Error resolving ids for', f, e);
+              idFieldMap[f] = {};
+            }
+          }
+        }
+
+        // Special friendly export for recordatorios: Fecha, Tipo, Kilometraje asociado, Notas
+        if (rel.table === "recordatorios") {
+          csvLines.push(["Fecha", "Tipo", "Kilometraje asociado", "Notas", "Comentarios"].map(h => `"${h}"`).join(","));
+          (data as any[]).forEach((row) => {
+            const fecha = row?.fecha_vencimiento ? new Date(row.fecha_vencimiento).toLocaleDateString('es-MX') : (row?.fecha ? new Date(row.fecha).toLocaleDateString('es-MX') : "");
+            const tipo = row?.tipo || row?.categoria || row?.nombre || "";
+            const km = row?.kilometraje != null ? (typeof row.kilometraje === 'number' ? row.kilometraje.toLocaleString('es-MX') : String(row.kilometraje)) : (row?.km != null ? String(row.km) : "");
+            const notas = row?.notas || row?.descripcion || row?.comentarios || "";
+            const comentarios = gatherComments(row);
+            csvLines.push([esc(fecha), esc(tipo), esc(km), esc(notas), esc(comentarios)].map(v => `"${v}"`).join(","));
+          });
+        } else {
+          // Header row
+          csvLines.push(headers.map((h) => `"${h}"`).join(","));
+
+          // Data rows (+ append combined Comentarios column)
+          (data as any[]).forEach((row) => {
+            const cells = headers.map((h) => {
+              let v = row ? row[h] : undefined;
+              // Resolve id fields to friendly display values when we have mappings
+              if (v && idFieldMap[h]) {
+                v = idFieldMap[h][String(v)] || String(v);
+              }
+              // Format date-like fields
+              if (v && /fecha|fecha_creacion|fecha_registro|fecha_vencimiento|fecha_mantenimiento|fecha_viaje/i.test(h)) {
+                try {
+                  v = new Date(v).toLocaleDateString('es-MX');
+                } catch {}
+              }
+              return `"${esc(v)}"`;
+            });
+            // Add combined comments column
+            cells.push(`"${esc(gatherComments(row))}"`);
+            csvLines.push(cells.join(","));
+          });
+        }
+        
+      } catch (err: any) {
+        // Do not emit error rows into CSV; just log and continue
+        console.error('Error exporting related table', rel.table, err);
+        continue;
       }
     }
 
-    // Crear contenido CSV
-    const csvContent = [];
-
-    // Información básica del camión
-    csvContent.push("INFORMACIÓN BÁSICA DEL CAMIÓN");
-    csvContent.push("Campo,Valor");
-    csvContent.push(`"Número Económico","${camion.numero_economico}"`);
-    csvContent.push(`"Marca","${camion.marca || "No especificado"}"`);
-    csvContent.push(`"Modelo","${camion.modelo || "No especificado"}"`);
-    csvContent.push(`"Año","${camion.año || "No especificado"}"`);
-    csvContent.push(`"Placas","${camion.placas || "No especificado"}"`);
-    csvContent.push(
-      `"Kilometraje Actual","${camion.kilometraje.toLocaleString()} km"`
-    );
-    csvContent.push(`"Estado","${camion.estado}"`);
-    csvContent.push(
-      `"Fecha de Registro","${new Date(
-        camion.fecha_registro
-      ).toLocaleDateString()}"`
-    );
-
-    // Crear y descargar archivo
-    const blob = new Blob(["\ufeff" + csvContent.join("\n")], {
-      type: "text/csv;charset=utf-8;",
-    });
-    const link = document.createElement("a");
-    const url = URL.createObjectURL(blob);
-    link.setAttribute("href", url);
-    link.setAttribute(
-      "download",
-      `camion_${camion.numero_economico}_${
-        new Date().toISOString().split("T")[0]
-      }.csv`
-    );
-    link.style.visibility = "hidden";
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    // 3) Create and download CSV
+    try {
+      const blob = new Blob(["\ufeff" + csvLines.join("\n")], { type: "text/csv;charset=utf-8;" });
+      const link = document.createElement("a");
+      const url = URL.createObjectURL(blob);
+      link.setAttribute("href", url);
+      link.setAttribute(
+        "download",
+        `camion_${camion.numero_economico || camion.id}_${new Date().toISOString().split("T")[0]}.csv`
+      );
+      link.style.visibility = "hidden";
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    } catch (err) {
+      console.error("Error creando o descargando CSV:", err);
+      toast({ title: "Ocurrió un error al generar el archivo CSV", variant: "destructive" });
+    }
 
     // Audit log: exportación de camión individual
     try {
       agregarAuditLog(
         "EXPORTAR",
         "Camiones",
-        `Descargó reporte del camión ${camion.numero_economico} (ID: ${camion.id})`
+        `Descargó reporte completo del camión ${camion.numero_economico} (ID: ${camion.id})`
       );
     } catch {}
   };
@@ -1786,6 +2212,24 @@ export default function CamionesPage() {
             <p className="text-gray-600 mt-2">Administrar flota de camiones</p>
           </div>
           <div className="flex space-x-2">
+            <div className="flex items-center">
+              <span className="text-sm text-gray-600 mr-2 hidden sm:inline">Ver por fila:</span>
+              <Select
+                value={String(cardsPerRow)}
+                onValueChange={(v) => setCardsPerRow(Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)))}
+              >
+                <SelectTrigger className="w-[110px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="2">2 por fila</SelectItem>
+                  <SelectItem value="3">3 por fila</SelectItem>
+                  <SelectItem value="4">4 por fila</SelectItem>
+                  <SelectItem value="5">5 por fila</SelectItem>
+                  <SelectItem value="6">6 por fila</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
             <Button
               variant="outline"
               onClick={descargarExcel}
@@ -2445,6 +2889,82 @@ export default function CamionesPage() {
             </Dialog>
           </div>
         </div>
+        {/* Modal de confirmación para marcar como fuera-de-servicio / reactivar */}
+        <Dialog open={confirmEstadoCamionOpen} onOpenChange={(o)=>{setConfirmEstadoCamionOpen(o); if(!o) setConfirmEstadoCamionId(null);}}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>
+                { /* Si el camion ya está fuera-de-servicio, el texto debería indicar reactivar; de lo contrario, marcar como fuera-de-servicio */ }
+                Confirmar acción
+              </DialogTitle>
+              <DialogDescription>
+                Antes de eliminar una unidad, debes marcarla como "Fuera de Servicio". ¿Deseas marcar esta unidad como Fuera de Servicio ahora?
+              </DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-end gap-2 mt-4">
+              <Button variant="outline" onClick={() => { setConfirmEstadoCamionOpen(false); setConfirmEstadoCamionId(null); }}>Cancelar</Button>
+              <Button
+                className="bg-[#16A34A] hover:bg-[#12813a] text-white"
+                onClick={async () => {
+                  if (!confirmEstadoCamionId) return;
+                  setConfirmEstadoCamionOpen(false);
+                  const id = confirmEstadoCamionId;
+                  setConfirmEstadoCamionId(null);
+                  await cambiarEstadoFueraServicio(id);
+                }}
+              >
+                Marcar como Fuera de Servicio
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+        {/* Notificación pop-up para reactivar/activar unidades (reemplaza alert) */}
+        <Dialog open={notificationOpen} onOpenChange={(o)=>{setNotificationOpen(o); if(!o) setNotificationMessage("");}}>
+          {/* Hacer modal un poco más ancho y aplicar tono de advertencia cuando el mensaje indica que no se puede eliminar por embarques asociados */}
+          <DialogContent className={
+            notificationMessage && notificationMessage.includes("No es posible eliminar el camión")
+              ? "max-w-md bg-red-50 border border-red-200"
+              : "max-w-sm"
+          }>
+            <DialogHeader>
+              {notificationMessage && notificationMessage.includes("No es posible eliminar el camión") ? (
+                <div className="flex items-center space-x-2">
+                  <AlertTriangle className="h-5 w-5 text-red-600" />
+                  <DialogTitle>Aviso</DialogTitle>
+                </div>
+              ) : (
+                <DialogTitle>Notificación</DialogTitle>
+              )}
+              <DialogDescription className={notificationMessage && notificationMessage.includes("No es posible eliminar el camión") ? "text-red-700" : undefined}>
+                {notificationMessage}
+              </DialogDescription>
+              {notificationFolios && notificationFolios.length > 0 && (
+                <div className="mt-3">
+                  <p className="text-sm font-medium text-gray-700">Embarques asociados:</p>
+                  <ul className="mt-2 list-disc list-inside text-sm text-gray-700 space-y-1">
+                    {notificationFolios.map((f, idx) => (
+                      <li key={idx} className="break-all">{f}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </DialogHeader>
+            <div className="flex justify-end mt-4">
+              <Button
+                onClick={()=>setNotificationOpen(false)}
+                className={
+                  notificationMessage && notificationMessage.includes("reactivado") || notificationMessage && notificationMessage.includes("marcado como fuera de servicio")
+                    ? "bg-[#16A34A] hover:bg-[#12813a] text-white"
+                    : notificationMessage && notificationMessage.includes("No es posible eliminar el camión")
+                      ? "bg-red-600 hover:bg-red-700 text-white"
+                      : undefined
+                }
+              >
+                Aceptar
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* Alerta si la tabla de marcas no existe */}
         {!marcasTableExists && (
@@ -2484,14 +3004,25 @@ export default function CamionesPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
+                  <p className="text-sm font-medium text-gray-600">Disponibles</p>
+                  <p className="text-2xl font-bold text-green-600">
+                    {camiones.filter((c) => c.estado === "disponible").length}
+                  </p>
+                </div>
+                <Truck className="h-8 w-8 text-green-600" />
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
                   <p className="text-sm font-medium text-gray-600">
                     Fuera de Servicio
                   </p>
                   <p className="text-2xl font-bold text-red-600">
-                    {
-                      camiones.filter((c) => c.estado === "fuera-de-servicio")
-                        .length
-                    }
+                    {camiones.filter((c) => c.estado === "fuera-de-servicio").length}
                   </p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-red-600" />
@@ -2503,39 +3034,25 @@ export default function CamionesPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    Seguros por Vencer
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Seguros por Vencer</p>
                   <p className="text-2xl font-bold text-orange-600">
                     {(() => {
                       let segurosVenciendo = 0;
                       camiones.forEach((camion) => {
                         if (camion.observaciones) {
                           try {
-                            const datos = JSON.parse(camion.observaciones);
+                            const datos = safeParseObservaciones(camion.observaciones);
                             const hoy = new Date();
 
-                            // Verificar seguro mexicano
                             if (datos.fecha_vencimiento_seguro_mexicano) {
-                              const fechaVencimiento = new Date(
-                                datos.fecha_vencimiento_seguro_mexicano
-                              );
-                              const diasRestantes = Math.ceil(
-                                (fechaVencimiento.getTime() - hoy.getTime()) /
-                                  (1000 * 60 * 60 * 24)
-                              );
+                              const fechaVencimiento = new Date(datos.fecha_vencimiento_seguro_mexicano);
+                              const diasRestantes = Math.ceil((fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
                               if (diasRestantes <= 30) segurosVenciendo++;
                             }
 
-                            // Verificar seguro americano
                             if (datos.fecha_vencimiento_seguro_americano) {
-                              const fechaVencimiento = new Date(
-                                datos.fecha_vencimiento_seguro_americano
-                              );
-                              const diasRestantes = Math.ceil(
-                                (fechaVencimiento.getTime() - hoy.getTime()) /
-                                  (1000 * 60 * 60 * 24)
-                              );
+                              const fechaVencimiento = new Date(datos.fecha_vencimiento_seguro_americano);
+                              const diasRestantes = Math.ceil((fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
                               if (diasRestantes <= 30) segurosVenciendo++;
                             }
                           } catch (error) {
@@ -2556,33 +3073,47 @@ export default function CamionesPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    En Mantenimiento
-                  </p>
-                  <p className="text-2xl font-bold text-yellow-600">
-                    {
-                      camiones.filter((c) => c.estado === "mantenimiento")
-                        .length
-                    }
-                  </p>
+                  <p className="text-sm font-medium text-gray-600">Seguros próximos (15 días)</p>
+                  <div className="flex items-center space-x-6 mt-2">
+                    {(() => {
+                      let mex = 0;
+                      let usa = 0;
+                      const hoy = new Date();
+                      camiones.forEach((camion) => {
+                        if (!camion.observaciones) return;
+                        try {
+                          const datos = safeParseObservaciones(camion.observaciones);
+                          if (datos.fecha_vencimiento_seguro_mexicano) {
+                            const f = new Date(datos.fecha_vencimiento_seguro_mexicano);
+                            const diff = Math.ceil((f.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+                            if (diff <= 15 && diff >= 0) mex++;
+                          }
+                          if (datos.fecha_vencimiento_seguro_americano) {
+                            const f2 = new Date(datos.fecha_vencimiento_seguro_americano);
+                            const diff2 = Math.ceil((f2.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24));
+                            if (diff2 <= 15 && diff2 >= 0) usa++;
+                          }
+                        } catch (e) {
+                          // ignore parse errors
+                        }
+                      });
+                      return (
+                        <>
+                          <div className="flex flex-col items-start">
+                            <span className="text-sm text-gray-500">México</span>
+                            <span className="text-2xl font-bold text-orange-600">{mex}</span>
+                          </div>
+                          <div className="flex flex-col items-end">
+                            <span className="text-sm text-gray-500">USA</span>
+                            <span className="text-2xl font-bold text-orange-600">{usa}</span>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
                 </div>
-                <Gauge className="h-8 w-8 text-yellow-600" />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
-                    Disponibles
-                  </p>
-                  <p className="text-2xl font-bold text-green-600">
-                    {camiones.filter((c) => c.estado === "disponible").length}
-                  </p>
-                </div>
-                <Truck className="h-8 w-8 text-green-600" />
+                {/* icon removed per request */}
+                <div />
               </div>
             </CardContent>
           </Card>
@@ -2652,7 +3183,14 @@ export default function CamionesPage() {
         </Card>
 
         {/* Lista de camiones */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        <div
+          className="gap-6"
+          style={
+            isMobile
+              ? { display: 'grid', gridTemplateColumns: '1fr', gap: '1.5rem' }
+              : { display: 'grid', gridTemplateColumns: `repeat(${cardsPerRow}, minmax(0, 1fr))`, gap: '1.5rem' }
+          }
+        >
           {camionesPaginados.map((camion) => {
             const alertas = verificarVencimientos(camion);
             let datosAdicionales = {
@@ -2665,7 +3203,7 @@ export default function CamionesPage() {
               try {
                 datosAdicionales = {
                   ...datosAdicionales,
-                  ...JSON.parse(camion.observaciones),
+                  ...safeParseObservaciones(camion.observaciones),
                 };
               } catch (error) {
                 // Ignorar errores de parsing
@@ -2698,7 +3236,10 @@ export default function CamionesPage() {
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => cambiarEstadoFueraServicio(camion.id)}
+                          onClick={() => {
+                            setConfirmEstadoCamionId(camion.id);
+                            setConfirmEstadoCamionOpen(true);
+                          }}
                           className={
                             camion.estado === "fuera-de-servicio"
                               ? "text-green-600 hover:text-green-700 hover:bg-green-50"
@@ -2745,11 +3286,10 @@ export default function CamionesPage() {
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() =>
-                              alert(
-                                "Para eliminar esta unidad, primero márcala como Fuera de Servicio."
-                              )
-                            }
+                            onClick={() => {
+                              setConfirmEstadoCamionId(camion.id);
+                              setConfirmEstadoCamionOpen(true);
+                            }}
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>
@@ -2821,7 +3361,7 @@ export default function CamionesPage() {
                     )}
                     <div className="flex items-center space-x-2 text-sm">
                       <Gauge className="h-4 w-4 text-gray-400" />
-                      <span>{camion.kilometraje.toLocaleString()} km</span>
+                      <span>{camion.kilometraje.toLocaleString('es-MX')} km</span>
                     </div>
                     {datosAdicionales.poliza_seguro && (
                       <div className="flex items-center space-x-2 text-sm">
@@ -2962,70 +3502,90 @@ export default function CamionesPage() {
                   </div>
                 </div>
 
-                {/* Lista de marcas */}
+                {/* Lista de marcas con scroll vertical y paginación */}
                 <div className="space-y-4">
-                  <h3 className="text-lg font-semibold">Marcas Registradas</h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold">Marcas Registradas</h3>
+                    <div className="flex items-center space-x-2">
+                      <div className="hidden sm:flex items-center space-x-2 text-sm text-gray-600">
+                        <span>Por página</span>
+                        <Select value={String(marcaPageSize)} onValueChange={(v)=>{ setMarcaPageSize(Number.parseInt(v,10)); setMarcaPage(1); }}>
+                          <SelectTrigger className="w-28">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="6">6</SelectItem>
+                            <SelectItem value="12">12</SelectItem>
+                            <SelectItem value="18">18</SelectItem>
+                            <SelectItem value="24">24</SelectItem>
+                            <SelectItem value="48">48</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center space-x-1">
+                        <Button variant="ghost" size="icon" onClick={()=>setMarcaPage(Math.max(1, marcaPage-1))}>
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <div className="text-sm text-gray-700 px-2">{marcaPage}</div>
+                        <Button variant="ghost" size="icon" onClick={()=>{
+                          const maxPage = Math.max(1, Math.ceil((marcas.length||0)/marcaPageSize));
+                          setMarcaPage(Math.min(maxPage, marcaPage+1));
+                        }}>
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+
                   {loadingMarcas ? (
                     <div className="text-center py-4">
                       <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600 mx-auto"></div>
-                      <p className="mt-2 text-sm text-gray-600">
-                        Cargando marcas...
-                      </p>
+                      <p className="mt-2 text-sm text-gray-600">Cargando marcas...</p>
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                      {marcas.map((marca) => (
-                        <div
-                          key={marca.id}
-                          className="flex items-center justify-between p-3 border rounded-lg"
-                        >
-                          <span className="font-medium">{marca.nombre}</span>
-                          <div className="flex space-x-1">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => editarMarca(marca)}
-                            >
-                              <Edit className="h-4 w-4" />
-                            </Button>
-                            <AlertDialog>
-                              <AlertDialogTrigger asChild>
-                                <Button variant="outline" size="sm">
-                                  <Trash2 className="h-4 w-4" />
-                                </Button>
-                              </AlertDialogTrigger>
-                              <AlertDialogContent>
-                                <AlertDialogHeader>
-                                  <AlertDialogTitle>
-                                    ¿Eliminar marca?
-                                  </AlertDialogTitle>
-                                  <AlertDialogDescription>
-                                    Esta acción no afectará los camiones ya
-                                    registrados. Si la marca está en uso, se
-                                    marcará como inactiva.
-                                  </AlertDialogDescription>
-                                </AlertDialogHeader>
-                                <AlertDialogFooter>
-                                  <AlertDialogCancel>
-                                    Cancelar
-                                  </AlertDialogCancel>
-                                  <AlertDialogAction
-                                    onClick={() => eliminarMarca(marca.id)}
-                                  >
-                                    Eliminar
-                                  </AlertDialogAction>
-                                </AlertDialogFooter>
-                              </AlertDialogContent>
-                            </AlertDialog>
+                      <div className="col-span-1 md:col-span-2 lg:col-span-3">
+                        <div className="max-h-[52vh] overflow-y-auto pr-2">
+                          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                            {marcas.slice((marcaPage-1)*marcaPageSize, (marcaPage)*marcaPageSize).map((marca) => (
+                              <div key={marca.id} className="flex items-center justify-between p-3 border rounded-lg">
+                                <span className="font-medium">{marca.nombre}</span>
+                                <div className="flex space-x-1">
+                                  <Button variant="outline" size="sm" onClick={() => editarMarca(marca)}>
+                                    <Edit className="h-4 w-4" />
+                                  </Button>
+                                  <AlertDialog>
+                                    <AlertDialogTrigger asChild>
+                                      <Button variant="outline" size="sm">
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </AlertDialogTrigger>
+                                    <AlertDialogContent>
+                                      <AlertDialogHeader>
+                                        <AlertDialogTitle>¿Eliminar marca?</AlertDialogTitle>
+                                        <AlertDialogDescription>
+                                          Esta acción no afectará los camiones ya registrados. Si la marca está en uso, se marcará como inactiva.
+                                        </AlertDialogDescription>
+                                      </AlertDialogHeader>
+                                      <AlertDialogFooter>
+                                        <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                        <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={() => eliminarMarca(marca.id)}>
+                                          Eliminar
+                                        </AlertDialogAction>
+                                      </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                  </AlertDialog>
+                                </div>
+                              </div>
+                            ))}
                           </div>
                         </div>
-                      ))}
+                      </div>
                     </div>
                   )}
+
                   {marcas.length === 0 && !loadingMarcas && (
-                    <p className="text-center text-gray-500 py-4">
-                      No hay marcas registradas
-                    </p>
+                    <p className="text-center text-gray-500 py-4">No hay marcas registradas</p>
                   )}
                 </div>
 
@@ -3191,7 +3751,7 @@ export default function CamionesPage() {
                           <div className="mt-3 text-center">
                             <span className="font-medium text-gray-600 block mb-1">Kilometraje Actual:</span>
                             <p className="text-3xl font-bold text-blue-600">
-                              {camionDetalle.kilometraje.toLocaleString()}
+                              {camionDetalle.kilometraje.toLocaleString('es-MX')}
                             </p>
                             <Button
                               size="sm"
@@ -3217,7 +3777,7 @@ export default function CamionesPage() {
                         let datosAdicionales: any = {};
                         if (camionDetalle.observaciones) {
                           try {
-                            datosAdicionales = JSON.parse(camionDetalle.observaciones);
+                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
                           } catch (error) {
                             console.error("Error parsing observaciones:", error);
                           }
@@ -3282,7 +3842,7 @@ export default function CamionesPage() {
                       {/* Placeholder inicial: reutiliza datos parseados de observaciones si existen */}
                       {(() => {
                         let datos: any = {};
-                        try { datos = camionDetalle.observaciones ? JSON.parse(camionDetalle.observaciones) : {}; } catch {}
+                        try { datos = camionDetalle.observaciones ? safeParseObservaciones(camionDetalle.observaciones) : {}; } catch {}
                         // Última fecha mantenimiento (si existe en cache global)
                         let ultimaMantenimiento = '';
                         try {
@@ -3591,7 +4151,7 @@ export default function CamionesPage() {
                               {paginated.map((registro) => (
                                 <tr key={registro.id} className="hover:bg-gray-50">
                                   <td className="px-3 py-2 whitespace-nowrap">{new Date(registro.fecha_viaje).toLocaleDateString()}</td>
-                                  <td className="px-3 py-2 font-semibold text-blue-600">+{registro.kilometraje_agregado.toLocaleString()} km</td>
+                                  <td className="px-3 py-2 font-semibold text-blue-600">+{registro.kilometraje_agregado.toLocaleString('es-MX')} km</td>
                                   <td className="px-3 py-2">{registro.tramo_recorrido}</td>
                                   <td className="px-3 py-2 max-w-[240px] truncate" title={registro.comentarios || ''}>{registro.comentarios || '-'}</td>
                                   <td className="px-3 py-2">
@@ -3604,9 +4164,9 @@ export default function CamionesPage() {
                                         <Edit className="h-4 w-4" />
                                       </Button>
                                       <AlertDialog>
-                                        <AlertDialogTrigger asChild>
+                                          <AlertDialogTrigger asChild>
                                           <Button variant="outline" size="sm">
-                                            <Trash2 className="h-4 w-4" />
+                                            <Trash2 className="h-4 w-4 text-red-600" />
                                           </Button>
                                         </AlertDialogTrigger>
                                         <AlertDialogContent>
@@ -3805,7 +4365,7 @@ export default function CamionesPage() {
                                               <AlertDialog>
                                                 <AlertDialogTrigger asChild>
                                                   <Button variant="outline" size="sm">
-                                                    <Trash2 className="h-4 w-4" />
+                                                    <Trash2 className="h-4 w-4 text-red-600" />
                                                   </Button>
                                                 </AlertDialogTrigger>
                                                 <AlertDialogContent>
@@ -3925,7 +4485,7 @@ export default function CamionesPage() {
                             let datosAdicionales: any = {};
                             if (camionDetalle.observaciones) {
                               try {
-                                datosAdicionales = JSON.parse(camionDetalle.observaciones);
+                                datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
                               } catch (error) {
                                 console.error('Error parsing observaciones:', error);
                               }
@@ -4115,7 +4675,7 @@ export default function CamionesPage() {
                   <>
                     Camión: {selectedCamionKilometraje.numero_economico} -
                     Kilometraje actual:{" "}
-                    {selectedCamionKilometraje.kilometraje.toLocaleString()} km
+                    {selectedCamionKilometraje.kilometraje.toLocaleString('es-MX')} km
                   </>
                 )}
               </DialogDescription>

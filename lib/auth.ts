@@ -152,17 +152,23 @@ export async function login(username: string, password: string): Promise<User | 
         nombre: u.nombre,
       }
 
-      // Guardar sesión con expiración
-      const { data: sec2 } = await supabase
-        .from("security_settings")
-        .select("session_timeout_minutes")
-        .eq("id", 1)
-        .single()
-      const ttl = (sec2?.session_timeout_minutes ?? 30) * 60_000
-      const session = { user, exp: Date.now() + ttl }
+      // Guardar sesión sin expiración en el cliente.
+      // La sesión permanecerá en localStorage hasta que el usuario cierre sesión
+      // explícitamente o borre los datos del navegador.
       if (typeof window !== "undefined" && window?.localStorage) {
-        localStorage.setItem("user", JSON.stringify(user))
-        localStorage.setItem("session_exp", String(session.exp))
+        // Obtener timeout desde la tabla security_settings si existe
+        try {
+          const { data: sec } = await supabase.from("security_settings").select("session_timeout_minutes").eq("id", 1).single();
+          const minutes = sec?.session_timeout_minutes ?? 60;
+          const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString();
+          localStorage.setItem("user", JSON.stringify(user))
+          localStorage.setItem("user_expires_at", expiresAt)
+        } catch (e) {
+          // Fallback a 60 minutos
+          const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+          localStorage.setItem("user", JSON.stringify(user))
+          localStorage.setItem("user_expires_at", expiresAt)
+        }
       }
 
       // Audit: LOGIN (no usar agregarAuditLog para evitar ciclo de imports)
@@ -189,7 +195,6 @@ export async function login(username: string, password: string): Promise<User | 
     if (expectedPassword !== password) return null
     if (typeof window !== "undefined" && window?.localStorage) {
       localStorage.setItem("user", JSON.stringify(user))
-      localStorage.setItem("session_exp", String(Date.now() + 30 * 60_000))
     }
     try {
       await supabase.from("audit_logs").insert({
@@ -232,7 +237,6 @@ export function logout(): void {
   } finally {
     if (typeof window !== "undefined" && window?.localStorage) {
       localStorage.removeItem("user")
-      localStorage.removeItem("session_exp")
     }
     console.log("Usuario deslogueado")
   }
@@ -243,13 +247,16 @@ export function getCurrentUser(): User | null {
     if (typeof window === "undefined" || !window?.localStorage) return null
     const userStr = localStorage.getItem("user")
     if (!userStr) return null
-
-    const expStr = localStorage.getItem("session_exp")
-    if (expStr && Date.now() > Number(expStr)) {
-      // Expir f3 la sesi f3n
-      localStorage.removeItem("user")
-      localStorage.removeItem("session_exp")
-      return null
+    // Comprobar expiración de sesión si existe
+    const expires = localStorage.getItem("user_expires_at")
+    if (expires) {
+      const expDate = new Date(expires)
+      if (isNaN(expDate.getTime()) || new Date() >= expDate) {
+        // Sesión expirada: limpiar datos
+        try { localStorage.removeItem("user") } catch {}
+        try { localStorage.removeItem("user_expires_at") } catch {}
+        return null
+      }
     }
 
     const user = JSON.parse(userStr)
@@ -368,6 +375,40 @@ export async function deactivateUser(userId: string) {
     .update({ active: false, failed_attempts: 0, locked_until: null })
     .eq("id", userId)
   if (error) throw error
+  return true
+}
+
+// Establecer estado activo/inactivo explicitamente
+export async function setUserActive(userId: string, active: boolean) {
+  const { error } = await supabase
+    .from("app_users")
+    .update({ active })
+    .eq("id", userId)
+  if (error) throw error
+  return true
+}
+
+// Eliminar físicamente un usuario de la tabla app_users
+export async function deleteUser(userId: string) {
+  // Nota: eliminar físicamente puede romper referencias en otras tablas.
+  // Asegúrate de revisar integridad referencial antes de usar en producción.
+  const { error } = await supabase.from("app_users").delete().eq("id", userId)
+  if (error) throw error
+
+  // Intentar agregar registro de auditoría de borrado
+  try {
+    await supabase.from("audit_logs").insert({
+      usuario: getCurrentUser()?.nombre || getCurrentUser()?.username || "Sistema",
+      accion: "ELIMINAR",
+      modulo: "Seguridad",
+      detalles: `Usuario eliminado físicamente: ${userId}`,
+      fecha_creacion: new Date().toISOString(),
+    })
+  } catch (e) {
+    // No crítico
+    console.warn("No se pudo anotar audit log de deleteUser:", e)
+  }
+
   return true
 }
 

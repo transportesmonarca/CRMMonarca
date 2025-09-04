@@ -1,0 +1,51 @@
+
+> my-v0-project@0.1.0 dev
+> next dev
+
+   ▲ Next.js 15.2.4
+   - Local:        http://localhost:3000
+   - Network:      http://192.168.1.163:3000
+   - Environments: .env.local
+
+ ✓ Starting...
+ ✓ Ready in 1657ms
+ ○ Compiling /_not-found ...
+ ⨯ ./app/facturacion-cobranza/page.tsx
+Error:   [31mx[0m Unexpected token `MainLayout`. Expected jsx identifier
+      ,-[[36;1;4m/Users/ivanacuna/Documents/MONARCA6/monarca-project-main/monarca-project-main/app/facturacion-cobranza/page.tsx[0m:4016:1]
+ [2m4013[0m |   };
+ [2m4014[0m | 
+ [2m4015[0m |   return (
+ [2m4016[0m |     <MainLayout>
+      : [35;1m     ^^^^^^^^^^[0m
+ [2m4017[0m |       <div className="space-y-6">
+ [2m4018[0m |         <div className="flex justify-between items-center">
+ [2m4019[0m |           <div>
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/facturacion-cobranza/page.tsx
+ ⨯ ./app/facturacion-cobranza/page.tsx
+Error:   [31mx[0m Unexpected token `MainLayout`. Expected jsx identifier
+      ,-[[36;1;4m/Users/ivanacuna/Documents/MONARCA6/monarca-project-main/monarca-project-main/app/facturacion-cobranza/page.tsx[0m:4016:1]
+ [2m4013[0m |   };
+ [2m4014[0m | 
+ [2m4015[0m |   return (
+ [2m4016[0m |     <MainLayout>
+      : [35;1m     ^^^^^^^^^^[0m
+ [2m4017[0m |       <div className="space-y-6">
+ [2m4018[0m |         <div className="flex justify-between items-center">
+ [2m4019[0m |           <div>
+      `----
+
+Caused by:
+    Syntax Error
+
+Import trace for requested module:
+./app/facturacion-cobranza/page.tsx
+ GET /_next/static/webpack/e8aa55c433136a53.webpack.hot-update.json 500 in 2153ms
+ GET /facturacion-cobranza 500 in 2371ms
+ ⚠ Fast Refresh had to perform a full reload due to a runtime error.

@@ -48,7 +48,7 @@ export const DropZone: React.FC<DropZoneProps> = ({ onFilesSelected, uploading }
             >
                 <Upload className="h-6 w-6 mb-2 text-gray-500" />
                 <p className="text-center">
-                    {uploading ? "Subiendo archivos..." : "Haz clic o arrastra aquí tus archivos"}
+                    {uploading ? "Subiendo archivos..." : "presiona aquí para subir tus archivos"}
                 </p>
                 <Input
                     type="file"
