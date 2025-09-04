@@ -60,6 +60,7 @@ import { supabase, type Camion, type MarcaCamion } from "@/lib/supabase";
 import { v4 as uuidv4 } from "uuid";
 import { agregarAuditLog } from "@/lib/audit";
 import { toast } from "@/hooks/use-toast";
+import { formatDate } from "date-fns";
 
 // Definir una interfaz para la estructura de los comentarios
 interface Comentario {
@@ -97,6 +98,22 @@ const initialFormData = {
   numero_base: "",
   numeros_adicionales: [] as NumeroAdicional[],
 };
+
+function formatDateMatamoros(value?: string | null) {
+  if (!value) return "No especificado";
+
+  // Caso 1: fecha "date-only" (YYYY-MM-DD) -> NO usar new Date()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [y, m, d] = value.split("-");
+    // Formato local es-MX: dd/mm/aaaa
+    return `${d}/${m}/${y}`;
+  }
+
+  // Caso 2: timestamp/ISO -> sí podemos usar Date con timeZone
+  const dt = new Date(value);
+  if (isNaN(+dt)) return "No especificado";
+  return dt.toLocaleDateString("es-MX", { timeZone: "America/Matamoros" });
+}
 
 export default function CamionesPage() {
   // Main state variables
@@ -502,6 +519,23 @@ export default function CamionesPage() {
         ? editingCamion.kilometraje // No permitir modificar el kilometraje inicial al editar
         : Number.parseInt(formData.kilometraje) || 0;
 
+      const asDateOnly = (v?: string | null) => (v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : v || null);
+
+      const columnPatch = {
+        // Tags / números
+        tag_americano: formData.tag_americano || null,
+        tag_mexicano: formData.tag_mexicano || null,
+        numero_base: formData.numero_base || null,
+        numeros_adicionales: (formData.numeros_adicionales || [])
+          .filter((x) => x?.nombre && x?.numero) || null, // si tu columna es JSONB
+
+        // Pólizas / vencimientos (si tus columnas son DATE, manda YYYY-MM-DD string)
+        poliza_seguro_mexicano: formData.poliza_seguro_mexicano || null,
+        fecha_vencimiento_seguro_mexicano: asDateOnly(formData.fecha_vencimiento_seguro_mexicano),
+        poliza_seguro_americano: formData.poliza_seguro_americano || null,
+        fecha_vencimiento_seguro_americano: asDateOnly(formData.fecha_vencimiento_seguro_americano),
+      };
+
       const camionData = {
         numero_economico: formData.numero_economico,
         marca: formData.marca,
@@ -512,6 +546,7 @@ export default function CamionesPage() {
         estado: formData.estado,
         observaciones: datosAdicionales,
         updated_at: new Date().toISOString(),
+        ...columnPatch,
       };
 
       if (editingCamion) {
@@ -1115,7 +1150,7 @@ export default function CamionesPage() {
               tipo: "seguro_mexicano",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
-              fecha: fechaVencimiento.toLocaleDateString(),
+              fecha: formatDateMatamoros(datos.fecha_vencimiento_seguro_mexicano),
               mensaje:
                 diasRestantes <= 0
                   ? `Seguro Mexicano vencido hace ${Math.abs(
@@ -1141,13 +1176,13 @@ export default function CamionesPage() {
               tipo: "seguro_americano",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
-              fecha: fechaVencimiento.toLocaleDateString(),
+              fecha: formatDateMatamoros(datos.fecha_vencimiento_seguro_americano),
               mensaje:
-                diasRestantes <= 0
-                  ? `Seguro Americano vencido hace ${Math.abs(
-                      diasRestantes
-                    )} días`
-                  : `Seguro Americano vence en ${diasRestantes} días`,
+              diasRestantes <= 0
+                ? `Seguro Americano vencido hace ${Math.abs(
+                  diasRestantes
+                )} días`
+                : `Seguro Americano vence en ${diasRestantes} días`,
             });
           }
         }
@@ -1311,7 +1346,7 @@ export default function CamionesPage() {
     setKilometrajeFormData({
       kilometraje_actual: "",
       tramo_recorrido: "",
-      fecha_viaje: "",
+      fecha_viaje: todayLocalISODate(),
       comentarios_viaje: "",
     });
     setSelectedCamionKilometraje(null);
@@ -1804,12 +1839,15 @@ export default function CamionesPage() {
     }
   };
 
+  const todayLocalISODate = () =>
+    new Date().toLocaleDateString("en-CA", { timeZone: "America/Matamoros" });
+
   const seleccionarCamionKilometraje = (camion: Camion) => {
     setSelectedCamionKilometraje(camion);
     setKilometrajeFormData({
       kilometraje_actual: "",
       tramo_recorrido: "",
-      fecha_viaje: new Date().toISOString().split("T")[0],
+      fecha_viaje: todayLocalISODate(),
       comentarios_viaje: "",
     });
   };
@@ -3995,13 +4033,7 @@ export default function CamionesPage() {
                                     <span className="font-medium text-gray-600">
                                       Fecha de Vencimiento:
                                     </span>
-                                    <p>
-                                      {datosAdicionales.fecha_vencimiento_seguro_mexicano
-                                        ? new Date(
-                                            datosAdicionales.fecha_vencimiento_seguro_mexicano
-                                          ).toLocaleDateString()
-                                        : "No especificado"}
-                                    </p>
+                                    <p>{formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_mexicano)}</p>
                                   </div>
                                 </CardContent>
                               </Card>
@@ -4027,13 +4059,7 @@ export default function CamionesPage() {
                                     <span className="font-medium text-gray-600">
                                       Fecha de Vencimiento:
                                     </span>
-                                    <p>
-                                      {datosAdicionales.fecha_vencimiento_seguro_americano
-                                        ? new Date(
-                                            datosAdicionales.fecha_vencimiento_seguro_americano
-                                          ).toLocaleDateString()
-                                        : "No especificado"}
-                                    </p>
+                                    <p>{formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_americano)}</p>
                                   </div>
                                 </CardContent>
                               </Card>
@@ -4053,25 +4079,13 @@ export default function CamionesPage() {
                                     <span className="font-medium text-gray-600">
                                       Última Verificación:
                                     </span>
-                                    <p>
-                                      {datosAdicionales.ultima_verificacion
-                                        ? new Date(
-                                            datosAdicionales.ultima_verificacion
-                                          ).toLocaleDateString()
-                                        : "No especificado"}
-                                    </p>
+                                    <p>{formatDateMatamoros(datosAdicionales.ultima_verificacion)}</p>
                                   </div>
                                   <div>
                                     <span className="font-medium text-gray-600">
                                       Próxima Verificación:
                                     </span>
-                                    <p>
-                                      {datosAdicionales.frecuencia_verificacion
-                                        ? new Date(
-                                            datosAdicionales.frecuencia_verificacion
-                                          ).toLocaleDateString()
-                                        : "No especificado"}
-                                    </p>
+                                    <p>{formatDateMatamoros(datosAdicionales.proxima_verificacion)}</p>
                                   </div>
                                 </div>
                               </CardContent>
