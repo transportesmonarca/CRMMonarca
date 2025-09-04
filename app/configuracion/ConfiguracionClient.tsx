@@ -1351,8 +1351,4 @@ export default function ConfiguracionPage() {
             </div>
         </MainLayout>
     )
-    // ...el resto del componente y el return JSX...
 }
-
-// Diálogos de doble confirmación para retención
-// Nota: Colocados fuera del return principal por claridad, pero deben estar en el JSX si se requiere render condicional.
