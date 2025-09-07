@@ -879,45 +879,6 @@ export default function SubirFotosEmbarquePage() {
             >
               Ver reporte para el cliente
             </button>
-
-            <button
-              onClick={async () => {
-                try {
-                  setGeneratingLink(true)
-                  const res = await fetch('/api/public-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ embarqueId: embarqueId, hours: 72 }) })
-                  const json = await res.json()
-                  if (json?.url) {
-                    try {
-                      await navigator.clipboard.writeText(json.url)
-                      setSuccess('Enlace copiado al portapapeles')
-                      // clear after 3s
-                      setTimeout(() => setSuccess(''), 3000)
-                    } catch (err) {
-                      // Fallback: create temporary input
-                      const input = document.createElement('input')
-                      input.value = json.url
-                      document.body.appendChild(input)
-                      input.select()
-                      document.execCommand('copy')
-                      document.body.removeChild(input)
-                      setSuccess('Enlace copiado al portapapeles')
-                      setTimeout(() => setSuccess(''), 3000)
-                    }
-                  } else {
-                    setError('No se pudo generar la liga: ' + (json?.error || 'error'))
-                  }
-                } catch (e) {
-                  console.error('Error generando/copiando enlace', e)
-                  setError('Error generando la liga pública')
-                } finally {
-                  setGeneratingLink(false)
-                }
-              }}
-              disabled={generatingLink}
-              className="inline-block w-full sm:w-auto flex-1 text-center bg-gray-100 hover:bg-gray-200 text-gray-800 py-2 rounded"
-            >
-              {generatingLink ? 'Generando...' : 'Copiar liga para cliente'}
-            </button>
           </div>
         </div>
         
