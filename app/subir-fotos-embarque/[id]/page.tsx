@@ -4,7 +4,6 @@ import type React from "react"
 
 import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { MainLayout } from "@/components/layout/main-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -395,32 +394,32 @@ export default function SubirFotosEmbarquePage() {
 
   if (loading) {
     return (
-      <MainLayout>
+      <div>
         <div className="flex items-center justify-center h-64">
           <div className="text-center">
             <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
             <p className="mt-2 text-gray-600">Cargando información del embarque...</p>
           </div>
         </div>
-      </MainLayout>
+      </div>
     )
   }
 
   if (!embarque) {
     return (
-      <MainLayout>
+      <div>
         <div className="text-center py-12">
           <AlertTriangle className="h-16 w-16 mx-auto mb-4 text-red-500" />
           <h1 className="text-2xl font-bold text-gray-900 mb-2">Embarque no encontrado</h1>
           <p className="text-gray-600 mb-4">No se pudo encontrar el embarque especificado</p>
           {/* Regresar removido para evitar que el usuario salga desde el móvil */}
         </div>
-      </MainLayout>
+      </div>
     )
   }
 
   return (
-    <MainLayout>
+    <div>
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
@@ -452,9 +451,11 @@ export default function SubirFotosEmbarquePage() {
         {/* Información del embarque */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center space-x-2">
-              <Camera className="h-5 w-5" />
-              <span>Información del Embarque</span>
+            <CardTitle>
+              <span className="inline-flex items-center gap-2 flex-nowrap">
+                <Camera className="h-5 w-5 shrink-0" />
+                <span className="leading-none">Información del Embarque</span>
+              </span>
             </CardTitle>
           </CardHeader>
           <CardContent>
@@ -985,6 +986,6 @@ export default function SubirFotosEmbarquePage() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </MainLayout>
+    </div>
   )
 }
