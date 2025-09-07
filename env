@@ -1,0 +1,12 @@
+# Copy this file to .env.local for local development
+NEXT_PUBLIC_SUPABASE_URL=https://gtuficayhiyzpfkvqgip.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0dWZpY2F5aGl5enBma3ZxZ2lwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTU5NzM2OTYsImV4cCI6MjA3MTU0OTY5Nn0.kJQ3HB-7dRZwLNOXoe2zkx5CJs80mNehyXsd4iR7a1o
+
+# Server-side only (do NOT expose in client code)
+SUPABASE_SERVICE_ROLE=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd0dWZpY2F5aGl5enBma3ZxZ2lwIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTk3MzY5NiwiZXhwIjoyMDcxNTQ5Njk2fQ.rG6zRGshJFrLiHykmjr5TziRY92eSB_9EIwV7_0BqAc
+
+# App base URL
+NEXT_PUBLIC_BASE_URL=https://monarcanvl.vercel.app/
+
+# Required only if using the upload API with Vercel Blob
+BLOB_READ_WRITE_TOKEN=vercel_blob_rw_wNYZgbRq5eACwWAG_umDit5XS5uS3TuaypKfze1GakgLXug

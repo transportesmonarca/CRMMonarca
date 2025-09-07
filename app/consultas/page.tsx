@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Printer, Users, Truck, Container, Package, TrendingUp, AlertTriangle } from "lucide-react"
 import { useState, useEffect } from "react"
+import PieChart from "@/components/ui/pie-chart"
 // Corregir importación para usar la instancia supabase existente
 import { supabase } from "@/lib/supabase"
 import { agregarAuditLog } from "@/lib/audit"
@@ -34,193 +35,218 @@ export default function ConsultasPage() {
     try {
       setLoading(true)
 
-      // Obtener datos de clientes con embarques
-      const { data: clientesData } = await supabase
-        .from("vista_embarques_completa")
-        .select(`
-          cliente_id,
-          cliente_nombre,
-          precio_flete,
-          moneda_flete,
-          estado
-        `)
-        .not("cliente_id", "is", null)
-
-      const clientesMap = new Map()
-      clientesData?.forEach((embarque) => {
-        const clienteId = embarque.cliente_id
-        if (!clientesMap.has(clienteId)) {
-          clientesMap.set(clienteId, {
-            id: clienteId,
-            nombre: embarque.cliente_nombre,
-            embarques: 0,
-            ingresos: 0,
-            embarquesEntregados: 0,
-          })
-        }
-        const cliente = clientesMap.get(clienteId)
-        cliente.embarques++
-        if (embarque.estado === "entregado") {
-          cliente.embarquesEntregados++
-          cliente.ingresos += embarque.precio_flete || 0
-        }
-      })
-
-      const topClientesArray = Array.from(clientesMap.values())
-        .sort((a, b) => b.embarques - a.embarques)
-        .slice(0, 5)
-      setTopClientes(topClientesArray)
-
-      // Obtener datos de camiones más usados
-      const { data: camionesData } = await supabase
-        .from("vista_embarques_completa")
-        .select(`
-          camion_id,
-          camion_numero,
-          estado
-        `)
-        .not("camion_id", "is", null)
-
-      const camionesMap = new Map()
-      camionesData?.forEach((embarque) => {
-        const camionId = embarque.camion_id
-        if (!camionesMap.has(camionId)) {
-          camionesMap.set(camionId, {
-            id: camionId,
-            numero: embarque.camion_numero,
-            embarques: 0,
-            embarquesActivos: 0,
-          })
-        }
-        const camion = camionesMap.get(camionId)
-        camion.embarques++
-        if (["asignado", "en-transito"].includes(embarque.estado)) {
-          camion.embarquesActivos++
-        }
-      })
-
-      const camionesArray = Array.from(camionesMap.values())
-        .sort((a, b) => b.embarques - a.embarques)
-        .slice(0, 5)
-      setCamionesUsados(camionesArray)
-
-      // Obtener estadísticas de operadores
-      const { data: operadoresData } = await supabase
-        .from("vista_embarques_completa")
-        .select(`
-          operador_id,
-          operador_nombre,
-          operador_apellidos,
-          estado
-        `)
-        .not("operador_id", "is", null)
-
-      const operadoresMap = new Map()
-      operadoresData?.forEach((embarque) => {
-        const operadorId = embarque.operador_id
-        if (!operadoresMap.has(operadorId)) {
-          operadoresMap.set(operadorId, {
-            id: operadorId,
-            nombre: `${embarque.operador_nombre} ${embarque.operador_apellidos || ""}`.trim(),
-            embarques: 0,
-            embarquesEntregados: 0,
-          })
-        }
-        const operador = operadoresMap.get(operadorId)
-        operador.embarques++
-        if (embarque.estado === "entregado") {
-          operador.embarquesEntregados++
-        }
-      })
-
-      const operadoresArray = Array.from(operadoresMap.values()).sort((a, b) => b.embarques - a.embarques)
-
-      setOperadoresStats({
-        masEmbarques: operadoresArray.slice(0, 3),
-        menosEmbarques: operadoresArray.slice(-3).reverse(),
-      })
-
-      // Obtener tipos de servicio más solicitados
-      const { data: tiposServicioData } = await supabase
-        .from("vista_embarques_completa")
-        .select(`
-          tipo_servicio_id
-        `)
-        .not("tipo_servicio_id", "is", null)
-
-      const { data: tiposServicioInfo } = await supabase.from("tipos_servicio").select("id, nombre, categoria")
-
-      const tiposMap = new Map()
-      tiposServicioData?.forEach((embarque) => {
-        const tipoId = embarque.tipo_servicio_id
-        if (!tiposMap.has(tipoId)) {
-          const tipoInfo = tiposServicioInfo?.find((t) => t.id === tipoId)
-          tiposMap.set(tipoId, {
-            id: tipoId,
-            nombre: tipoInfo?.nombre || "Sin nombre",
-            categoria: tipoInfo?.categoria || "Sin categoría",
-            embarques: 0,
-          })
-        }
-        tiposMap.get(tipoId).embarques++
-      })
-
-      const tiposArray = Array.from(tiposMap.values())
-        .sort((a, b) => b.embarques - a.embarques)
-        .slice(0, 5)
-      setTiposServicio(tiposArray)
-
-      // Obtener últimos motivos de contingencia
-      const { data: motivosData } = await supabase
-        .from("embarque_modificaciones")
-        .select(`
-          razon,
-          fecha_modificacion,
-          usuario_modificacion
-        `)
-        .not("razon", "is", null)
-        .order("fecha_modificacion", { ascending: false })
-        .limit(5)
-
-      setMotivosContingencia(motivosData || [])
-
-      // Obtener estadísticas generales
-  const { count: embarquesCount } = await supabase.from("embarques").select("*", { count: "exact", head: true })
-  const { count: operadoresCount } = await supabase.from("operadores").select("*", { count: "exact", head: true })
-  const { count: camionesCount } = await supabase.from("camiones").select("*", { count: "exact", head: true })
-  const { count: clientesCount } = await supabase.from("clientes").select("*", { count: "exact", head: true })
-
-      // Obtener distribución de embarques por estado
-      const { data: embarquesPorEstadoData } = await supabase.from("embarques").select("estado")
-
-      const estadosMap = new Map()
-      embarquesPorEstadoData?.forEach((embarque) => {
-        const estado = embarque.estado || "sin-estado"
-        estadosMap.set(estado, (estadosMap.get(estado) || 0) + 1)
-      })
-
-      const estadosArray = Array.from(estadosMap.entries()).map(([estado, cantidad]) => ({
-        estado,
-        cantidad,
-        porcentaje: ((cantidad / (embarquesPorEstadoData?.length || 1)) * 100).toFixed(1),
-      }))
-      setEmbarquesPorEstado(estadosArray)
-
-  // Año actual para limitar el cálculo al presente año
+      // Limitar a año actual por defecto para evitar sumar históricos enormes
       const now = new Date()
       const year = now.getFullYear()
       const startOfYear = `${year}-01-01`
       const startOfNextYear = `${year + 1}-01-01`
 
-      // Traer todos los clientes y embarques históricos (excluye cancelados) y agrupar por cliente
+      // Traer una sola vez el dataset relevante del año y construir todas las agregaciones en memoria
+      // Traer el dataset del año. Seleccionamos '*' para incluir posibles
+      // campos adicionales como quickpaid_enabled / precio_quickpaid presentes en e.*
+      const { data: rows, error: rowsError } = await supabase
+        .from("vista_embarques_completa")
+        .select("*")
+        .gte("fecha_creacion", startOfYear)
+        .lt("fecha_creacion", startOfNextYear)
+
+      // Debug: log the supabase result to help diagnose empty error objects
+      try {
+        console.log('cargarEstadisticas: supabase rows fetched:', Array.isArray(rows) ? rows.length : rows)
+        console.log('cargarEstadisticas: rows sample:', (rows || []).slice(0,3))
+      } catch (e) {}
+      if (rowsError) {
+        console.error('cargarEstadisticas: rowsError raw:', rowsError)
+        try {
+          console.error('cargarEstadisticas: rowsError props:', Object.getOwnPropertyNames(rowsError))
+        } catch (e) {}
+        throw rowsError
+      }
+
+      const totalRows = (rows || []).length
+
+      const clientesMap = new Map()
+  // (removed company-level aggregation)
+      const camionesMap = new Map()
+      const operadoresMap = new Map()
+      const tiposMap = new Map()
+      const estadosMap = new Map()
+
+      // Obtener metadatos de clientes para derivar la 'empresa' asociada
+      let clientesMeta: any[] = []
+      try {
+        const { data: clientesData } = await supabase
+          .from("clientes")
+          .select("id, empresa, empresa_facturadora, razon_social, nombre_comercial")
+        clientesMeta = clientesData || []
+      } catch (e) {
+        clientesMeta = []
+      }
+      const clientesMetaMap = new Map((clientesMeta || []).map((c: any) => [c.id, c]))
+
+      // Helper local: calcular monto contable de una fila (mismo criterio que Facturación)
+      const getMontoFromRow = (e: any) => {
+        if (!e) return 0
+        // QuickPaid preferido cuando está activo y existe precio_quickpaid
+        if (e?.quickpaid_enabled && (typeof e?.precio_quickpaid === 'number' || typeof e?.precio_quickpaid === 'string')) {
+          return typeof e.precio_quickpaid === 'number' ? e.precio_quickpaid : Number(e.precio_quickpaid) || 0
+        }
+        if (typeof e?.cantidad_final_facturada === 'number') return e.cantidad_final_facturada
+        if (typeof e?.precio_flete === 'number') return e.precio_flete
+        if (typeof e?.precio_flete === 'string') return Number(e.precio_flete) || 0
+        if (typeof e?.precioFlete === 'number') return e.precioFlete
+        if (typeof e?.montoFacturado === 'number') return e.montoFacturado
+        return 0
+      }
+
+      ;(rows || []).forEach((r: any) => {
+        const embarqueId = r.id
+        const estado = String(r.estado || "").toLowerCase()
+
+        // Clientes (por id)
+        if (r.cliente_id) {
+          if (!clientesMap.has(r.cliente_id)) {
+            clientesMap.set(r.cliente_id, {
+              id: r.cliente_id,
+              nombre: r.cliente_nombre || "Cliente sin nombre",
+              embarques: 0,
+              ingresos_mxn: 0,
+              ingresos_usd: 0,
+              embarquesEntregados: 0,
+            })
+          }
+          const c = clientesMap.get(r.cliente_id)
+          // contar una vez por fila de la vista (la vista debe devolver 1 fila por embarque)
+          c.embarques++
+          // siempre acumular monto cuando exista
+          const precioRow = getMontoFromRow(r)
+          const monedaRow = String(r.moneda_flete || "").toUpperCase() || "MXN"
+          if (precioRow > 0) {
+            if (monedaRow === "USD") c.ingresos_usd += precioRow
+            else c.ingresos_mxn += precioRow
+          }
+          if (estado === "entregado") {
+            c.embarquesEntregados++
+          }
+        }
+
+  // (empresa aggregation removed)
+
+        // Camiones
+        if (r.camion_id) {
+          if (!camionesMap.has(r.camion_id)) {
+            camionesMap.set(r.camion_id, {
+              id: r.camion_id,
+              numero: r.camion_numero,
+              embarques: 0,
+              embarquesActivos: 0,
+            })
+          }
+          const cm = camionesMap.get(r.camion_id)
+          cm.embarques++
+          const estadoNorm = estado.replace(/\s+/g, "-")
+          if (["asignado", "en-transito", "en-transito"].includes(estadoNorm)) {
+            cm.embarquesActivos++
+          }
+        }
+
+        // Operadores
+        if (r.operador_id) {
+          if (!operadoresMap.has(r.operador_id)) {
+            operadoresMap.set(r.operador_id, {
+              id: r.operador_id,
+              nombre: `${r.operador_nombre || ""} ${r.operador_apellidos || ""}`.trim() || "Sin asignar",
+              embarques: 0,
+              embarquesEntregados: 0,
+            })
+          }
+          const op = operadoresMap.get(r.operador_id)
+          op.embarques++
+          if (estado === "entregado") op.embarquesEntregados++
+        }
+
+        // Tipos de servicio
+        if (r.tipo_servicio_id) {
+          if (!tiposMap.has(r.tipo_servicio_id)) {
+            tiposMap.set(r.tipo_servicio_id, { id: r.tipo_servicio_id, embarques: 0 })
+          }
+          tiposMap.get(r.tipo_servicio_id).embarques++
+        }
+
+        // Estados
+        estadosMap.set(estado, (estadosMap.get(estado) || 0) + 1)
+      })
+
+      // Top clientes: ordenar por cantidad (actividad). mostramos ingresos separados por moneda
+      const topClientesArray = Array.from(clientesMap.values())
+        .sort((a: any, b: any) => b.embarques - a.embarques)
+        .slice(0, 5)
+      setTopClientes(topClientesArray)
+
+      // Camiones
+      const camionesArray = Array.from(camionesMap.values())
+        .sort((a: any, b: any) => b.embarques - a.embarques)
+        .slice(0, 5)
+      setCamionesUsados(camionesArray)
+
+      // Operadores
+      const operadoresArray = Array.from(operadoresMap.values()).sort((a: any, b: any) => b.embarques - a.embarques)
+      setOperadoresStats({
+        masEmbarques: operadoresArray.slice(0, 3),
+        menosEmbarques: operadoresArray.slice(-3).reverse(),
+      })
+
+      // Tipos de servicio: enriquecer con nombres/categoría
+      const { data: tiposServicioInfo } = await supabase.from("tipos_servicio").select("id, nombre, categoria")
+      const tiposArray = Array.from(tiposMap.values())
+        .map((t: any) => {
+          const info = (tiposServicioInfo || []).find((x: any) => x.id === t.id)
+          return {
+            id: t.id,
+            nombre: info?.nombre || "Sin nombre",
+            categoria: info?.categoria || "Sin categoría",
+            embarques: t.embarques,
+          }
+        })
+        .sort((a: any, b: any) => b.embarques - a.embarques)
+        .slice(0, 5)
+      setTiposServicio(tiposArray)
+
+      // Últimos motivos de contingencia (mantener la lógica existente)
+      const { data: motivosData } = await supabase
+        .from("embarque_modificaciones")
+        .select(`razon, fecha_modificacion, usuario_modificacion`)
+        .not("razon", "is", null)
+        .order("fecha_modificacion", { ascending: false })
+        .limit(5)
+      setMotivosContingencia(motivosData || [])
+
+      // Estadísticas generales (conteos globales)
+      const { count: embarquesCount } = await supabase.from("embarques").select("*", { count: "exact", head: true })
+      const { count: operadoresCount } = await supabase.from("operadores").select("*", { count: "exact", head: true })
+      const { count: camionesCount } = await supabase.from("camiones").select("*", { count: "exact", head: true })
+      const { count: clientesCount } = await supabase.from("clientes").select("*", { count: "exact", head: true })
+
+      setEstadisticasGenerales({
+        totalEmbarques: embarquesCount || 0,
+        totalOperadores: operadoresCount || 0,
+        totalCamiones: camionesCount || 0,
+        totalClientes: clientesCount || 0,
+      })
+
+      // Distribución por estado (basada en el dataset del año)
+      const estadosArray = Array.from(estadosMap.entries()).map(([estado, cantidad]) => ({
+        estado,
+        cantidad,
+        porcentaje: ((cantidad / Math.max(1, totalRows)) * 100).toFixed(1),
+      }))
+      setEmbarquesPorEstado(estadosArray)
+
+      // Clientes menos asignados: conservar la lógica histórica (consulta separada)
       const { data: clientesTodos } = await supabase.from("clientes").select("id, nombre")
       const { data: embarquesAll } = await supabase
         .from("embarques")
-        .select(`
-          cliente_id,
-          estado,
-          cliente:clientes(nombre)
-        `)
+        .select(`cliente_id, estado, cliente:clientes(nombre)`)
         .not("cliente_id", "is", null)
         .neq("estado", "cancelado")
 
@@ -242,15 +268,13 @@ export default function ConsultasPage() {
         .sort((a, b) => a.asignados - b.asignados || a.nombre.localeCompare(b.nombre))
         .slice(0, 5)
       setClientesMenosAsignados(menosAsignados)
-
-      setEstadisticasGenerales({
-        totalEmbarques: embarquesCount || 0,
-        totalOperadores: operadoresCount || 0,
-        totalCamiones: camionesCount || 0,
-        totalClientes: clientesCount || 0,
-      })
-    } catch (error) {
+    } catch (error: any) {
       console.error("Error cargando estadísticas:", error)
+      try {
+        console.error('Error detalles:', JSON.stringify(error))
+      } catch (e) {
+        // ignore stringify errors
+      }
     } finally {
       setLoading(false)
     }
@@ -365,9 +389,9 @@ export default function ConsultasPage() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {topClientes.map((cliente, index) => (
+              {topClientes.map((item, index) => (
                 <div
-                  key={cliente.id}
+                  key={item.id}
                   className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-blue-50 to-transparent"
                 >
                   <div className="flex items-center space-x-4">
@@ -375,21 +399,24 @@ export default function ConsultasPage() {
                       {index + 1}
                     </div>
                     <div>
-                      <p className="font-semibold text-gray-900">{cliente.nombre}</p>
-                      <p className="text-sm text-gray-600">
-                        {cliente.embarques} embarques • {cliente.embarquesEntregados} entregados
-                      </p>
+                      <p className="font-semibold text-gray-900">{item.nombre}</p>
+                      <p className="text-sm text-gray-600">{item.embarques ?? 0} embarques</p>
                     </div>
                   </div>
                   <div className="text-right">
-                    <p className="font-bold text-green-600 text-lg">${cliente.ingresos.toLocaleString()}</p>
-                    <p className="text-xs text-gray-500">Ingresos totales</p>
+                    <p className="font-bold text-green-600 text-lg">
+                      {`MXN ${Number(item.ingresos_mxn || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                    </p>
+                    <p className="text-sm text-gray-600">{`USD ${Number(item.ingresos_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
+                    <p className="text-xs text-gray-500">Ingresos por divisa{item.__isCompany ? ' (por empresa)' : ''}</p>
                   </div>
                 </div>
               ))}
             </div>
           </CardContent>
         </Card>
+
+  {/* Desglose por Empresa eliminado: no se requiere según indicación del usuario */}
 
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Card>
@@ -495,16 +522,49 @@ export default function ConsultasPage() {
               <CardDescription>Estados actuales de embarques</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {embarquesPorEstado.map((item, index) => (
-                  <div key={item.estado} className="flex items-center justify-between p-3 border rounded-lg">
-                    <div className="flex items-center space-x-3">
-                      {getEstadoBadge(item.estado)}
-                      <span className="text-sm text-gray-600">{item.porcentaje}%</span>
-                    </div>
-                    <span className="font-bold">{item.cantidad}</span>
-                  </div>
-                ))}
+              <div className="flex items-center justify-center p-6">
+                {/* Convert estados data to pie slices */}
+                <PieChart
+                  data={embarquesPorEstado.map((s: any, i: number) => {
+                    const key = String(s.estado || '').toLowerCase()
+                    let label = s.estado || `Estado ${i + 1}`
+                    let color: string | undefined
+                    switch (key) {
+                      case 'entregado':
+                        label = 'Finalizados'
+                        color = '#7c3aed' // morado para finalizados
+                        break
+                      case 'asignado':
+                        label = 'Asignados'
+                        color = '#10b981' // verde para asignados
+                        break
+                      case 'creado':
+                        label = 'Creados'
+                        break
+                      case 'listo-para-asignar':
+                        label = 'Listos para asignar'
+                        break
+                      case 'en-transito':
+                        label = 'En tránsito'
+                        color = '#7c3aed'
+                        break
+                      case 'cancelado':
+                        label = 'Cancelados'
+                        color = '#ef4444'
+                        break
+                      default:
+                        // ensure plural: add 's' if simple single-word
+                        if (!label.endsWith('s')) label = `${label}s`
+                    }
+                    return {
+                      label,
+                      value: Number(s.cantidad || 0),
+                      color,
+                    }
+                  })}
+                  size={300}
+                  innerRadius={0.48}
+                />
               </div>
             </CardContent>
           </Card>

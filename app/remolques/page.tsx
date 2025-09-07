@@ -52,6 +52,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { supabase, type Remolque, type MarcaRemolque } from "@/lib/supabase";
+import { formatDateMatamoros, normalizeDate, todayLocalISODate } from '@/lib/date-utils';
 import { agregarAuditLog } from "@/lib/audit";
 import { toast } from "@/hooks/use-toast";
 
@@ -82,7 +83,7 @@ export default function RemolquesPage() {
       "Activo",
       "Fecha Registro",
     ];
-    const rows = remolques.map((r) => [
+  const rows = remolques.map((r) => [
       r.numero_economico,
       r.tipo || "",
       r.marca || "",
@@ -91,18 +92,14 @@ export default function RemolquesPage() {
       r.numero_serie || "",
       r.capacidad || "",
       r.placas || "",
-      r.fecha_ultima_inspeccion
-        ? new Date(r.fecha_ultima_inspeccion).toLocaleDateString()
-        : "",
-      r.proxima_inspeccion
-        ? new Date(r.proxima_inspeccion).toLocaleDateString()
-        : "",
+  r.fecha_ultima_inspeccion ? formatDateMatamoros(r.fecha_ultima_inspeccion) : "",
+  r.proxima_inspeccion ? formatDateMatamoros(r.proxima_inspeccion) : "",
       r.poliza_seguro || "",
-      r.vigencia_seguro ? new Date(r.vigencia_seguro).toLocaleDateString() : "",
+  r.vigencia_seguro ? formatDateMatamoros(r.vigencia_seguro) : "",
       r.estado || "",
       r.comentarios || "",
       r.activo !== false ? "Sí" : "No",
-      r.fecha_registro ? new Date(r.fecha_registro).toLocaleDateString() : "",
+  r.fecha_registro ? formatDateMatamoros(r.fecha_registro) : "",
     ]);
     // Escapar comillas dobles y unir en formato CSV
     const csvContent = [headers, ...rows]
@@ -140,6 +137,8 @@ export default function RemolquesPage() {
   // Paginación
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(12);
+  // Número de cards por fila en la lista (2,3,4)
+  const [cardsPerRow, setCardsPerRow] = useState<number>(3);
 
   // Estados para los datos
   const [remolques, setRemolques] = useState<Remolque[]>([]);
@@ -231,6 +230,36 @@ export default function RemolquesPage() {
     cargarDatos();
   }, []);
 
+  // Persistir preferencia de cards por fila en localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('remolques_cards_per_row');
+      if (saved) setCardsPerRow(Number(saved));
+    } catch (e) {
+      // noop
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('remolques_cards_per_row', String(cardsPerRow));
+    } catch (e) {
+      // noop
+    }
+  }, [cardsPerRow]);
+
+  const getGridClass = (n: number) => {
+    switch (n) {
+      case 2:
+        return 'grid grid-cols-1 sm:grid-cols-2 gap-4';
+      case 4:
+        return 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4';
+      case 3:
+      default:
+        return 'grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4';
+    }
+  };
+
   const limpiarFormulario = () => {
     setFormData({
       numeroEconomico: "",
@@ -264,34 +293,41 @@ export default function RemolquesPage() {
 
       // Recordatorio para inspección (15 días antes)
       if (proximaInspeccion) {
-        const fechaInspeccion = new Date(proximaInspeccion);
-        const fechaRecordatorio = new Date(fechaInspeccion);
-        fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
+        // normalize input date (accept YYYY-MM-DD or timestamp)
+        const norm = normalizeDate(proximaInspeccion);
+        if (norm) {
+          const fechaInspeccion = new Date(norm);
+          const fechaRecordatorio = new Date(fechaInspeccion);
+          fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
 
-        recordatorios.push({
-          titulo: `Inspección de Remolque ${numeroEconomico}`,
-          descripcion: `La inspección del remolque ${numeroEconomico} vence el ${fechaInspeccion.toLocaleDateString()}. Programa la inspección con anticipación.`,
-          fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
-          tipo: "inspeccion_remolque",
-          prioridad: "alta",
-          estado: "pendiente",
-        });
+          recordatorios.push({
+            titulo: `Inspección de Remolque ${numeroEconomico}`,
+            descripcion: `La inspección del remolque ${numeroEconomico} vence el ${formatDateMatamoros(norm)}. Programa la inspección con anticipación.`,
+            fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
+            tipo: "inspeccion_remolque",
+            prioridad: "alta",
+            estado: "pendiente",
+          });
+        }
       }
 
       // Recordatorio para seguro (15 días antes)
       if (vigenciaSeguro) {
-        const fechaSeguro = new Date(vigenciaSeguro);
-        const fechaRecordatorio = new Date(fechaSeguro);
-        fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
+        const norm = normalizeDate(vigenciaSeguro);
+        if (norm) {
+          const fechaSeguro = new Date(norm);
+          const fechaRecordatorio = new Date(fechaSeguro);
+          fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
 
-        recordatorios.push({
-          titulo: `Seguro de Remolque ${numeroEconomico}`,
-          descripcion: `El seguro del remolque ${numeroEconomico} vence el ${fechaSeguro.toLocaleDateString()}. Renueva la póliza de seguro antes del vencimiento.`,
-          fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
-          tipo: "seguro_remolque",
-          prioridad: "alta",
-          estado: "pendiente",
-        });
+          recordatorios.push({
+            titulo: `Seguro de Remolque ${numeroEconomico}`,
+            descripcion: `El seguro del remolque ${numeroEconomico} vence el ${formatDateMatamoros(norm)}. Renueva la póliza de seguro antes del vencimiento.`,
+            fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
+            tipo: "seguro_remolque",
+            prioridad: "alta",
+            estado: "pendiente",
+          });
+        }
       }
 
       // Insertar recordatorios si hay alguno
@@ -338,7 +374,7 @@ export default function RemolquesPage() {
 
         if (checkError) {
         console.error("Error verificando número económico:", checkError);
-        toast({ title: "Error al verificar número económico", variant: "destructive" });
+        toast({ title: "Error al verificar número económico", description: checkError?.message || JSON.stringify(checkError), variant: "destructive" });
         return;
       }
 
@@ -363,7 +399,7 @@ export default function RemolquesPage() {
         if (serialError) {
           console.error("Error verificando número de serie:", serialError);
           const msg = (serialError as any)?.message || (serialError as any)?.hint || JSON.stringify(serialError);
-          toast({ title: `Error al verificar número de serie: ${msg}`, variant: "destructive" });
+          toast({ title: `Error al verificar número de serie`, description: msg, variant: "destructive" });
           return;
         }
 
@@ -378,21 +414,56 @@ export default function RemolquesPage() {
         }
       }
 
-      const remolqueData = {
-        numero_economico: formData.numeroEconomico,
-        tipo: formData.tipo || null,
-        marca: formData.marca || null,
-        modelo: formData.modelo || null,
-        año: formData.año ? Number.parseInt(formData.año) : null,
-  numero_serie: serialTrim || null,
-        capacidad: formData.capacidad
-          ? Number.parseFloat(formData.capacidad)
-          : null,
+    // Sanitize and validate numeric inputs to avoid DB numeric overflow
+    const parsedAño = (() => {
+      if (!formData.año) return null;
+      const n = Number.parseInt(String(formData.año), 10);
+      if (Number.isNaN(n)) return null;
+      const minYear = 1900;
+      const maxYear = new Date().getFullYear() + 1;
+      if (n < minYear || n > maxYear) return null;
+      return n;
+    })();
+
+    const parsedCapacidad = (() => {
+      const capField = formData.capacidad;
+      if (capField === undefined || capField === null || String(capField).trim() === '') return null;
+      // accept comma or dot
+      const raw = String(capField).replace(/,/g, '.').trim();
+      const v = Number.parseFloat(raw);
+      if (!Number.isFinite(v)) return null;
+      // DECIMAL(10,2) allows up to 99999999.99
+      const MAX_CAP = 99999999.99;
+      if (Math.abs(v) > MAX_CAP) return null;
+      // round to 2 decimals to avoid sending overly precise numbers
+      return Math.round(v * 100) / 100;
+    })();
+
+    if (formData.capacidad && parsedCapacidad === null) {
+      toast({ title: 'Capacidad inválida', description: 'Introduce un número válido para capacidad (máx 99,999,999.99).', variant: 'destructive' });
+      setSaving(false);
+      return;
+    }
+
+    if (formData.año && parsedAño === null) {
+      toast({ title: 'Año inválido', description: `Introduce un año válido entre 1900 y ${new Date().getFullYear() + 1}.`, variant: 'destructive' });
+      setSaving(false);
+      return;
+    }
+
+    const remolqueData = {
+          numero_economico: formData.numeroEconomico,
+          tipo: formData.tipo || null,
+          marca: formData.marca || null,
+          modelo: formData.modelo || null,
+          año: parsedAño,
+    numero_serie: serialTrim || null,
+          capacidad: parsedCapacidad,
         placas: formData.placas || null,
-        fecha_ultima_inspeccion: formData.fechaUltimaInspeccion || null,
-        proxima_inspeccion: formData.proximaInspeccion || null,
+  fecha_ultima_inspeccion: normalizeDate(formData.fechaUltimaInspeccion) || null,
+  proxima_inspeccion: normalizeDate(formData.proximaInspeccion) || null,
         poliza_seguro: formData.polizaSeguro || null,
-        vigencia_seguro: formData.vigenciaSeguro || null,
+  vigencia_seguro: normalizeDate(formData.vigenciaSeguro) || null,
         estado: formData.estado,
         comentarios: formData.comentarios || null,
         updated_at: new Date().toISOString(),
@@ -402,17 +473,29 @@ export default function RemolquesPage() {
 
       if (editingRemolque) {
         // Actualizar remolque existente
-        const { error } = await supabase
+        const { data: updatedRemolque, error: updateError } = await supabase
           .from("remolques")
           .update(remolqueData)
-          .eq("id", editingRemolque.id);
+          .eq("id", editingRemolque.id)
+          .select()
+          .single();
 
-        if (error) {
-          console.error("Error actualizando remolque:", error);
-          alert("Error al actualizar remolque");
+        if (updateError) {
+          console.warn("Error actualizando remolque:", updateError, { remolqueData });
+          toast({ title: 'Error al actualizar remolque', description: updateError?.message || JSON.stringify(updateError), variant: 'destructive' });
           return;
         }
         remolqueId = editingRemolque.id;
+        // If the details modal is open for this remolque, update its state immediately so UI reflects changes
+        try {
+          if (remolqueDetalle && remolqueDetalle.id === editingRemolque.id) {
+            setRemolqueDetalle(updatedRemolque as any);
+            // reload historial for the updated remolque
+            try { await cargarHistorialMantenimientoRemolque(updatedRemolque.id); } catch (e) { console.warn('No se pudo recargar historial después de actualizar remolque', e); }
+          }
+        } catch (e) {
+          console.warn('No se pudo actualizar remolqueDetalle en memoria:', e);
+        }
         // Audit log: actualización de remolque
         try {
           agregarAuditLog(
@@ -425,18 +508,18 @@ export default function RemolquesPage() {
         // Crear nuevo remolque
         const insertData = { ...remolqueData, fecha_registro: new Date().toISOString() };
 
-        const { data, error } = await supabase
+        const { data: insertedRemolque, error: insertError } = await supabase
           .from("remolques")
           .insert(insertData)
           .select()
           .single();
 
-        if (error) {
-          console.error("Error creando remolque:", error);
-          alert("Error al crear remolque");
+        if (insertError) {
+          console.warn("Error creando remolque:", insertError, { insertData });
+          toast({ title: 'Error al crear remolque', description: insertError?.message || JSON.stringify(insertError), variant: 'destructive' });
           return;
         }
-        remolqueId = data.id;
+        remolqueId = insertedRemolque.id;
         // Audit log: creación de remolque
         try {
           agregarAuditLog(
@@ -455,38 +538,51 @@ export default function RemolquesPage() {
         formData.vigenciaSeguro
       );
 
-      toast({
-        title: editingRemolque
-          ? "Remolque actualizado exitosamente"
-          : "Remolque creado exitosamente",
-        variant: "success",
-      });
+      // Mostrar éxito y actualizar estado local para reflejar cambios de inmediato
+      toast({ title: editingRemolque ? 'Remolque actualizado' : 'Remolque guardado', variant: 'success' });
+
+      // If we have an inserted/updated remolque, update local list for immediate UI feedback
+      try {
+        if (editingRemolque && remolqueId) {
+          // updatedRemolque may be available when updating; try to find it via cargarDatos fallback
+          // Replace the remolque in local state if present
+          setRemolques((prev) => prev.map(r => (r.id === remolqueId ? ({ ...r, ...remolqueData, id: remolqueId } as any) : r)));
+        } else if (!editingRemolque && remolqueId) {
+          // New remolque created: append a minimal item (will be refreshed by cargarDatos)
+          setRemolques((prev) => [{ ...remolqueData, id: remolqueId, fecha_registro: new Date().toISOString() } as any, ...prev]);
+        }
+      } catch (e) {
+        console.warn('No se pudo actualizar estado local de remolques:', e);
+      }
+
+      // Refresh full dataset to ensure server-side canonical state
+      await cargarDatos();
       limpiarFormulario();
       setShowForm(false);
-      await cargarDatos();
     } catch (error) {
-      console.error("Error guardando remolque:", error);
-      alert("Error al guardar remolque");
+      console.error('Error guardando remolque:', error);
+      toast({ title: 'Error al guardar remolque', variant: 'destructive' });
     } finally {
       setSaving(false);
     }
-  };
+
+  }
 
   const editarRemolque = async (remolque: Remolque) => {
     setFormData({
-      numeroEconomico: remolque.numero_economico,
+      numeroEconomico: remolque.numero_economico || "",
       tipo: remolque.tipo || "",
       marca: remolque.marca || "",
       modelo: remolque.modelo || "",
-      año: remolque.año?.toString() || "",
+      año: remolque.año ? String(remolque.año) : "",
       numeroSerie: remolque.numero_serie || "",
-      capacidad: remolque.capacidad?.toString() || "",
+      capacidad: remolque.capacidad ? String(remolque.capacidad) : "",
       placas: remolque.placas || "",
       fechaUltimaInspeccion: remolque.fecha_ultima_inspeccion || "",
       proximaInspeccion: remolque.proxima_inspeccion || "",
       polizaSeguro: remolque.poliza_seguro || "",
       vigenciaSeguro: remolque.vigencia_seguro || "",
-      estado: remolque.estado,
+      estado: remolque.estado || "disponible",
       comentarios: remolque.comentarios || "",
     });
     setEditingRemolque(remolque);
@@ -565,7 +661,7 @@ export default function RemolquesPage() {
         fecha_mantenimiento: mantenimientoRemolqueFormData.fecha_mantenimiento,
         tipo_mantenimiento: mantenimientoRemolqueFormData.tipo_mantenimiento,
         detalles_mantenimiento: mantenimientoRemolqueFormData.detalles_mantenimiento,
-  proximo_mantenimiento: mantenimientoRemolqueFormData.proximo_mantenimiento || null,
+        proximo_mantenimiento: mantenimientoRemolqueFormData.proximo_mantenimiento || null,
       };
       const { error } = await supabase.from('registros_mantenimiento_remolques').insert(insertData);
       if (error) {
@@ -582,7 +678,8 @@ export default function RemolquesPage() {
           fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 7);
           const recordatorio = {
             titulo: `Mantenimiento Remolque ${remolqueDetalle.numero_economico}`,
-            descripcion: `Mantenimiento programado el ${fechaProx.toLocaleDateString()} para el remolque ${remolqueDetalle.numero_economico}.`,
+            // Use shared formatter for consistent Matamoros display
+            descripcion: `Mantenimiento programado el ${formatDateMatamoros(mantenimientoRemolqueFormData.proximo_mantenimiento)} para el remolque ${remolqueDetalle.numero_economico}.`,
             fecha_vencimiento: fechaRecordatorio.toISOString().split('T')[0],
             tipo: 'mantenimiento_remolque',
             prioridad: 'media',
@@ -661,10 +758,10 @@ export default function RemolquesPage() {
     if (historialMantenimientoRemolque && historialMantenimientoRemolque.length > 0) {
       for (const reg of historialMantenimientoRemolque) {
         const mrow = [
-          esc(reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : ''),
+          esc(reg.fecha_mantenimiento ? formatDateMatamoros(reg.fecha_mantenimiento) : ''),
           esc(reg.tipo_mantenimiento || ''),
           esc(reg.detalles_mantenimiento || ''),
-          esc(reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : ''),
+          esc(reg.proximo_mantenimiento ? formatDateMatamoros(reg.proximo_mantenimiento) : ''),
         ];
         lines.push(mrow.join(','));
       }
@@ -876,23 +973,50 @@ export default function RemolquesPage() {
         </AlertDialog>
 
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex justify-between items-center relative">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
               Gestión de Remolques
             </h1>
-            <p className="text-gray-600 mt-2">
-              Administrar la flota de remolques
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setShowMarcasRemolque(true)}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              Marcas de Remolques
-            </Button>
+            <p className="text-gray-600 mt-2">Administrar la flota de remolques</p>
+            <div className="absolute right-0 flex items-center gap-2 -translate-y-14">
+              <Button
+                variant="outline"
+                onClick={() => descargarReporteRemolques()}
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  className="h-4 w-4 mr-2"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+                  />
+                </svg>
+                Descargar Reporte
+              </Button>
+
+              <Button
+                variant="outline"
+                onClick={() => setShowMarcasRemolque(true)}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Marcas de Remolques
+              </Button>
+
+              <Button
+                onClick={() => { limpiarFormulario(); setShowForm(true); }}
+                className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Nuevo Remolque
+              </Button>
+            </div>
             {/* Modal para gestionar marcas de remolques */}
             <Dialog
               open={showMarcasRemolque}
@@ -1130,38 +1254,6 @@ export default function RemolquesPage() {
                 if(actualizado) setRemolqueDetalle(actualizado);
               }
             }}>
-              <div className="flex gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => descargarReporteRemolques()}
-                >
-                  <svg
-                    xmlns="http://www.w3.org/2000/svg"
-                    className="h-4 w-4 mr-2"
-                    fill="none"
-                    viewBox="0 0 24 24"
-                    stroke="currentColor"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-                    />
-                  </svg>
-                  Descargar Reporte
-                </Button>
-                <DialogTrigger asChild>
-                  <Button
-                    onClick={() => limpiarFormulario()}
-                    className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
-                  >
-                    <Plus className="h-4 w-4 mr-2" />
-                    Nuevo Remolque
-                  </Button>
-                </DialogTrigger>
-              </div>
               <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>
@@ -1511,10 +1603,10 @@ export default function RemolquesPage() {
                                 <tbody className="divide-y">
                                   {historialMantenimientoRemolque.slice((currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque, (currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque + pageSizeMantenimientoRemolque).map(reg => (
                                     <tr key={reg.id} className="hover:bg-gray-50">
-                                      <td className="px-2 py-2 whitespace-nowrap">{reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.fecha_mantenimiento ? formatDateMatamoros(reg.fecha_mantenimiento) : '—'}</td>
                                       <td className="px-2 py-2 whitespace-nowrap capitalize">{reg.tipo_mantenimiento}</td>
                                       <td className="px-2 py-2 max-w-xs"><span className="line-clamp-2" title={reg.detalles_mantenimiento}>{reg.detalles_mantenimiento}</span></td>
-                                      <td className="px-2 py-2 whitespace-nowrap">{reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.proximo_mantenimiento ? formatDateMatamoros(reg.proximo_mantenimiento) : '—'}</td>
                                       <td className="px-2 py-2 whitespace-nowrap">
                                         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={()=>eliminarMantenimientoRemolque(reg.id)}>Eliminar</Button>
                                       </td>
@@ -1616,11 +1708,7 @@ export default function RemolquesPage() {
                     Disponibles
                   </p>
                   <p className="text-2xl font-bold text-green-600">
-                    {
-                      remolques.filter(
-                        (r) => r.estado === "disponible" && r.activo !== false
-                      ).length
-                    }
+                    {remolques.filter((r) => r.activo !== false).length}
                   </p>
                 </div>
                 <Package className="h-8 w-8 text-green-600" />
@@ -1635,12 +1723,11 @@ export default function RemolquesPage() {
                     Mantenimientos Próximos
                   </p>
                   <p className="text-2xl font-bold text-yellow-600">
-                    {
-                      remolques.filter(
-                        (r) =>
-                          r.estado === "mantenimiento" && r.activo !== false
-                      ).length
-                    }
+                    {remolques.filter((r) => {
+                      const tieneMantenimiento = r.estado === "mantenimiento";
+                      const inspeccionPróxima = r.proxima_inspeccion && estaProximoAVencer(r.proxima_inspeccion, 7);
+                      return (tieneMantenimiento || inspeccionPróxima) && r.activo !== false;
+                    }).length}
                   </p>
                 </div>
                 <AlertTriangle className="h-8 w-8 text-yellow-600" />
@@ -1728,6 +1815,25 @@ export default function RemolquesPage() {
                 </div>
                 <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
                 <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-700">Cards por fila:</span>
+                  <Select
+                    value={String(cardsPerRow)}
+                    onValueChange={(v) => {
+                      const n = Number.parseInt(v, 10) || 3;
+                      setCardsPerRow(n);
+                    }}
+                  >
+                    <SelectTrigger className="w-[120px]">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="2">2 por fila</SelectItem>
+                      <SelectItem value="3">3 por fila</SelectItem>
+                      <SelectItem value="4">4 por fila</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="flex items-center gap-2">
                   <span className="text-sm text-gray-700">Por página:</span>
                   <Select
                     value={String(pageSize)}
@@ -1754,8 +1860,8 @@ export default function RemolquesPage() {
           </CardContent>
         </Card>
 
-        {/* Lista de remolques (paginada) */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+  {/* Lista de remolques (paginada) */}
+  <div className={getGridClass(cardsPerRow)}>
           {remolquesPaginados.map((remolque) => (
             <Card key={remolque.id}>
               <CardHeader>
@@ -1880,7 +1986,7 @@ export default function RemolquesPage() {
                         tipo: "inspeccion",
                         dias: diasRestantes,
                         vencido: false,
-                        fecha: fechaInspeccion.toLocaleDateString(),
+                        fecha: formatDateMatamoros(remolque.proxima_inspeccion),
                         mensaje: `Inspección vence en ${diasRestantes} días`,
                       });
                     } else if (diasRestantes < 0) {
@@ -1888,7 +1994,7 @@ export default function RemolquesPage() {
                         tipo: "inspeccion",
                         dias: Math.abs(diasRestantes),
                         vencido: true,
-                        fecha: fechaInspeccion.toLocaleDateString(),
+                        fecha: formatDateMatamoros(remolque.proxima_inspeccion),
                         mensaje: `Inspección vencida hace ${Math.abs(diasRestantes)} días`,
                       });
                     }
@@ -1906,7 +2012,7 @@ export default function RemolquesPage() {
                         tipo: "seguro",
                         dias: diasRestantes,
                         vencido: false,
-                        fecha: fechaVencimiento.toLocaleDateString(),
+                        fecha: formatDateMatamoros(remolque.vigencia_seguro),
                         mensaje: `Seguro vence en ${diasRestantes} días`,
                       });
                     } else if (diasRestantes < 0) {
@@ -1914,7 +2020,7 @@ export default function RemolquesPage() {
                         tipo: "seguro",
                         dias: Math.abs(diasRestantes),
                         vencido: true,
-                        fecha: fechaVencimiento.toLocaleDateString(),
+                        fecha: formatDateMatamoros(remolque.vigencia_seguro),
                         mensaje: `Seguro vencido hace ${Math.abs(diasRestantes)} días`,
                       });
                     }
@@ -1981,17 +2087,13 @@ export default function RemolquesPage() {
                   {remolque.fecha_ultima_inspeccion && (
                     <div>
                       <p className="font-medium">Última Inspección</p>
-                      <p className="text-gray-600">
-                        {new Date(remolque.fecha_ultima_inspeccion).toLocaleDateString()}
-                      </p>
+                      <p className="text-gray-600">{formatDateMatamoros(remolque.fecha_ultima_inspeccion)}</p>
                     </div>
                   )}
                   {remolque.proxima_inspeccion && (
                     <div>
                       <p className="font-medium">Próxima Inspección</p>
-                      <p className="text-gray-600">
-                        {new Date(remolque.proxima_inspeccion).toLocaleDateString()}
-                      </p>
+                      <p className="text-gray-600">{formatDateMatamoros(remolque.proxima_inspeccion)}</p>
                     </div>
                   )}
                   {remolque.poliza_seguro && (
@@ -2003,9 +2105,7 @@ export default function RemolquesPage() {
                   {remolque.vigencia_seguro && (
                     <div>
                       <p className="font-medium">Vigencia Seguro</p>
-                      <p className="text-gray-600">
-                        {new Date(remolque.vigencia_seguro).toLocaleDateString()}
-                      </p>
+                      <p className="text-gray-600">{formatDateMatamoros(remolque.vigencia_seguro)}</p>
                     </div>
                   )}
                 </div>
@@ -2018,9 +2118,7 @@ export default function RemolquesPage() {
                   </div>
                 )}
 
-                <div className="text-xs text-gray-400">
-                  Registrado: {new Date(remolque.fecha_registro).toLocaleDateString()}
-                </div>
+                <div className="text-xs text-gray-400">Registrado: {formatDateMatamoros(remolque.fecha_registro)}</div>
               </CardContent>
             </Card>
           ))}
@@ -2076,10 +2174,10 @@ export default function RemolquesPage() {
                     <div className="py-4 space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Inspecciones & Seguros</h3>
                       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-                        <div><span className="font-medium text-gray-600">Última Inspección:</span><p>{remolqueDetalle.fecha_ultima_inspeccion ? new Date(remolqueDetalle.fecha_ultima_inspeccion).toLocaleDateString() : '—'}</p></div>
-                        <div><span className="font-medium text-gray-600">Próxima Inspección:</span><p>{remolqueDetalle.proxima_inspeccion ? new Date(remolqueDetalle.proxima_inspeccion).toLocaleDateString() : '—'}</p></div>
+                        <div><span className="font-medium text-gray-600">Última Inspección:</span><p>{remolqueDetalle.fecha_ultima_inspeccion ? formatDateMatamoros(remolqueDetalle.fecha_ultima_inspeccion) : '—'}</p></div>
+                        <div><span className="font-medium text-gray-600">Próxima Inspección:</span><p>{remolqueDetalle.proxima_inspeccion ? formatDateMatamoros(remolqueDetalle.proxima_inspeccion) : '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Póliza Seguro:</span><p>{remolqueDetalle.poliza_seguro || '—'}</p></div>
-                        <div><span className="font-medium text-gray-600">Vigencia Seguro:</span><p>{remolqueDetalle.vigencia_seguro ? new Date(remolqueDetalle.vigencia_seguro).toLocaleDateString() : '—'}</p></div>
+                        <div><span className="font-medium text-gray-600">Vigencia Seguro:</span><p>{remolqueDetalle.vigencia_seguro ? formatDateMatamoros(remolqueDetalle.vigencia_seguro) : '—'}</p></div>
                       </div>
                     </div>
                   </TabsContent>
@@ -2151,10 +2249,10 @@ export default function RemolquesPage() {
                                 <tbody className="divide-y">
                                   {historialMantenimientoRemolque.slice((currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque, (currentPageMantenimientoRemolque-1)*pageSizeMantenimientoRemolque + pageSizeMantenimientoRemolque).map(reg => (
                                     <tr key={reg.id} className="hover:bg-gray-50">
-                                      <td className="px-2 py-2 whitespace-nowrap">{reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.fecha_mantenimiento ? formatDateMatamoros(reg.fecha_mantenimiento) : '—'}</td>
                                       <td className="px-2 py-2 whitespace-nowrap capitalize">{reg.tipo_mantenimiento}</td>
                                       <td className="px-2 py-2 max-w-xs"><span className="line-clamp-2" title={reg.detalles_mantenimiento}>{reg.detalles_mantenimiento}</span></td>
-                                      <td className="px-2 py-2 whitespace-nowrap">{reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : '—'}</td>
+                                      <td className="px-2 py-2 whitespace-nowrap">{reg.proximo_mantenimiento ? formatDateMatamoros(reg.proximo_mantenimiento) : '—'}</td>
                                       <td className="px-2 py-2 whitespace-nowrap">
                                         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={()=>eliminarMantenimientoRemolque(reg.id)}>Eliminar</Button>
                                       </td>

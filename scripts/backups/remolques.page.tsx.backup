@@ -1,0 +1,1227 @@
+"use client";
+
+import { MainLayout } from "@/components/layout/main-layout";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Badge } from "@/components/ui/badge";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Importar Tabs components
+import {
+  Truck,
+  Plus,
+  Search,
+  Edit,
+  Trash2,
+  AlertTriangle,
+  Package,
+  Eye,
+} from "lucide-react";
+import { useState, useEffect } from "react";
+import { supabase, type Remolque, type MarcaRemolque } from "@/lib/supabase";
+import { formatDateMatamoros, normalizeDate, todayLocalISODate } from '@/lib/date-utils';
+import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
+
+export default function RemolquesPage() {
+  // --- Estados y lógica para gestión de marcas de remolques ---
+  const [nuevaMarcaNombre, setNuevaMarcaNombre] = useState("");
+  const [agregandoMarca, setAgregandoMarca] = useState(false);
+  const [editandoMarcaId, setEditandoMarcaId] = useState<string | null>(null);
+  // Estado para mostrar el modal de marcas de remolques
+  const [showMarcasRemolque, setShowMarcasRemolque] = useState(false);
+  // Función para descargar el reporte de remolques en CSV
+  const descargarReporteRemolques = () => {
+    const headers = [
+      "Número Económico",
+      "Tipo",
+      "Marca",
+      "Modelo",
+      "Año",
+      "Número de Serie",
+      "Capacidad",
+      "Placas",
+      "Fecha Última Inspección",
+      "Próxima Inspección",
+      "Póliza Seguro",
+      "Vigencia Seguro",
+      "Estado",
+      "Comentarios",
+      "Activo",
+      "Fecha Registro",
+    ];
+  const rows = remolques.map((r) => [
+      r.numero_economico,
+      r.tipo || "",
+      r.marca || "",
+      r.modelo || "",
+      r.año || "",
+      r.numero_serie || "",
+      r.capacidad || "",
+      r.placas || "",
+  r.fecha_ultima_inspeccion ? formatDateMatamoros(r.fecha_ultima_inspeccion) : "",
+  r.proxima_inspeccion ? formatDateMatamoros(r.proxima_inspeccion) : "",
+      r.poliza_seguro || "",
+  r.vigencia_seguro ? formatDateMatamoros(r.vigencia_seguro) : "",
+      r.estado || "",
+      r.comentarios || "",
+      r.activo !== false ? "Sí" : "No",
+  r.fecha_registro ? formatDateMatamoros(r.fecha_registro) : "",
+    ]);
+    // Escapar comillas dobles y unir en formato CSV
+    const csvContent = [headers, ...rows]
+      .map((row) =>
+        row.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(",")
+      )
+      .join("\n");
+    const blob = new window.Blob([csvContent], {
+      type: "text/csv;charset=utf-8;",
+    });
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", "reporte_remolques.csv");
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+
+    // Audit log: exportación general de remolques
+    try {
+      agregarAuditLog(
+        "EXPORTAR",
+        "Remolques",
+        `Descargó reporte general de remolques (${remolques.length})`
+      );
+    } catch {}
+  };
+  const [showForm, setShowForm] = useState(false);
+  // Mantener modal de detalles abierto al editar
+  const [editingRemolque, setEditingRemolque] = useState<Remolque | null>(null);
+  const [searchTerm, setSearchTerm] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  // Paginación
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(12);
+
+  // Estados para los datos
+  const [remolques, setRemolques] = useState<Remolque[]>([]);
+  const [marcas, setMarcas] = useState<MarcaRemolque[]>([]);
+  const [deletingMarcaId, setDeletingMarcaId] = useState<string | null>(null);
+  const [pendingDeleteMarca, setPendingDeleteMarca] = useState<{
+    id: string;
+    nombre: string;
+    abierto: boolean;
+  } | null>(null);
+  const [notificationOpen, setNotificationOpen] = useState(false);
+  const [notificationMessage, setNotificationMessage] = useState("");
+  const [notificationFolios, setNotificationFolios] = useState<string[]>([]);
+  // Estado para confirmación de activar/desactivar remolque
+  const [pendingToggleRemolque, setPendingToggleRemolque] = useState<{
+    id: string;
+    nuevoEstado: boolean;
+    abierto: boolean;
+  } | null>(null);
+  // Historial de mantenimiento remolques
+  const [historialMantenimientoRemolque, setHistorialMantenimientoRemolque] = useState<any[]>([]);
+  const [loadingHistorialMantenimientoRemolque, setLoadingHistorialMantenimientoRemolque] = useState(false);
+  const [currentPageMantenimientoRemolque, setCurrentPageMantenimientoRemolque] = useState(1);
+  const [pageSizeMantenimientoRemolque, setPageSizeMantenimientoRemolque] = useState(5);
+  const [mantenimientoRemolqueFormData, setMantenimientoRemolqueFormData] = useState({
+    fecha_mantenimiento: "",
+    tipo_mantenimiento: "preventivo",
+    detalles_mantenimiento: "",
+    proximo_mantenimiento: "",
+  });
+  const [showFormMantenimientoRemolque, setShowFormMantenimientoRemolque] = useState(false);
+  const [addingMantenimientoRemolque, setAddingMantenimientoRemolque] = useState(false);
+
+  // Estado del formulario
+  const [formData, setFormData] = useState({
+    numeroEconomico: "",
+    tipo: "",
+    marca: "",
+    modelo: "",
+    año: "",
+    numeroSerie: "",
+    capacidad: "",
+    placas: "",
+    fechaUltimaInspeccion: "",
+    proximaInspeccion: "",
+    polizaSeguro: "",
+    vigenciaSeguro: "",
+    estado: "disponible",
+    comentarios: "",
+  });
+
+  // Cargar datos desde Supabase
+  const cargarDatos = async () => {
+    try {
+      setLoading(true);
+
+      // Cargar remolques
+      const { data: remolquesData, error: remolquesError } = await supabase
+        .from("remolques")
+        .select("*")
+        .order("numero_economico");
+
+      if (remolquesError) {
+        console.error("Error cargando remolques:", remolquesError);
+      } else {
+        setRemolques(remolquesData || []);
+      }
+
+      // Cargar marcas
+      const { data: marcasData, error: marcasError } = await supabase
+        .from("marcas_remolques")
+        .select("*")
+        .eq("activa", true)
+        .order("nombre");
+
+      if (marcasError) {
+        console.error("Error cargando marcas:", marcasError);
+      } else {
+        setMarcas(marcasData || []);
+      }
+    } catch (error) {
+      console.error("Error general:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    cargarDatos();
+  }, []);
+
+  const limpiarFormulario = () => {
+    setFormData({
+      numeroEconomico: "",
+      tipo: "",
+      marca: "",
+      modelo: "",
+      año: "",
+      numeroSerie: "",
+      capacidad: "",
+      placas: "",
+      fechaUltimaInspeccion: "",
+      proximaInspeccion: "",
+      polizaSeguro: "",
+      vigenciaSeguro: "",
+      estado: "disponible",
+      comentarios: "",
+    });
+    setEditingRemolque(null);
+  };
+
+  
+
+  const crearRecordatoriosVencimientos = async (
+    remolqueId: string,
+    numeroEconomico: string,
+    proximaInspeccion?: string,
+    vigenciaSeguro?: string
+  ) => {
+    try {
+      const recordatorios = [];
+
+      // Recordatorio para inspección (15 días antes)
+      if (proximaInspeccion) {
+        // normalize input date (accept YYYY-MM-DD or timestamp)
+        const norm = normalizeDate(proximaInspeccion);
+        if (norm) {
+          const fechaInspeccion = new Date(norm);
+          const fechaRecordatorio = new Date(fechaInspeccion);
+          fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
+
+          recordatorios.push({
+            titulo: `Inspección de Remolque ${numeroEconomico}`,
+            descripcion: `La inspección del remolque ${numeroEconomico} vence el ${formatDateMatamoros(norm)}. Programa la inspección con anticipación.`,
+            fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
+            tipo: "inspeccion_remolque",
+            prioridad: "alta",
+            estado: "pendiente",
+          });
+        }
+      }
+
+      // Recordatorio para seguro (15 días antes)
+      if (vigenciaSeguro) {
+        const norm = normalizeDate(vigenciaSeguro);
+        if (norm) {
+          const fechaSeguro = new Date(norm);
+          const fechaRecordatorio = new Date(fechaSeguro);
+          fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 15); // 15 días antes
+
+          recordatorios.push({
+            titulo: `Seguro de Remolque ${numeroEconomico}`,
+            descripcion: `El seguro del remolque ${numeroEconomico} vence el ${formatDateMatamoros(norm)}. Renueva la póliza de seguro antes del vencimiento.`,
+            fecha_vencimiento: fechaRecordatorio.toISOString().split("T")[0],
+            tipo: "seguro_remolque",
+            prioridad: "alta",
+            estado: "pendiente",
+          });
+        }
+      }
+
+      // Insertar recordatorios si hay alguno
+      if (recordatorios.length > 0) {
+        const { error } = await supabase
+          .from("recordatorios")
+          .insert(recordatorios);
+
+        if (error) {
+          console.error("Error creando recordatorios:", error);
+          // Mostrar mensaje informativo al usuario en lugar de error
+          toast({
+            title: "Remolque guardado exitosamente",
+            description:
+              "Nota: Los recordatorios automáticos se configurarán manualmente desde la sección de recordatorios.",
+            variant: "success",
+          });
+        } else {
+          console.log(
+            `Creados ${recordatorios.length} recordatorios para remolque ${numeroEconomico}`
+          );
+        }
+      }
+    } catch (error) {
+      console.error("Error en crearRecordatoriosVencimientos:", error);
+      // No mostrar error al usuario, solo log interno
+    }
+  };
+
+  const guardarRemolque = async () => {
+    if (!formData.numeroEconomico) {
+      alert("El número económico es obligatorio");
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      // Verificar que el número económico no esté duplicado
+      const { data: existingRemolque, error: checkError } = await supabase
+        .from("remolques")
+        .select("id")
+        .eq("numero_economico", formData.numeroEconomico);
+
+        if (checkError) {
+        console.error("Error verificando número económico:", checkError);
+        toast({ title: "Error al verificar número económico", variant: "destructive" });
+        return;
+      }
+
+      // Si estamos editando, excluir el remolque actual de la verificación
+      const duplicateExists = editingRemolque
+        ? existingRemolque?.some((r) => r.id !== editingRemolque.id)
+        : existingRemolque && existingRemolque.length > 0;
+
+      if (duplicateExists) {
+        toast({ title: "Ya existe un remolque con ese número económico", variant: "destructive" });
+        return;
+      }
+
+    // Verificar que el número de serie no esté duplicado (solo si se proporciona)
+    const serialTrim = (formData.numeroSerie || '').trim();
+    if (serialTrim) {
+        const { data: existingSerial, error: serialError } = await supabase
+          .from("remolques")
+          .select("id")
+      .eq("numero_serie", serialTrim);
+
+        if (serialError) {
+          console.error("Error verificando número de serie:", serialError);
+          const msg = (serialError as any)?.message || (serialError as any)?.hint || JSON.stringify(serialError);
+          toast({ title: `Error al verificar número de serie: ${msg}`, variant: "destructive" });
+          return;
+        }
+
+        // Si estamos editando, excluir el remolque actual de la verificación
+        const serialDuplicateExists = editingRemolque
+          ? existingSerial?.some((r) => r.id !== editingRemolque.id)
+          : existingSerial && existingSerial.length > 0;
+
+  if (serialDuplicateExists) {
+          toast({ title: "Ya existe un remolque con ese número de serie", variant: "destructive" });
+          return;
+        }
+      }
+
+  const remolqueData = {
+        numero_economico: formData.numeroEconomico,
+        tipo: formData.tipo || null,
+        marca: formData.marca || null,
+        modelo: formData.modelo || null,
+        año: formData.año ? Number.parseInt(formData.año) : null,
+  numero_serie: serialTrim || null,
+        capacidad: formData.capacidad
+          ? Number.parseFloat(formData.capacidad)
+          : null,
+        placas: formData.placas || null,
+  fecha_ultima_inspeccion: normalizeDate(formData.fechaUltimaInspeccion) || null,
+  proxima_inspeccion: normalizeDate(formData.proximaInspeccion) || null,
+        poliza_seguro: formData.polizaSeguro || null,
+  vigencia_seguro: normalizeDate(formData.vigenciaSeguro) || null,
+        estado: formData.estado,
+        comentarios: formData.comentarios || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      let remolqueId: string;
+
+      if (editingRemolque) {
+        // Actualizar remolque existente
+        const { error } = await supabase
+          .from("remolques")
+          .update(remolqueData)
+          .eq("id", editingRemolque.id);
+
+        if (error) {
+          console.error("Error actualizando remolque:", error);
+          alert("Error al actualizar remolque");
+          return;
+        }
+        remolqueId = editingRemolque.id;
+        // Audit log: actualización de remolque
+        try {
+          agregarAuditLog(
+            "ACTUALIZAR",
+            "Remolques",
+            `Actualizó remolque ${remolqueData.numero_economico} (ID: ${editingRemolque.id})`
+          );
+        } catch {}
+      } else {
+        // Crear nuevo remolque
+        const insertData = { ...remolqueData, fecha_registro: new Date().toISOString() };
+
+        const { data, error } = await supabase
+          .from("remolques")
+          .insert(insertData)
+          .select()
+          .single();
+
+        if (error) {
+          console.error("Error creando remolque:", error);
+          alert("Error al crear remolque");
+          return;
+        }
+        remolqueId = data.id;
+        // Audit log: creación de remolque
+        try {
+          agregarAuditLog(
+            "CREAR",
+            "Remolques",
+            `Creó remolque ${insertData.numero_economico} (ID: ${remolqueId})`
+          );
+        } catch {}
+      }
+
+      // Crear recordatorios para vencimientos
+      await crearRecordatoriosVencimientos(
+        remolqueId,
+        formData.numeroEconomico,
+        formData.proximaInspeccion,
+        formData.vigenciaSeguro
+      );
+
+      // Mostrar éxito, recargar datos y cerrar formulario
+      toast({ title: editingRemolque ? 'Remolque actualizado' : 'Remolque guardado', variant: 'success' });
+      await cargarDatos();
+      limpiarFormulario();
+      setShowForm(false);
+    } catch (error) {
+      console.error('Error guardando remolque:', error);
+      toast({ title: 'Error al guardar remolque', variant: 'destructive' });
+    } finally {
+      setSaving(false);
+    }
+
+  }
+
+  const editarRemolque = async (remolque: Remolque) => {
+    setFormData({
+      numeroEconomico: remolque.numero_economico || "",
+      tipo: remolque.tipo || "",
+      marca: remolque.marca || "",
+      modelo: remolque.modelo || "",
+      año: remolque.año ? String(remolque.año) : "",
+      numeroSerie: remolque.numero_serie || "",
+      capacidad: remolque.capacidad ? String(remolque.capacidad) : "",
+      placas: remolque.placas || "",
+      fechaUltimaInspeccion: remolque.fecha_ultima_inspeccion || "",
+      proximaInspeccion: remolque.proxima_inspeccion || "",
+      polizaSeguro: remolque.poliza_seguro || "",
+      vigenciaSeguro: remolque.vigencia_seguro || "",
+      estado: remolque.estado || "disponible",
+      comentarios: remolque.comentarios || "",
+    });
+    setEditingRemolque(remolque);
+    // Asegurar que remolqueDetalle esté seteado para operaciones de mantenimiento
+    setRemolqueDetalle(remolque);
+    // Cargar historial para que la pestaña Mantenimiento muestre datos cuando el usuario abra el modal de edición
+    try {
+      await cargarHistorialMantenimientoRemolque(remolque.id);
+    } catch (e) {
+      console.warn('No se pudo cargar historial al editar remolque', e);
+    }
+    setShowForm(true);
+  };
+
+  // Modal de detalles de remolque
+  const [showDetallesRemolque, setShowDetallesRemolque] = useState(false);
+  const [remolqueDetalle, setRemolqueDetalle] = useState<Remolque | null>(null);
+  const [detalleTabRemolque, setDetalleTabRemolque] = useState('general');
+  const verDetallesRemolque = (remolque: Remolque) => {
+    setRemolqueDetalle(remolque);
+    setShowDetallesRemolque(true);
+    setDetalleTabRemolque('general');
+    cargarHistorialMantenimientoRemolque(remolque.id);
+  };
+
+  // Cargar historial de mantenimiento para un remolque
+  const cargarHistorialMantenimientoRemolque = async (remolqueId: string) => {
+    try {
+      setLoadingHistorialMantenimientoRemolque(true);
+      const { data, error } = await supabase
+        .from('registros_mantenimiento_remolques')
+        .select('*')
+        .eq('remolque_id', remolqueId)
+        .order('fecha_mantenimiento', { ascending: false });
+      if (error) {
+        console.log('Tabla registros_mantenimiento_remolques no existe o error:', error.message);
+        setHistorialMantenimientoRemolque([]);
+      } else {
+        setHistorialMantenimientoRemolque(data || []);
+      }
+    } catch (e) {
+      console.error('Error cargando historial mantenimiento remolque', e);
+      setHistorialMantenimientoRemolque([]);
+    } finally {
+      setLoadingHistorialMantenimientoRemolque(false);
+    }
+  };
+
+  // Ajustar paginación del historial
+  useEffect(() => {
+    const totalPages = Math.ceil(historialMantenimientoRemolque.length / pageSizeMantenimientoRemolque) || 1;
+    if (currentPageMantenimientoRemolque > totalPages) {
+      setCurrentPageMantenimientoRemolque(totalPages);
+    }
+  }, [historialMantenimientoRemolque, currentPageMantenimientoRemolque, pageSizeMantenimientoRemolque]);
+
+  const resetFormMantenimientoRemolque = () => {
+    setMantenimientoRemolqueFormData({
+      fecha_mantenimiento: "",
+      tipo_mantenimiento: "preventivo",
+      detalles_mantenimiento: "",
+      proximo_mantenimiento: "",
+    });
+  };
+
+  const agregarMantenimientoRemolque = async () => {
+    if (!remolqueDetalle) return;
+    if (!mantenimientoRemolqueFormData.fecha_mantenimiento || !mantenimientoRemolqueFormData.detalles_mantenimiento) {
+      alert('Fecha y detalles son obligatorios');
+      return;
+    }
+    try {
+      setAddingMantenimientoRemolque(true);
+      const insertData: any = {
+        remolque_id: remolqueDetalle.id,
+        fecha_mantenimiento: mantenimientoRemolqueFormData.fecha_mantenimiento,
+        tipo_mantenimiento: mantenimientoRemolqueFormData.tipo_mantenimiento,
+        detalles_mantenimiento: mantenimientoRemolqueFormData.detalles_mantenimiento,
+  proximo_mantenimiento: mantenimientoRemolqueFormData.proximo_mantenimiento || null,
+      };
+      const { error } = await supabase.from('registros_mantenimiento_remolques').insert(insertData);
+      if (error) {
+        console.error('Error insert mantenimiento remolque', error);
+        alert('Error al guardar mantenimiento');
+        return;
+      }
+      // Crear recordatorio si hay próximo mantenimiento
+      if (mantenimientoRemolqueFormData.proximo_mantenimiento) {
+        try {
+          const fechaProx = new Date(mantenimientoRemolqueFormData.proximo_mantenimiento);
+          const fechaRecordatorio = new Date(fechaProx);
+          // 7 días antes (ajustar si se requiere otro margen)
+          fechaRecordatorio.setDate(fechaRecordatorio.getDate() - 7);
+          const recordatorio = {
+            titulo: `Mantenimiento Remolque ${remolqueDetalle.numero_economico}`,
+            descripcion: `Mantenimiento programado el ${fechaProx.toLocaleDateString()} para el remolque ${remolqueDetalle.numero_economico}.`,
+            fecha_vencimiento: fechaRecordatorio.toISOString().split('T')[0],
+            tipo: 'mantenimiento_remolque',
+            prioridad: 'media',
+            estado: 'pendiente',
+          };
+          const { error: recError } = await supabase.from('recordatorios').insert(recordatorio);
+          if (recError) {
+            console.warn('No se pudo crear recordatorio mantenimiento:', recError.message);
+          }
+        } catch (e) {
+          console.warn('Fallo creando recordatorio de mantenimiento', e);
+        }
+      }
+  toast({ title: 'Mantenimiento registrado', variant: 'success' });
+      resetFormMantenimientoRemolque();
+      setShowFormMantenimientoRemolque(false);
+      await cargarHistorialMantenimientoRemolque(remolqueDetalle.id);
+    } catch (e) {
+      console.error(e);
+      alert('Error al guardar mantenimiento');
+    } finally {
+      setAddingMantenimientoRemolque(false);
+    }
+  };
+
+  const eliminarMantenimientoRemolque = async (id: string) => {
+    if (!confirm('¿Eliminar registro de mantenimiento?')) return;
+    try {
+      const { error } = await supabase.from('registros_mantenimiento_remolques').delete().eq('id', id);
+      if (error) {
+        alert('Error al eliminar');
+        return;
+      }
+      if (remolqueDetalle) await cargarHistorialMantenimientoRemolque(remolqueDetalle.id);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
+  // Exportar remolque individual a CSV (Excel)
+  const descargarExcelRemolque = (remolque: Remolque) => {
+    if (!remolque) return;
+
+    const esc = (v: any) => `"\t${(v ?? '').toString().replace(/"/g,'""')}"`;
+    const headers: string[] = [
+      'Número Económico','Tipo','Marca','Modelo','Año','Número Serie','Capacidad (ton)','Placas','Última Inspección','Próxima Inspección','Póliza Seguro','Vigencia Seguro','Estado','Activo','Fecha Registro','Comentarios'
+    ];
+    const row: string[] = [
+      esc(remolque.numero_economico),
+      esc(remolque.tipo || ''),
+      esc(remolque.marca || ''),
+      esc(remolque.modelo || ''),
+      esc(remolque.año || ''),
+      esc(remolque.numero_serie || ''),
+      esc(remolque.capacidad || ''),
+      esc(remolque.placas || ''),
+      esc(remolque.fecha_ultima_inspeccion ? new Date(remolque.fecha_ultima_inspeccion).toISOString().split('T')[0] : ''),
+      esc(remolque.proxima_inspeccion ? new Date(remolque.proxima_inspeccion).toISOString().split('T')[0] : ''),
+      esc(remolque.poliza_seguro || ''),
+      esc(remolque.vigencia_seguro ? new Date(remolque.vigencia_seguro).toISOString().split('T')[0] : ''),
+      esc(remolque.estado || ''),
+      esc(remolque.activo !== false ? 'Activo' : 'Inactivo'),
+      esc(remolque.fecha_registro ? new Date(remolque.fecha_registro).toISOString().split('T')[0] : ''),
+      esc(remolque.comentarios || '')
+    ];
+
+    // Construir contenido CSV incluyendo sección de historial de mantenimiento
+    const lines: string[] = [];
+    lines.push(headers.join(','));
+    lines.push(row.join(','));
+    // Sección de historial de mantenimiento
+    lines.push('');
+    lines.push('"Historial de Mantenimiento"');
+    const maintHeaders = ['Fecha','Tipo','Detalles','Próximo Mantenimiento'];
+    lines.push(maintHeaders.join(','));
+    if (historialMantenimientoRemolque && historialMantenimientoRemolque.length > 0) {
+      for (const reg of historialMantenimientoRemolque) {
+        const mrow = [
+          esc(reg.fecha_mantenimiento ? new Date(reg.fecha_mantenimiento).toLocaleDateString() : ''),
+          esc(reg.tipo_mantenimiento || ''),
+          esc(reg.detalles_mantenimiento || ''),
+          esc(reg.proximo_mantenimiento ? new Date(reg.proximo_mantenimiento).toLocaleDateString() : ''),
+        ];
+        lines.push(mrow.join(','));
+      }
+    } else {
+      lines.push('"Sin registros de mantenimiento"');
+    }
+
+    const contenido = lines.join('\n');
+    const blob = new Blob(['\ufeff' + contenido], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    link.href = url;
+    link.download = `remolque_${remolque.numero_economico}_${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+
+    // Audit log: exportación individual de remolque
+    try {
+      agregarAuditLog(
+        "EXPORTAR",
+        "Remolques",
+        `Descargó reporte del remolque ${remolque.numero_economico} (ID: ${remolque.id})`
+      );
+    } catch {}
+  };
+
+  const eliminarRemolque = async (id: string) => {
+    try {
+      // Verificar que el REMOLQUE esté INACTIVO antes de eliminar
+      const remolque = remolques.find((r) => r.id === id);
+      if (!remolque) {
+        toast({ title: 'Remolque no encontrado', variant: 'destructive' });
+        return;
+      }
+
+      if (remolque.activo !== false) {
+        setNotificationMessage("Para eliminar este remolque primero debes cambiarlo a estado INACTIVO. Luego intenta nuevamente.");
+        setNotificationFolios([]);
+        setNotificationOpen(true);
+        return;
+      }
+
+      // Verificar que NO tenga embarques ACTIVOS
+      // Activos = cualquier embarque cuyo estado NO esté 'archivado' NI 'cancelado'
+      const { data: embarquesActivos, error: embarquesError } = await supabase
+        .from("embarques")
+        .select("id, folio, estado")
+        .eq("remolque_id", id)
+        .not("estado", "in", "(archivado,cancelado)")
+        .limit(10);
+
+      if (embarquesError) {
+        console.error("Error verificando embarques:", embarquesError);
+  toast({ title: 'Error al verificar embarques activos', variant: 'destructive' });
+        return;
+      }
+
+      if (embarquesActivos && embarquesActivos.length > 0) {
+        const folios = embarquesActivos.map((e) => `${e.folio || e.id} (${e.estado})`).filter(Boolean) as string[];
+        setNotificationMessage(`No es posible eliminar el remolque ${remolque.numero_economico} porque tiene ${embarquesActivos.length} embarque(s) activo(s).`);
+        setNotificationFolios(folios.slice(0, 20));
+        setNotificationOpen(true);
+        return;
+      }
+
+  // Proceder con la eliminación (la confirmación se muestra mediante AlertDialog en la UI)
+      const { error } = await supabase.from("remolques").delete().eq("id", id);
+
+      if (error) {
+        console.error('Error eliminando remolque:', error);
+        toast({ title: 'Error al eliminar remolque', variant: 'destructive' });
+        return;
+      }
+
+      toast({ title: 'Remolque eliminado exitosamente', variant: 'destructive' });
+      // Audit log: eliminación de remolque
+      try {
+        agregarAuditLog(
+          "ELIMINAR",
+          "Remolques",
+          `Eliminó remolque ${remolque.numero_economico} (ID: ${id})`
+        );
+      } catch {}
+      await cargarDatos();
+    } catch (error) {
+      console.error("Error:", error);
+      toast({ title: 'Error al eliminar remolque', variant: 'destructive' });
+    }
+  };
+
+  const toggleActivarRemolque = (id: string, estadoActual: boolean) => {
+    const nuevoEstado = !estadoActual;
+    setPendingToggleRemolque({ id, nuevoEstado, abierto: true });
+  };
+
+  // Función para verificar si una fecha está próxima a vencer
+  const estaProximoAVencer = (fecha: string, diasAnticipacion = 30) => {
+    if (!fecha) return false;
+    const fechaVencimiento = new Date(fecha);
+    const hoy = new Date();
+    const diferenciaDias = Math.ceil(
+      (fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+    );
+    return diferenciaDias <= diasAnticipacion && diferenciaDias >= 0;
+  };
+
+  // Función para verificar si una fecha ya venció
+  const yaVencio = (fecha: string) => {
+    if (!fecha) return false;
+    const fechaVencimiento = new Date(fecha);
+    const hoy = new Date();
+    return fechaVencimiento < hoy;
+  };
+
+  const remolquesFiltrados = remolques.filter(
+    (remolque) =>
+      remolque.numero_economico
+        .toLowerCase()
+        .includes(searchTerm.toLowerCase()) ||
+      (remolque.marca &&
+        remolque.marca.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (remolque.modelo &&
+        remolque.modelo.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (remolque.placas &&
+        remolque.placas.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  // Derivados de paginación
+  const totalPages = Math.max(
+    1,
+    Math.ceil(remolquesFiltrados.length / Math.max(1, pageSize))
+  );
+  // Asegurar página válida si cambia el filtro o el tamaño
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages);
+  }, [totalPages]);
+  const start = (page - 1) * pageSize;
+  const end = start + pageSize;
+  const remolquesPaginados = remolquesFiltrados.slice(start, end);
+
+  if (loading) {
+    return (
+      <MainLayout>
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto"></div>
+            <p className="mt-2 text-gray-600">Cargando remolques...</p>
+          </div>
+        </div>
+      </MainLayout>
+    );
+  }
+
+  return (
+    <MainLayout>
+        {/* AlertDialog for activar/desactivar remolque (replaces confirm) */}
+        <AlertDialog open={!!pendingToggleRemolque?.abierto} onOpenChange={(v) => {
+          if (!v) setPendingToggleRemolque(null);
+          else if (pendingToggleRemolque) setPendingToggleRemolque({...pendingToggleRemolque, abierto: v});
+        }}>
+          <AlertDialogContent className="max-w-md">
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {pendingToggleRemolque?.nuevoEstado ? 'Activar remolque' : 'Desactivar remolque'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                {pendingToggleRemolque?.nuevoEstado
+                  ? '¿Estás seguro de que deseas activar este remolque? El remolque será activado y estará disponible para asignaciones.'
+                  : '¿Estás seguro de que deseas desactivar este remolque? El remolque será desactivado y no estará disponible para asignaciones.'}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancelar</AlertDialogCancel>
+              <AlertDialogAction onClick={async () => {
+                if (!pendingToggleRemolque) return;
+                const { id, nuevoEstado } = pendingToggleRemolque;
+                try {
+                  const updateObj: any = { activo: nuevoEstado, updated_at: new Date().toISOString() };
+                  // If marking as inactive, also set estado to 'fuera-de-servicio' so system counts it correctly
+                  if (nuevoEstado === false) {
+                    updateObj.estado = 'fuera-de-servicio';
+                  } else if (nuevoEstado === true) {
+                    // Al reactivar, marcar como disponible para que aparezca en el contador de 'Disponibles'
+                    updateObj.estado = 'disponible';
+                  }
+                  const { error } = await supabase
+                    .from('remolques')
+                    .update(updateObj)
+                    .eq('id', id);
+                  if (error) {
+                    console.error('Error actualizando estado del remolque:', error);
+                    toast({ title: 'Error al actualizar el estado del remolque', variant: 'destructive' });
+                  } else {
+                    toast({ title: nuevoEstado ? 'Remolque activado' : 'Remolque desactivado', description: nuevoEstado ? undefined : 'El remolque ha sido marcado como fuera de servicio', variant: 'success' });
+                    try { agregarAuditLog('ACTUALIZAR', 'Remolques', `Cambió estado del remolque (ID: ${id}) a ${nuevoEstado ? 'activo' : 'inactivo'}`); } catch {}
+                    await cargarDatos();
+                  }
+                } catch (e) {
+                  console.error('Error:', e);
+                  toast({ title: 'Error al cambiar el estado del remolque', variant: 'destructive' });
+                } finally {
+                  setPendingToggleRemolque(null);
+                }
+              }} className="bg-green-600 hover:bg-green-700 text-white">Aceptar</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+      <div className="space-y-6">
+        <div className="flex justify-between items-center">
+          <div>
+            <h1 className="text-3xl font-bold text-gray-900">
+              Gestión de Remolques
+            </h1>
+            <p className="text-gray-600 mt-2">
+              Administrar la flota de remolques
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setShowMarcasRemolque(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Marcas de Remolques
+            </Button>
+            {/* Modal para gestionar marcas de remolques */}
+            <Dialog
+              open={showMarcasRemolque}
+              onOpenChange={setShowMarcasRemolque}
+            >
+              <DialogContent className="max-w-lg">
+                <DialogHeader>
+                  <DialogTitle>Gestionar Marcas de Remolques</DialogTitle>
+                  <DialogDescription>
+                    Aquí puedes agregar, editar o eliminar marcas de remolques.
+                  </DialogDescription>
+                </DialogHeader>
+                {/* Gestión de marcas de remolques: cards en grid, scroll, crear y editar */}
+                <div className="py-2">
+                  <form
+                    className="flex gap-2 mb-4"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (!nuevaMarcaNombre.trim()) return;
+                      setAgregandoMarca(true);
+                      if (editandoMarcaId) {
+                        // Editar marca existente
+                        const { error } = await supabase
+                          .from("marcas_remolques")
+                          .update({ nombre: nuevaMarcaNombre.trim() })
+                          .eq("id", editandoMarcaId);
+                        if (!error) {
+                          setEditandoMarcaId(null);
+                          setNuevaMarcaNombre("");
+                          await cargarDatos();
+                          toast({ title: 'Marca actualizada', variant: 'success' });
+                        } else {
+                          toast({ title: 'Error al editar marca', variant: 'destructive' });
+                        }
+                      } else {
+                        // Crear nueva marca
+                        const { error } = await supabase
+                          .from("marcas_remolques")
+                          .insert({
+                            nombre: nuevaMarcaNombre.trim(),
+                            activa: true,
+                          });
+                        if (!error) {
+                          setNuevaMarcaNombre("");
+                          await cargarDatos();
+                          // Popo-style green toast to notify success
+                          toast({ title: 'Marca registrada', description: 'Nueva marca de remolque registrada correctamente.', variant: 'success' });
+                        } else {
+                          toast({ title: 'Error al agregar marca', variant: 'destructive' });
+                        }
+                      }
+                      setAgregandoMarca(false);
+                    }}
+                  >
+                    <Input
+                      placeholder={
+                        editandoMarcaId
+                          ? "Editar marca"
+                          : "Nueva marca de remolque"
+                      }
+                      value={nuevaMarcaNombre}
+                      onChange={(e) => setNuevaMarcaNombre(e.target.value)}
+                      className="flex-1"
+                      disabled={agregandoMarca}
+                      autoFocus
+                    />
+                    <Button
+                      type="submit"
+                      size="sm"
+                      disabled={agregandoMarca || !nuevaMarcaNombre.trim()}
+                      className={
+                        editandoMarcaId
+                          ? "border border-gray-300 bg-white hover:bg-gray-50 text-gray-800"
+                          : "bg-green-600 hover:bg-green-700 text-white"
+                      }
+                    >
+                      {editandoMarcaId ? "Guardar" : "Agregar"}
+                    </Button>
+                    {editandoMarcaId && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          setEditandoMarcaId(null);
+                          setNuevaMarcaNombre("");
+                        }}
+                        disabled={agregandoMarca}
+                      >
+                        Cancelar
+                      </Button>
+                    )}
+                  </form>
+                  <div className="grid grid-cols-2 gap-3 max-h-64 overflow-y-auto pr-2">
+                    {marcas.map((marca) => (
+                      <div
+                        key={marca.id}
+                        className="bg-gray-50 border rounded-lg p-3 flex items-center justify-between shadow-sm"
+                      >
+                        <span className="font-medium text-gray-800 truncate max-w-[120px]">
+                          {marca.nombre}
+                        </span>
+                        <div className="flex gap-1">
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Editar"
+                            onClick={() => {
+                              setEditandoMarcaId(marca.id);
+                              setNuevaMarcaNombre(marca.nombre);
+                            }}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="icon"
+                            className="h-7 w-7"
+                            title="Eliminar"
+                            onClick={() => setPendingDeleteMarca({ id: marca.id, nombre: marca.nombre, abierto: true })}
+                            disabled={deletingMarcaId === marca.id}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                          </Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </DialogContent>
+            </Dialog>
+            {/* Confirmation dialog for deleting a marca (popo-style) */}
+            <AlertDialog open={!!pendingDeleteMarca?.abierto} onOpenChange={(v)=>{ if(!v) setPendingDeleteMarca(null); else if(pendingDeleteMarca) setPendingDeleteMarca({...pendingDeleteMarca, abierto: v}); }}>
+              <AlertDialogContent className="max-w-md">
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Confirmar eliminación</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    ¿Deseas eliminar la marca <strong>{pendingDeleteMarca?.nombre}</strong>? Esta acción desactivará la marca y no eliminará los registros históricos.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                  <AlertDialogAction onClick={async ()=>{
+                    if(!pendingDeleteMarca) return;
+                    const id = pendingDeleteMarca.id;
+                    try{
+                      setDeletingMarcaId(id);
+                      const { error } = await supabase.from('marcas_remolques').update({ activa: false }).eq('id', id);
+                      if(error){
+                        console.error('Error desactivando marca:', error);
+                        toast({ title: 'Error al eliminar marca', variant: 'destructive' });
+                      } else {
+                        toast({ title: 'Marca eliminada', variant: 'destructive' });
+                        try{ agregarAuditLog('ELIMINAR','MarcasRemolques', `Desactivó marca ${pendingDeleteMarca.nombre} (ID: ${id})`); }catch{}
+                        await cargarDatos();
+                      }
+                    }catch(e){
+                      console.error(e);
+                      toast({ title: 'Error al eliminar marca', variant: 'destructive' });
+                    }finally{
+                      setDeletingMarcaId(null);
+                      setPendingDeleteMarca(null);
+                    }
+                  }} className="bg-red-600 hover:bg-red-700 text-white">Eliminar</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            {/* Notification dialog for remolques (replaces alerts) */}
+            <Dialog open={notificationOpen} onOpenChange={(o)=>{setNotificationOpen(o); if(!o) setNotificationMessage(""); setNotificationFolios([]);}}>
+              {/* Consider this a warning modal when the message indicates deletion is blocked or asks to set to INACTIVO */}
+              <DialogContent className={
+                notificationMessage && (
+                  notificationMessage.includes("No es posible eliminar el remolque") ||
+                  notificationMessage.includes("Para eliminar este remolque") ||
+                  notificationMessage.includes("INACTIVO")
+                )
+                  ? "max-w-md bg-red-50 border border-red-200"
+                  : "max-w-sm"
+              }>
+                <DialogHeader>
+                  {(notificationMessage && (
+                    notificationMessage.includes("No es posible eliminar el remolque") ||
+                    notificationMessage.includes("Para eliminar este remolque") ||
+                    notificationMessage.includes("INACTIVO")
+                  )) ? (
+                    <div className="flex items-center space-x-2">
+                      <AlertTriangle className="h-5 w-5 text-red-600" />
+                      <DialogTitle>Aviso</DialogTitle>
+                    </div>
+                  ) : (
+                    <DialogTitle>Notificación</DialogTitle>
+                  )}
+                  <DialogDescription className={
+                    notificationMessage && (
+                      notificationMessage.includes("No es posible eliminar el remolque") ||
+                      notificationMessage.includes("Para eliminar este remolque") ||
+                      notificationMessage.includes("INACTIVO")
+                    )
+                      ? "text-red-700"
+                      : undefined
+                  }>
+                    {notificationMessage}
+                  </DialogDescription>
+                  {notificationFolios && notificationFolios.length > 0 && (
+                    <div className="mt-3">
+                      <p className="text-sm font-medium text-gray-700">Embarques asociados:</p>
+                      <ul className="mt-2 list-disc list-inside text-sm text-gray-700 space-y-1">
+                        {notificationFolios.map((f, idx) => (
+                          <li key={idx} className="break-all">{f}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </DialogHeader>
+                <div className="flex justify-end mt-4">
+                  <Button onClick={()=>setNotificationOpen(false)} className={
+                    notificationMessage && (
+                      notificationMessage.includes("No es posible eliminar el remolque") ||
+                      notificationMessage.includes("Para eliminar este remolque") ||
+                      notificationMessage.includes("INACTIVO")
+                    )
+                      ? "bg-red-600 hover:bg-red-700 text-white"
+                      : undefined
+                  }>
+                    Aceptar
+                  </Button>
+                </div>
+              </DialogContent>
+            </Dialog>
+            <Dialog open={showForm} onOpenChange={(open)=>{
+              setShowForm(open);
+              if(!open && remolqueDetalle){
+                const actualizado = remolques.find(r=>r.id===remolqueDetalle.id);
+                if(actualizado) setRemolqueDetalle(actualizado);
+              }
+            }}>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => descargarReporteRemolques()}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 mr-2"
+                    fill="none"
+                    viewBox="0 0 24 24"
+                    stroke="currentColor"
+                  >
+                    <path
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth={2}
+                      d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+                    />
+                  </svg>
+                  Descargar Reporte
+                </Button>
+                <DialogTrigger asChild>
+                  <Button
+                    onClick={() => limpiarFormulario()}
+                    className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Nuevo Remolque
+                  </Button>
+                </DialogTrigger>
+              </div>
+              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingRemolque ? "Modificar Remolque" : "Nuevo Remolque"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Completa la información del remolque
+                  </DialogDescription>
+                </DialogHeader>
+                
+
+                <Tabs defaultValue="general" className="w-full">
+                  <TabsList className={`grid w-full ${editingRemolque ? "grid-cols-5" : "grid-cols-4"}`}>
+                    <TabsTrigger value="general">
+                      Información General
+                    </TabsTrigger>
+                    <TabsTrigger value="info-tecnica">Info Técnica</TabsTrigger>
+                    <TabsTrigger value="seguros">Inspecciones & Seguros</TabsTrigger>
+                    {editingRemolque && (
+                      <TabsTrigger value="mantenimiento">Mantenimiento</TabsTrigger>
+                    )}
+                    <TabsTrigger value="comentarios">Comentarios</TabsTrigger>
+                  </TabsList>
+
+                  <TabsContent value="general">
+                    <div className="py-4">
+                      <h3 className="text-lg font-medium mb-4">
+                        Información Básica
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <div className="space-y-2">
+                          <Label htmlFor="numeroEconomico">
+                            Número Económico *
+                          </Label>
+                          <Input
+                            id="numeroEconomico"
+                            value={formData.numeroEconomico}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                numeroEconomico: e.target.value,
+                              })
+                            }
+                            placeholder="Ej: R001"
+                          />
+                        </div>
+                        <div className="space-y-2">
+                          <Label htmlFor="tipo">Tipo de Remolque</Label>
+                          <Select
+                            value={formData.tipo}
+                            onValueChange={(value) =>
+                              setFormData({ ...formData, tipo: value })
+                            }
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Seleccionar tipo" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="caja-seca">
+                                Caja Seca
+                              </SelectItem>
+... (backup truncated for brevity)

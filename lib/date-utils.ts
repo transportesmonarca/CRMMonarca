@@ -1,0 +1,50 @@
+export function formatDateMatamoros(fecha: string | Date | null | undefined): string {
+  if (!fecha) return "";
+
+  // Si viene como string tipo "2025-09-10", no lo convertimos a Date
+  if (typeof fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
+    const [year, month, day] = fecha.split("-");
+    return `${day}/${month}/${year}`;
+  }
+
+  try {
+    // Si viene como ISO o Date, ajustamos la zona horaria
+    const d = new Date(fecha as any);
+    d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
+
+    return d.toLocaleDateString("es-MX", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch (e) {
+    console.error("Error formateando fecha:", fecha, e);
+    return String(fecha);
+  }
+}
+
+export function normalizeDate(v?: string | null) {
+  if (!v) return null;
+  // If already YYYY-MM-DD, return as-is
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  // If value is an ISO timestamp that is exactly midnight (with or without Z)
+  // treat it as a date-only value to avoid timezone shifts when parsing.
+  // Examples matched: 2025-09-10T00:00:00, 2025-09-10T00:00:00.000, 2025-09-10T00:00:00Z
+  // Match ISO timestamps that are exactly midnight in local timestamp (with optional fractional seconds
+  // and optional timezone designator like Z or +00:00 or -0600). Treat these as date-only to avoid TZ shifts.
+  if (/^\d{4}-\d{2}-\d{2}[T ]00:00:00(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/.test(v)) {
+    return v.slice(0, 10);
+  }
+  try {
+    const dt = new Date(v);
+    if (isNaN(+dt)) return null;
+    // convert to America/Matamoros local date (YYYY-MM-DD)
+    const iso = dt.toLocaleDateString('en-CA', { timeZone: 'America/Matamoros' });
+    return iso;
+  } catch (e) {
+    return null;
+  }
+}
+
+export const todayLocalISODate = () =>
+  new Date().toLocaleDateString('en-CA', { timeZone: 'America/Matamoros' });

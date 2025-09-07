@@ -57,6 +57,7 @@ import {
   type FotoEmbarque,
 } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
+import { formatDateMatamoros, normalizeDate } from '@/lib/date-utils';
 import {
   Select,
   SelectContent,
@@ -164,6 +165,7 @@ const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
   const [modificaciones, setModificaciones] = useState<any[]>([]);
   const [loadingMods, setLoadingMods] = useState(true);
   const mounted = useRef(true);
+  
 
   useEffect(() => {
     mounted.current = true;
@@ -507,6 +509,67 @@ export default function FacturacionCobranzaPage() {
   // Helper: mostrar nombre legible de la moneda en la UI
   const monedaNombre = (code?: string) => (code === "USD" ? "Dólares Americanos" : "Pesos Mexicanos");
 
+  // Estado para límites de crédito por cliente (usd/mxn) y estado UI por fila (candado, valores como strings)
+  const [creditLimits, setCreditLimits] = useState<Record<string, { usd: number; mxn: number }>>({});
+  const [creditRowState, setCreditRowState] = useState<Record<string, { locked?: boolean; usd?: string; mxn?: string }>>({});
+
+  // Guardar ambos límites (USD + MXN) en una sola operación (upsert-like) y actualizar cache local
+  const saveCreditLimits = async (clienteId: string, usd: number, mxn: number) => {
+    const currentLimits = creditLimits[clienteId] || { usd: 0, mxn: 0 };
+    const newLimits = {
+      ...creditLimits,
+      [clienteId]: {
+        ...currentLimits,
+        usd: Number(usd) || 0,
+        mxn: Number(mxn) || 0,
+      },
+    };
+    if (mounted.current) setCreditLimits(newLimits);
+    try {
+      localStorage.setItem("creditLimits", JSON.stringify(newLimits));
+    } catch (e) {
+      // ignore localStorage errors in private mode
+    }
+
+    try {
+      const { data: existingRecord, error: selectError } = await supabase
+        .from("creditos_clientes")
+        .select("id")
+        .eq("cliente_id", clienteId)
+        .single();
+
+      if (selectError && (selectError as any)?.code !== "PGRST116") {
+        console.error("Error checking existing credit limit:", selectError);
+      }
+
+      if (existingRecord) {
+        const { error: updateError } = await supabase
+          .from("creditos_clientes")
+          .update({
+            limite_credito_usd: newLimits[clienteId].usd,
+            limite_credito_mxn: newLimits[clienteId].mxn,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("cliente_id", clienteId);
+
+        if (updateError) console.error("Error updating credit limits:", updateError);
+      } else {
+        const { error: insertError } = await supabase
+          .from("creditos_clientes")
+          .insert({
+            cliente_id: clienteId,
+            limite_credito_usd: newLimits[clienteId].usd,
+            limite_credito_mxn: newLimits[clienteId].mxn,
+            activo: true,
+          });
+
+        if (insertError) console.error("Error inserting credit limits:", insertError);
+      }
+    } catch (error) {
+      console.error("Error saving credit limits to database:", error);
+    }
+  };
+
   // Detectar si un embarque fue cancelado por otras áreas (Asignación / creación)
   const esCancelado = (emb: any) => {
     if (!emb) return false;
@@ -617,6 +680,8 @@ export default function FacturacionCobranzaPage() {
   }>({});
   const [loadingAnalisis, setLoadingAnalisis] = useState(false);
   const [analisisError, setAnalisisError] = useState<string | null>(null);
+
+  
 
   // Operadores únicos basados en el resultado del análisis (incluye original y reemplazo)
   const operadoresUnicosAnalisis = useMemo(() => {
@@ -1454,9 +1519,6 @@ export default function FacturacionCobranzaPage() {
         .sort((a, b) => a.nombre.localeCompare(b.nombre, "es", { sensitivity: "base" })),
     [clientes]
   );
-  const [creditLimits, setCreditLimits] = useState<{
-    [key: string]: { usd: number; mxn: number };
-  }>({});
   const [creditClientSearchTerm, setCreditClientSearchTerm] = useState("");
   const [currentPageCredit, setCurrentPageCredit] = useState(1);
   const [itemsPerPageCredit, setItemsPerPageCredit] = useState(10);
@@ -1617,7 +1679,7 @@ export default function FacturacionCobranzaPage() {
   push("Valor Facturado", `${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${anyDet.moneda_flete || "MXN"}`);
     push("Estado Facturación", anyDet.estado_facturacion || "pendiente_facturacion");
     push("Pagado", anyDet.pagado ? "Sí" : "No");
-    push("Fecha Pago", anyDet.fecha_pago ? new Date(anyDet.fecha_pago).toLocaleDateString() : "");
+  push("Fecha Pago", anyDet.fecha_pago ? formatDateMatamoros(normalizeDate(anyDet.fecha_pago) || anyDet.fecha_pago) : "");
     push("Observaciones", anyDet.observacionesFacturacion || anyDet.observaciones_facturacion || "");
 
     // QuickPaid (incluye divisa)
@@ -1643,8 +1705,8 @@ export default function FacturacionCobranzaPage() {
       const n = idx + 1;
       push(`Factura ${n} - Folio`, f.folio);
       push(`Factura ${n} - Referencia`, f.ref);
-      push(`Factura ${n} - Fecha envío`, f.envio ? new Date(f.envio).toLocaleDateString() : "");
-      push(`Factura ${n} - Fecha pago`, f.pago ? new Date(f.pago).toLocaleDateString() : "");
+  push(`Factura ${n} - Fecha envío`, f.envio ? formatDateMatamoros(normalizeDate(f.envio) || f.envio) : "");
+  push(`Factura ${n} - Fecha pago`, f.pago ? formatDateMatamoros(normalizeDate(f.pago) || f.pago) : "");
     });
 
     // Cliente
@@ -1661,8 +1723,8 @@ export default function FacturacionCobranzaPage() {
     // Entrega
     push("Lugar de Recolecta", anyDet.direccion_recolecta || anyDet.direccionRecolecta || "");
     push("Lugar de Entrega", anyDet.direccion_entrega || anyDet.direccionEnganche || "");
-    push("Fecha/Hora Recolecta", `${anyDet.fecha_recolecta || ""} ${anyDet.hora_recolecta || ""}`.trim());
-    push("Fecha/Hora Entrega", `${anyDet.fecha_entrega || anyDet.fechaEntrega || ""} ${anyDet.hora_entrega || ""}`.trim());
+  push("Fecha/Hora Recolecta", `${anyDet.fecha_recolecta ? formatDateMatamoros(normalizeDate(anyDet.fecha_recolecta) || anyDet.fecha_recolecta) : anyDet.fecha_recolecta || ""} ${anyDet.hora_recolecta || ""}`.trim());
+  push("Fecha/Hora Entrega", `${anyDet.fecha_entrega ? formatDateMatamoros(normalizeDate(anyDet.fecha_entrega) || anyDet.fecha_entrega) : (anyDet.fechaEntrega || "")} ${anyDet.hora_entrega || ""}`.trim());
 
     // CSV
     const header = ["Campo", "Valor"]; 
@@ -1719,6 +1781,10 @@ export default function FacturacionCobranzaPage() {
         (data || []).forEach((e: any) => {
           const inFacturacion = e && e.estado_facturacion != null;
           const isFinalizado = String(e?.estado || "").toLowerCase().includes("finalizado");
+          // Excluir embarques cancelados para que, si se cancelan en Asignación, se resten de los totales
+          if (esCancelado(e)) {
+            return; // omitimos embarques cancelados
+          }
           if (!inFacturacion && !isFinalizado) return; // saltar registros no relevantes
 
           includedCount++;
@@ -5867,6 +5933,9 @@ export default function FacturacionCobranzaPage() {
                             Adeudado MXN
                           </th>
                           <th className="px-4 py-2 text-left font-semibold text-gray-700">
+                            Acciones
+                          </th>
+                          <th className="px-4 py-2 text-left font-semibold text-gray-700">
                             Estado Crédito
                           </th>
                         </tr>
@@ -5874,6 +5943,7 @@ export default function FacturacionCobranzaPage() {
                       <tbody>
                         {paginatedClientsCredit.map((cliente) => {
                           if (!cliente) return null;
+                          const rowState = creditRowState[cliente.id] || { locked: true, usd: String(creditLimits[cliente.id]?.usd || 0), mxn: String(creditLimits[cliente.id]?.mxn || 0) };
 
                           const clienteEmbarquesUSD = embarquesFiltrados.filter(
                             (e) =>
@@ -5907,29 +5977,18 @@ export default function FacturacionCobranzaPage() {
                               }`}
                             >
                               <td className="px-4 py-1 font-medium text-gray-800">
-                                <div className="flex items-center gap-2">
-                                  <span>{cliente.nombre}</span>
-                                  {(excedeUSD || excedeMXN) && (
-                                    <Badge className="bg-orange-100 text-orange-800 border-orange-300 text-[10px] py-0 px-1">Excedido</Badge>
-                                  )}
-                                </div>
+                                <span>{cliente.nombre}</span>
                               </td>
                               {/* Corrected field name */}
                               <td className="px-4 py-1">
-                                <Input
-                                  type="number"
-                                  value={limiteUSD}
-                                  onChange={(e) => {
-                                    const limite = Number(e.target.value);
-                                    if (!isNaN(limite)) {
-                                      saveCreditLimit(
-                                        cliente.id,
-                                        "usd",
-                                        limite
-                                      );
-                                    }
-                                  }}
-                                  className="w-24 text-right text-xs"
+                                {/* USD limit input always present to avoid column shift; simple text input (no spinners) */}
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  value={rowState.usd ?? String(limiteUSD)}
+                                  onChange={(e) => setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), usd: e.target.value } }))}
+                                  readOnly={rowState.locked}
+                                  className={rowState.locked ? "w-28 text-right text-sm px-2 py-1.5 bg-gray-50 border border-gray-200 text-gray-500 rounded" : "w-28 text-right text-sm border rounded px-2 py-1.5 bg-white"}
                                 />
                               </td>
                               <td className="px-4 py-1">
@@ -5942,21 +6001,16 @@ export default function FacturacionCobranzaPage() {
                                 </span>
                               </td>
                               <td className="px-4 py-1">
-                                <Input
-                                  type="number"
-                                  value={limiteMXN}
-                                  onChange={(e) => {
-                                    const limite = Number(e.target.value);
-                                    if (!isNaN(limite)) {
-                                      saveCreditLimit(
-                                        cliente.id,
-                                        "mxn",
-                                        limite
-                                      );
-                                    }
-                                  }}
-                                  className="w-24 text-right text-xs"
-                                />
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={rowState.mxn ?? String(limiteMXN)}
+                                    onChange={(e) => setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), mxn: e.target.value } }))}
+                                    readOnly={rowState.locked}
+                                    className={rowState.locked ? "w-28 text-right text-sm px-2 py-1.5 bg-gray-50 border border-gray-200 text-gray-500 rounded" : "w-28 text-right text-sm border rounded px-2 py-1.5 bg-white"}
+                                  />
+                                </div>
                               </td>
                               <td className="px-4 py-1">
                                 <span
@@ -5966,6 +6020,46 @@ export default function FacturacionCobranzaPage() {
                                 >
                                   ${totalPendienteMXN.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                 </span>
+                              </td>
+                              {/* Actions column: lock + guardar placed between Adeudado MXN and Estado Crédito */}
+                              <td className="px-4 py-1">
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={() => setCreditRowState(prev => {
+                                      const existing = prev[cliente.id];
+                                      const usdDefault = String(limiteUSD);
+                                      const mxnDefault = String(limiteMXN);
+                                      return {
+                                        ...prev,
+                                        [cliente.id]: {
+                                          ...(existing || { usd: usdDefault, mxn: mxnDefault }),
+                                          locked: !((existing || { locked: true }).locked),
+                                        },
+                                      };
+                                    })}
+                                    title={rowState.locked ? "Desbloquear fila" : "Bloquear fila"}
+                                  >
+                                    {rowState.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="bg-green-600 hover:bg-green-700 text-white"
+                                    onClick={async () => {
+                                      const vUSD = Number((creditRowState[cliente.id]?.usd) || limiteUSD) || 0;
+                                      const vMXN = Number((creditRowState[cliente.id]?.mxn) || limiteMXN) || 0;
+                                      try {
+                                        await saveCreditLimits(cliente.id, vUSD, vMXN);
+                                        setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), usd: String(vUSD), mxn: String(vMXN), locked: true } }));
+                                        toast({ title: 'Límite de Crédito Capturado Correctamente', variant: 'success' });
+                                      } catch (e) {
+                                        console.error('Error guardando créditos fila', e);
+                                        toast({ title: 'Error al guardar crédito', variant: 'destructive' });
+                                      }
+                                    }}
+                                  >Guardar</Button>
+                                </div>
                               </td>
                               <td className="px-4 py-1">
                                 {excedeUSD || excedeMXN ? (
@@ -7567,7 +7661,7 @@ export default function FacturacionCobranzaPage() {
         </Dialog>
 
         <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-          <DialogContent className={`max-w-7xl w-full ${activeDetailTab === "modificaciones" ? "h-[70vh]" : "h-[50vh]"} overflow-hidden flex flex-col`}>
+  <DialogContent className={`max-w-7xl w-full ${activeDetailTab === "modificaciones" ? "h-[70vh]" : activeDetailTab === "transportacion" ? "h-[45vh]" : activeDetailTab === "facturacion" ? "h-[65vh]" : "h-[50vh]"} overflow-hidden flex flex-col`}>
             <DialogHeader>
               <DialogTitle>
                 Detalles del Embarque - {embarqueDetalle?.folio}
@@ -7781,7 +7875,7 @@ export default function FacturacionCobranzaPage() {
                   )}
 
                   {activeDetailTab === "facturacion" && (
-                    <div className="space-y-6">
+                    <div className="space-y-6 flex-1 overflow-y-auto px-1 md:px-4 py-2">
                       <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Información de Facturación</h3>
                       {/* Resumen compacto en una fila + botón editar alineado */}
                           <div className="flex flex-col md:flex-row md:items-center md:gap-6 text-sm">
@@ -7842,14 +7936,14 @@ export default function FacturacionCobranzaPage() {
                             </Select>
                           </div>
                         </div>
-                        <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-1">
+                          <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-1">
                           <span className="text-gray-500">Pago</span>
                           <span className="flex items-center gap-2">
                             <Badge variant={embarqueDetalle.pagado ? "default" : "secondary"}>
                               {embarqueDetalle.pagado ? "Pagado" : "Pendiente"}
                             </Badge>
                             <span className="text-xs text-gray-600">
-                              {embarqueDetalle.fecha_pago ? new Date(embarqueDetalle.fecha_pago).toLocaleDateString() : "Sin fecha"}
+                              {embarqueDetalle.fecha_pago ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_pago) || (embarqueDetalle as any).fecha_pago) : "Sin fecha"}
                             </span>
                           </span>
                         </div>
@@ -7894,6 +7988,7 @@ export default function FacturacionCobranzaPage() {
                                   return {
                                     n: i,
                                     folio:
+                                      (anyDet.foliosFactura && anyDet.foliosFactura[`folio${i}`]) ||
                                       anyDet[`folio_factura_${i}`] ||
                                       anyDet[`numero_factura_${i}`] ||
                                       (i === 1 ? anyDet["numero_factura_1"] : undefined),
@@ -7913,8 +8008,8 @@ export default function FacturacionCobranzaPage() {
                                     <td className="px-2 py-1">Factura {row.n}</td>
                                     <td className="px-2 py-1">{row.folio || "-"}</td>
                                     <td className="px-2 py-1">{row.ref || "-"}</td>
-                                    <td className="px-2 py-1">{row.envio ? new Date(row.envio).toLocaleDateString() : "-"}</td>
-                                    <td className="px-2 py-1">{row.pago ? new Date(row.pago).toLocaleDateString() : "-"}</td>
+                                    <td className="px-2 py-1">{row.envio ? formatDateMatamoros(normalizeDate(row.envio) || row.envio) : "-"}</td>
+                                    <td className="px-2 py-1">{row.pago ? formatDateMatamoros(normalizeDate(row.pago) || row.pago) : "-"}</td>
                                   </tr>
                                 ));
                               })()}
@@ -8000,7 +8095,7 @@ export default function FacturacionCobranzaPage() {
                             <div className="grid grid-cols-2 gap-4 mt-3">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_recolecta || "Sin fecha"}</p>
+                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_recolecta ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : "Sin fecha"}</p>
                               </div>
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Hora</label>
@@ -8018,7 +8113,7 @@ export default function FacturacionCobranzaPage() {
                             <div className="grid grid-cols-2 gap-4 mt-3">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_entrega || (embarqueDetalle as any).fechaEntrega || "Sin fecha"}</p>
+                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_entrega ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : ((embarqueDetalle as any).fechaEntrega || "Sin fecha")}</p>
                               </div>
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Hora</label>

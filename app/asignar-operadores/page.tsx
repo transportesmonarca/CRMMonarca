@@ -59,6 +59,7 @@ import {
   type ContactoCliente,
   type TipoServicio,
 } from "@/lib/supabase";
+import { normalizeDate, formatDateMatamoros } from "@/lib/date-utils";
 import { getAlertThresholds, calcularNivelAlerta } from "@/lib/alert-thresholds";
 import { agregarAuditLog } from "@/lib/audit";
 import { getCurrentUser } from "@/lib/auth";
@@ -159,6 +160,22 @@ export default function AsignarOperadoresPage() {
     });
     return ordenados[0]?.id || null;
   }, [embarquesFinalizados]);
+
+  // Ensure embarqueDetalle dates are normalized when opened/changed so modal shows correct local dates
+  useEffect(() => {
+    if (!embarqueDetalle) return;
+    try {
+      const fr = normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta;
+      const fe = normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega;
+      // Debugging: log raw vs normalized when different
+      if ((fr !== embarqueDetalle.fecha_recolecta) || (fe !== embarqueDetalle.fecha_entrega)) {
+        try { console.debug('normalizeDates: before', { raw_fr: embarqueDetalle.fecha_recolecta, raw_fe: embarqueDetalle.fecha_entrega, normalized_fr: fr, normalized_fe: fe }); } catch(e){}
+        setEmbarqueDetalle((prev) => (prev ? { ...prev, fecha_recolecta: fr, fecha_entrega: fe } : prev));
+      }
+    } catch (e) {
+      // no-op
+    }
+  }, [embarqueDetalle]);
 
   // Regla de 1 año para activar el botón Eliminar en registros archivados
   const puedeEliminarCompletado = (e: Embarque) => {
@@ -1308,7 +1325,7 @@ export default function AsignarOperadoresPage() {
         moneda_flete: embarque.moneda_flete || "MXN",
         fechaEntrega: "",
         observacionesFacturacion: "",
-        observacionesFinalizacion: `Embarque finalizado el ${new Date().toLocaleDateString()}`,
+  observacionesFinalizacion: `Embarque finalizado el ${formatDateMatamoros(new Date().toISOString())}`,
         pagado: false,
         fechaPago: "",
         modificado: embarque.modificado || false,
@@ -1351,9 +1368,9 @@ export default function AsignarOperadoresPage() {
         cargarDatos(),
         cargarEmbarquesFinalizados(),
       ]);
-    } catch (error) {
-      console.error("Error:", error);
-      alert("Error al finalizar embarque");
+    } catch (err) {
+      console.error("Error finalizando embarque:", err);
+      toast({ title: "Error al finalizar embarque", description: (err as any)?.message || "Error inesperado", variant: "destructive" });
     } finally {
       setSaving(false);
       setEmbarqueAFinalizar(null);
@@ -1554,7 +1571,7 @@ export default function AsignarOperadoresPage() {
       <div style="display:flex; justify-content:center; gap:18px; font-size:13px;">
         <div><strong>Folio:</strong> ${embarqueDetalle.folio}</div>
         <div><strong>Estado:</strong> ${embarqueDetalle.estado}</div>
-        <div><strong>Fecha:</strong> ${new Date().toLocaleDateString()}</div>
+  <div><strong>Fecha:</strong> ${formatDateMatamoros(new Date().toISOString())}</div>
       </div>
     </div>
     
@@ -1597,9 +1614,7 @@ export default function AsignarOperadoresPage() {
         </div>
         <div class="field">
           <div class="field-label">Fecha de Creación</div>
-          <div class="field-value">${new Date(
-            embarqueDetalle.fecha_creacion
-          ).toLocaleDateString()}</div>
+          <div class="field-value">${formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_creacion) || embarqueDetalle.fecha_creacion)}</div>
         </div>
         <div class="field">
           <div class="field-label">Contenido</div>
@@ -1631,7 +1646,7 @@ export default function AsignarOperadoresPage() {
           <div class="field-label">Fecha de Recolecta</div>
           <div class="field-value">${
             embarqueDetalle.fecha_recolecta
-              ? new Date(embarqueDetalle.fecha_recolecta).toLocaleDateString()
+              ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta)
               : "No especificada"
           }</div>
         </div>
@@ -1655,7 +1670,7 @@ export default function AsignarOperadoresPage() {
           <div class="field-label">Fecha de Entrega</div>
           <div class="field-value">${
             embarqueDetalle.fecha_entrega
-              ? new Date(embarqueDetalle.fecha_entrega).toLocaleDateString()
+              ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega)
               : "No especificada"
           }</div>
         </div>
@@ -1752,7 +1767,7 @@ export default function AsignarOperadoresPage() {
     </div>
 
     <div style="margin-top:10px; font-weight:700;">
-      Firma de autorizado: ________________________________ &nbsp;&nbsp; Fecha: ${new Date().toLocaleDateString()}
+      Firma de autorizado: ________________________________ &nbsp;&nbsp; Fecha: ${formatDateMatamoros(new Date().toISOString())}
     </div>
   </body>
 </html>
@@ -1805,18 +1820,18 @@ export default function AsignarOperadoresPage() {
       embarqueDetalle.cliente?.contacto_principal || "",
       embarqueDetalle.cliente?.telefono || "",
       embarqueDetalle.cliente?.email || "",
-      new Date(embarqueDetalle.fecha_creacion).toLocaleDateString(),
+  formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_creacion) || embarqueDetalle.fecha_creacion),
       embarqueDetalle.carta_porte || "",
       embarqueDetalle.contenido || "",
       embarqueDetalle.peso || "",
       embarqueDetalle.direccion_recolecta || embarqueDetalle.origen || "",
       embarqueDetalle.fecha_recolecta
-        ? new Date(embarqueDetalle.fecha_recolecta).toLocaleDateString()
+        ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta)
         : "",
       embarqueDetalle.hora_recolecta || "",
       embarqueDetalle.direccion_entrega || embarqueDetalle.destino || "",
       embarqueDetalle.fecha_entrega
-        ? new Date(embarqueDetalle.fecha_entrega).toLocaleDateString()
+        ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega)
         : "",
       embarqueDetalle.hora_entrega || "",
       embarqueDetalle.operador
@@ -1889,9 +1904,9 @@ export default function AsignarOperadoresPage() {
       embarque.remolque?.placas || embarque.remolque_placa || "",
       embarque.direccion_recolecta || embarque.origen || "",
       embarque.direccion_entrega || embarque.destino || "",
-      new Date(embarque.fecha_creacion).toLocaleDateString(),
+      formatDateMatamoros(normalizeDate(embarque.fecha_creacion) || embarque.fecha_creacion),
       embarque.fecha_finalizacion
-        ? new Date(embarque.fecha_finalizacion).toLocaleDateString()
+        ? formatDateMatamoros(normalizeDate(embarque.fecha_finalizacion) || embarque.fecha_finalizacion)
         : "",
       embarque.precio_flete || "",
       embarque.moneda_flete || "",
@@ -1985,7 +2000,7 @@ export default function AsignarOperadoresPage() {
                 </span>
               </div>
               <span className="text-xs text-gray-500">
-                {new Date(mod.fecha_modificacion).toLocaleString()}
+                {new Date(mod.fecha_modificacion).toLocaleString("es-MX", { timeZone: "America/Matamoros" })}
               </span>
             </div>
 
@@ -2264,11 +2279,20 @@ export default function AsignarOperadoresPage() {
                   <div className="flex items-center space-x-2">
                     {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1">
-                      <Button
+                        <Button
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                          setEmbarqueDetalle(embarque);
+                          // Normalize date-only or midnight timestamps to avoid TZ shifts
+                          const normalized = {
+                            ...embarque,
+                            fecha_recolecta: normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta,
+                            fecha_entrega: normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega,
+                          } as typeof embarque;
+                          try { if ((embarque.folio || "").toString().toUpperCase().includes("2509-015") || (embarque.folio || "").toString().toUpperCase().includes("TIM 2509 015") || (embarque.folio || "").toString().toUpperCase().includes("TIM-2509-015")) {
+                            console.debug('openDetails: folio match', { raw: embarque, normalized });
+                          } } catch(e) {}
+                          setEmbarqueDetalle(normalized);
                           setActiveTab("general");
                           setSelectedImage(null);
                           setShowDetailsModal(true);
@@ -2519,7 +2543,7 @@ export default function AsignarOperadoresPage() {
                             </p>
                             <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
                               <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
-                                {embarque.fecha_recolecta ? new Date(embarque.fecha_recolecta).toLocaleDateString() : "Sin fecha"}
+                                {embarque.fecha_recolecta ? formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta) : "Sin fecha"}
                               </span>
                               <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.hora_recolecta || "Sin hora"}
@@ -2533,7 +2557,7 @@ export default function AsignarOperadoresPage() {
                             </p>
                             <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
                               <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
-                                {embarque.fecha_entrega ? new Date(embarque.fecha_entrega).toLocaleDateString() : "Sin fecha"}
+                                {embarque.fecha_entrega ? formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega) : "Sin fecha"}
                               </span>
                               <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.hora_entrega || "Sin hora"}
@@ -2588,33 +2612,47 @@ export default function AsignarOperadoresPage() {
 
                           <div className="border rounded-lg p-3 bg-white/60">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Resumen Financiero</label>
-                            <div className="mt-2 space-y-1">
-                              <div>
-                                <span className="text-xs text-gray-500">Precio Flete</span>
-                                <p className="text-sm font-semibold text-green-600">
-                                  {embarque.precio_flete
-                                    ? `$${(Number(embarque.precio_flete) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${embarque.moneda_flete || "MXN"}`
-                                    : "Sin definir"}
-                                </p>
-                              </div>
-                              {typeof embarque.quickpaid_descuento === "number" && embarque.quickpaid_descuento > 0 && (
-                                <div>
-                                  <span className="text-xs text-gray-500">Descuento QuickPaid</span>
-                                  <p className="text-sm font-semibold text-yellow-700">-$
-                                    {(embarque.quickpaid_descuento ?? 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {embarque.moneda_flete || "MXN"}
-                                  </p>
-                                </div>
-                              )}
-                              <div>
-                                <span className="text-xs text-gray-500">Precio Final</span>
-                                <p className="text-sm font-semibold text-gray-900">$
-                                  {(
-                                    typeof embarque.precio_quickpaid === "number" && embarque.precio_quickpaid > 0
-                                      ? embarque.precio_quickpaid
-                                      : embarque.precio_flete || 0
-                                  ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {embarque.moneda_flete || "MXN"}
-                                </p>
-                              </div>
+                            <div className="mt-2">
+                              {(() => {
+                                const precioFleteVal = Number(embarque.precio_flete) || 0;
+                                const moneda = embarque.moneda_flete || "MXN";
+                                const descuentoAmt = typeof embarque.quickpaid_descuento === 'number' ? Number(embarque.quickpaid_descuento) : 0;
+                                // prefer explicit percent field, fallback to computed percent if possible
+                                let percent = typeof embarque.quickpaid_percent === 'number' && embarque.quickpaid_percent > 0
+                                  ? embarque.quickpaid_percent
+                                  : (descuentoAmt > 0 && precioFleteVal > 0 ? descuentoAmt / precioFleteVal : 0);
+                                const hasQuick = precioFleteVal > 0 && (descuentoAmt > 0 || (typeof embarque.precio_quickpaid === 'number' && embarque.precio_quickpaid > 0));
+                                const precioQuickDisplayed = (typeof embarque.precio_quickpaid === 'number' && embarque.precio_quickpaid > 0) ? embarque.precio_quickpaid : precioFleteVal;
+                                return (
+                                  <div className="flex items-center flex-wrap gap-6">
+                                    <div>
+                                      <span className="text-xs text-gray-500">Precio Flete</span>
+                                      <p className="text-sm font-semibold text-green-600">{precioFleteVal > 0 ? `$${precioFleteVal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${moneda}` : 'Sin definir'}</p>
+                                    </div>
+
+                                    {percent > 0 && (
+                                      <div>
+                                        <span className="text-xs text-gray-500">% Descuento</span>
+                                        <p className="text-sm font-semibold text-yellow-700">{(percent * 100).toLocaleString('es-MX', { maximumFractionDigits: 2 })}%</p>
+                                      </div>
+                                    )}
+
+                                    {descuentoAmt > 0 && (
+                                      <div>
+                                        <span className="text-xs text-gray-500">Monto Descuento</span>
+                                        <p className="text-sm font-semibold text-yellow-700">-${descuentoAmt.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</p>
+                                      </div>
+                                    )}
+
+                                    {hasQuick && (
+                                      <div>
+                                        <span className="text-xs text-gray-500">Precio QuickPaid</span>
+                                        <p className="text-sm font-semibold text-gray-900">${precioQuickDisplayed.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</p>
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -2673,68 +2711,48 @@ export default function AsignarOperadoresPage() {
                       </div>
                       {/* Carta Porte oculto en esta sección (eliminado el bloque para compactar la fila) */}
 
-                      <div className="space-y-1 md:col-span-2 lg:col-span-3">
-                        <div className="flex items-start gap-6 flex-nowrap">
-                          {/* Bloque Precio Flete */}
-                          <div>
-                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                              Precio Flete
-                            </label>
-                            <p className="text-sm font-semibold text-green-600">
-                              {embarque.precio_flete
-                                ? `$${(Number(embarque.precio_flete) || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${embarque.moneda_flete || 'MXN'}`
-                                : 'Sin definir'}
-                            </p>
-                            {embarque.precio_flete && embarque.moneda_flete && (
-                              <p className="text-xs text-gray-500">
-                                {embarque.moneda_flete === 'USD' ? 'Dólares Americanos' : 'Pesos Mexicanos'}
-                              </p>
-                            )}
-                          </div>
+                          <div className="space-y-1 md:col-span-2 lg:col-span-3">
+                        <div className="flex items-center gap-6 flex-wrap">
+                          {(() => {
+                            const precioFleteVal = Number(embarque.precio_flete) || 0;
+                            const moneda = embarque.moneda_flete || 'MXN';
+                            const descuentoAmt = typeof embarque.quickpaid_descuento === 'number' ? Number(embarque.quickpaid_descuento) : 0;
+                            const percent = descuentoAmt > 0 && precioFleteVal > 0 ? descuentoAmt / precioFleteVal : (typeof embarque.quickpaid_percent === 'number' ? embarque.quickpaid_percent : 0);
+                            const precioQuickDisplayed = (typeof embarque.precio_quickpaid === 'number' && embarque.precio_quickpaid > 0) ? embarque.precio_quickpaid : precioFleteVal;
+                            const hasQuick = precioFleteVal > 0 && (descuentoAmt > 0 || (typeof embarque.precio_quickpaid === 'number' && embarque.precio_quickpaid > 0));
+                            return (
+                              <>
+                                <div>
+                                  <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Precio Flete</label>
+                                  <p className="text-sm font-semibold text-green-600">{precioFleteVal > 0 ? `$${precioFleteVal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${moneda}` : 'Sin definir'}</p>
+                                  {precioFleteVal > 0 && (
+                                    <p className="text-xs text-gray-500">{moneda === 'USD' ? 'Dólares Americanos' : 'Pesos Mexicanos'}</p>
+                                  )}
+                                </div>
 
-                          {/* Bloque Descuento QuickPaid */}
-                          {typeof embarque.quickpaid_descuento === 'number' && embarque.quickpaid_descuento > 0 && (
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                Descuento QuickPaid
-                              </label>
-                              <p className="text-sm font-semibold text-yellow-700">
-                                -$
-                                {(embarque.quickpaid_descuento ?? 0).toLocaleString('es-MX', {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}{' '}
-                                {embarque.moneda_flete || 'MXN'}
-                              </p>
-                              {embarque.moneda_flete && (
-                                <p className="text-xs text-gray-500">
-                                  {embarque.moneda_flete === 'USD' ? 'Dólares Americanos' : 'Pesos Mexicanos'}
-                                </p>
-                              )}
-                            </div>
-                          )}
+                                {percent > 0 && (
+                                  <div>
+                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">% Descuento</label>
+                                    <p className="text-sm font-semibold text-yellow-700">{(percent * 100).toLocaleString('es-MX', { maximumFractionDigits: 2 })}%</p>
+                                  </div>
+                                )}
 
-                          {/* Bloque Precio QuickPaid */}
-                          {typeof embarque.precio_quickpaid === 'number' && embarque.precio_quickpaid > 0 && (
-                            <div>
-                              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                Precio QuickPaid
-                              </label>
-                              <p className="text-sm font-semibold text-yellow-900">
-                                $
-                                {(embarque.precio_quickpaid ?? 0).toLocaleString('es-MX', {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}{' '}
-                                {embarque.moneda_flete || 'MXN'}
-                              </p>
-                              {embarque.moneda_flete && (
-                                <p className="text-xs text-gray-500">
-                                  {embarque.moneda_flete === 'USD' ? 'Dólares Americanos' : 'Pesos Mexicanos'}
-                                </p>
-                              )}
-                            </div>
-                          )}
+                                {descuentoAmt > 0 && (
+                                  <div>
+                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Monto Descuento</label>
+                                    <p className="text-sm font-semibold text-yellow-700">-${descuentoAmt.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</p>
+                                  </div>
+                                )}
+
+                                {hasQuick && (
+                                  <div>
+                                    <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Precio QuickPaid</label>
+                                    <p className="text-sm font-semibold text-yellow-900">${precioQuickDisplayed.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</p>
+                                  </div>
+                                )}
+                              </>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -2753,9 +2771,7 @@ export default function AsignarOperadoresPage() {
                         <div className="text-xs text-gray-500">
                           Fecha:{" "}
                           {embarque.fecha_recolecta
-                            ? new Date(
-                                embarque.fecha_recolecta
-                              ).toLocaleDateString()
+                            ? formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta)
                             : "No especificada"}
                         </div>
                       </div>
@@ -2772,9 +2788,7 @@ export default function AsignarOperadoresPage() {
                         <div className="text-xs text-gray-500">
                           Fecha:{" "}
                           {embarque.fecha_entrega
-                            ? new Date(
-                                embarque.fecha_entrega
-                              ).toLocaleDateString()
+                            ? formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega)
                             : "No especificada"}
                         </div>
                       </div>
@@ -3257,7 +3271,7 @@ export default function AsignarOperadoresPage() {
       {/* Modal de Detalles con Pestañas */}
       {showDetailsModal && embarqueDetalle && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+          <div className={`bg-white rounded-lg shadow-xl max-w-6xl w-full ${activeTab === 'financiero' || activeTab === 'ubicaciones' ? 'max-h-[99vh]' : 'max-h-[97vh]'} overflow-hidden transition-all duration-300 ease-in-out`}>
             <div className="flex justify-between items-center p-6 border-b">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
@@ -3276,7 +3290,7 @@ export default function AsignarOperadoresPage() {
               </Button>
             </div>
 
-            <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
+            <div className={`overflow-y-auto ${activeTab === 'financiero' || activeTab === 'ubicaciones' ? 'max-h-[calc(99vh-120px)]' : 'max-h-[calc(97vh-120px)]'} transition-all duration-300 ease-in-out`}>
               <div className="p-6">
                 {/* Tab Navigation */}
                 <div className="border-b border-gray-200 mb-6">
@@ -3422,13 +3436,8 @@ export default function AsignarOperadoresPage() {
                               Forma de Facturación
                             </label>
                             <p className="text-sm text-gray-700">
-                              {embarqueDetalle.cliente?.forma_facturacion ===
-                              "pue"
-                                ? "Pago en una sola exhibición (PUE)"
-                                : embarqueDetalle.cliente?.forma_facturacion ===
-                                  "ppd"
-                                ? "Pago en parcialidades o diferido (PPD)"
-                                : "No especificado"}
+                              {embarqueDetalle.cliente?.forma_facturacion ||
+                                "No especificado"}
                             </p>
                           </div>
                         </div>
@@ -3458,12 +3467,10 @@ export default function AsignarOperadoresPage() {
                           </div>
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                              Fecha Creación
+                              Fecha Creacin
                             </label>
                             <p className="text-sm text-gray-700">
-                              {new Date(
-                                embarqueDetalle.fecha_creacion
-                              ).toLocaleDateString()}
+                              {formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_creacion) || embarqueDetalle.fecha_creacion)}
                             </p>
                           </div>
                           <div className="space-y-1">
@@ -3521,9 +3528,7 @@ export default function AsignarOperadoresPage() {
                                 </label>
                                 <p className="text-sm text-gray-700">
                                   {embarqueDetalle.fecha_recolecta
-                                    ? new Date(
-                                        embarqueDetalle.fecha_recolecta
-                                      ).toLocaleDateString()
+                                    ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta)
                                     : "Sin fecha"}
                                 </p>
                               </div>
@@ -3555,9 +3560,7 @@ export default function AsignarOperadoresPage() {
                                 </label>
                                 <p className="text-sm text-gray-700">
                                   {embarqueDetalle.fecha_entrega
-                                    ? new Date(
-                                        embarqueDetalle.fecha_entrega
-                                      ).toLocaleDateString()
+                                    ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega)
                                     : "Sin fecha"}
                                 </p>
                               </div>
@@ -3620,6 +3623,9 @@ export default function AsignarOperadoresPage() {
                           <div className="bg-gray-50 border rounded-lg p-4">
                             <h4 className="text-sm font-medium text-gray-700 mb-3">
                               Detalles del Remolque
+                              {(embarqueDetalle.quickpaid_enabled || embarqueDetalle.precio_quickpaid || embarqueDetalle.quickpaid_percent) && (
+                                <Badge className="ml-2 bg-yellow-100 text-yellow-800 text-xs">QuickPaid</Badge>
+                              )}
                             </h4>
                             <div className="space-y-2">
                               <p className="text-sm text-gray-700">
@@ -3651,29 +3657,80 @@ export default function AsignarOperadoresPage() {
                   {activeTab === "financiero" && (
                     <div className="space-y-6">
                       <div className="bg-white border rounded-lg p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
-                          Información Financiera
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center">
+                          <span>Información Financiera</span>
+                          {(embarqueDetalle.quickpaid_enabled || embarqueDetalle.precio_quickpaid || embarqueDetalle.quickpaid_percent) && (
+                            <Badge className="ml-3 bg-yellow-100 text-yellow-800 text-xs">QuickPaid</Badge>
+                          )}
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div className="bg-gray-50 border rounded-lg p-4">
-                            <label className="text-sm font-medium text-gray-700 mb-2 block">
-                              Precio del Flete
-                            </label>
-                            <p className="text-sm text-gray-700">
-                              {embarqueDetalle.precio_flete
-                                ? `$${embarqueDetalle.precio_flete} ${
-                                    embarqueDetalle.moneda_flete || "MXN"
-                                  }`
-                                : "Sin definir"}
-                            </p>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                          <div className="bg-gray-50 border rounded-lg p-4 flex items-center justify-between gap-4">
+                            <div>
+                              <label className="text-sm font-medium text-gray-700 mb-2 block">
+                                Precio del Flete
+                              </label>
+                              <p className="text-sm text-gray-700">
+                                {embarqueDetalle.precio_flete
+                                  ? `$${embarqueDetalle.precio_flete} ${
+                                      embarqueDetalle.moneda_flete || "MXN"
+                                    }`
+                                  : "Sin definir"}
+                              </p>
+                            </div>
+
+                            {/* QuickPaid inline — compact, no white background, laid out to the right of price */}
+                            {(embarqueDetalle.quickpaid_enabled || embarqueDetalle.precio_quickpaid || embarqueDetalle.quickpaid_percent || embarqueDetalle.quickpaid_descuento) && (
+                              <div className="flex items-center gap-6 text-sm text-gray-700 min-w-[220px]">
+                                {(() => {
+                                  const precioFleteNum = Number(embarqueDetalle.precio_flete) || 0;
+                                  const quickPercent = (embarqueDetalle.quickpaid_percent !== undefined && embarqueDetalle.quickpaid_percent !== null)
+                                    ? Number(embarqueDetalle.quickpaid_percent)
+                                    : null;
+                                  const quickDescuentoNum = (embarqueDetalle.quickpaid_descuento !== undefined && embarqueDetalle.quickpaid_descuento !== null)
+                                    ? Number(embarqueDetalle.quickpaid_descuento)
+                                    : (quickPercent ? precioFleteNum * quickPercent : null);
+                                  const precioQuickNum = (embarqueDetalle.precio_quickpaid !== undefined && embarqueDetalle.precio_quickpaid !== null)
+                                    ? Number(embarqueDetalle.precio_quickpaid)
+                                    : (quickDescuentoNum !== null ? precioFleteNum - quickDescuentoNum : null);
+                                  const moneda = embarqueDetalle.moneda_flete || 'MXN';
+
+                                  return (
+                                    <>
+                                      {/* Precio oculto en modal Detalles (se mantiene en otras vistas) */}
+
+                                      {quickPercent !== null && quickPercent > 0 && (
+                                        <div className="flex flex-col">
+                                          <span className="text-xs text-gray-500">% Descuento</span>
+                                          <span className="text-sm font-semibold text-yellow-700">{(quickPercent * 100).toLocaleString('es-MX', { maximumFractionDigits: 2 })}%</span>
+                                        </div>
+                                      )}
+
+                                      {quickDescuentoNum !== null && quickDescuentoNum > 0 && (
+                                        <div className="flex flex-col">
+                                          <span className="text-xs text-gray-500">Monto</span>
+                                          <span className="text-sm font-semibold text-yellow-700">-${quickDescuentoNum.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</span>
+                                        </div>
+                                      )}
+
+                                      {precioQuickNum !== null && (
+                                        <div className="flex flex-col">
+                                          <span className="text-xs text-gray-500">Precio QP</span>
+                                          <span className="text-sm font-semibold text-gray-900">${precioQuickNum.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}</span>
+                                        </div>
+                                      )}
+                                    </>
+                                  );
+                                })()}
+                              </div>
+                            )}
                           </div>
-                          <div className="bg-gray-50 border rounded-lg p-4">
-                            <label className="text-sm font-medium text-gray-700 mb-2 block">
-                              Flete en Falso
-                            </label>
-                            <p className="text-sm text-gray-700">
-                              {embarqueDetalle.flete_falso ? "Sí" : "No"}
-                            </p>
+
+                          {/* Compact Flete en Falso: smaller, less prominent */}
+                          <div className="bg-gray-50 border rounded-lg p-2 flex items-center justify-between">
+                            <div>
+                              <label className="text-sm font-medium text-gray-700 block">Flete en Falso</label>
+                              <p className="text-sm text-gray-700">{embarqueDetalle.flete_falso ? "Sí" : "No"}</p>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -3723,6 +3780,8 @@ export default function AsignarOperadoresPage() {
                                   {contacto.nombre} {contacto.apellidos || ""}
                                 </p>
                               </div>
+
+
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                                   Puesto
@@ -3731,6 +3790,9 @@ export default function AsignarOperadoresPage() {
                                   {contacto.puesto || "No especificado"}
                                 </p>
                               </div>
+
+
+
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                                   Teléfono
@@ -3739,6 +3801,9 @@ export default function AsignarOperadoresPage() {
                                   {contacto.telefono || "No especificado"}
                                 </p>
                               </div>
+
+
+                              
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                                   Email
@@ -4521,6 +4586,7 @@ export default function AsignarOperadoresPage() {
                     variant={completadosPeriodo === "todo" ? "default" : "outline"}
                     size="sm"
                     onClick={() => { setCompletadosPeriodo("todo"); setCompletadosFrom(null); setCompletadosTo(null); }}
+                    className={completadosPeriodo === "todo" ? "bg-green-600 hover:bg-green-700 text-white" : undefined}
                   >
                     Todo
                   </Button>
@@ -4528,6 +4594,7 @@ export default function AsignarOperadoresPage() {
                     variant={completadosPeriodo === "mes_actual" ? "default" : "outline"}
                     size="sm"
                     onClick={() => { setCompletadosPeriodo("mes_actual"); setCompletadosFrom(null); setCompletadosTo(null); }}
+                    className={completadosPeriodo === "mes_actual" ? "bg-green-600 hover:bg-green-700 text-white" : undefined}
                   >
                     Mes actual
                   </Button>
@@ -4535,6 +4602,7 @@ export default function AsignarOperadoresPage() {
                     variant={completadosPeriodo === "mes_anterior" ? "default" : "outline"}
                     size="sm"
                     onClick={() => { setCompletadosPeriodo("mes_anterior"); setCompletadosFrom(null); setCompletadosTo(null); }}
+                    className={completadosPeriodo === "mes_anterior" ? "bg-green-600 hover:bg-green-700 text-white" : undefined}
                   >
                     Mes anterior
                   </Button>
@@ -4590,10 +4658,10 @@ export default function AsignarOperadoresPage() {
                           <SelectValue placeholder="25" />
                         </SelectTrigger>
                         <SelectContent>
+                          <SelectItem value="5">5</SelectItem>
                           <SelectItem value="10">10</SelectItem>
                           <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
+                         
                         </SelectContent>
                       </Select>
                     </div>
@@ -4625,7 +4693,7 @@ export default function AsignarOperadoresPage() {
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-40 md:w-48 cursor-pointer select-none" onClick={() => handleSortCompletados("folio")}>Folio{sortIndicatorCompletados("folio")}</th>
                           <th className="px-3 py-2 text-left font-semibold w-48 md:w-64 cursor-pointer select-none" onClick={() => handleSortCompletados("cliente")}>Cliente{sortIndicatorCompletados("cliente")}</th>
                           <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-14 md:w-16 cursor-pointer select-none" onClick={() => handleSortCompletados("load")}>Load{sortIndicatorCompletados("load")}</th>
-                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-12 md:w-16 cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
+                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-[100px] cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
                           <th className="px-3 py-2 text-right font-semibold whitespace-nowrap w-40">Monto Facturado</th>
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-28">Resultado</th>
                           <th className="px-3 py-2 text-left font-semibold w-32 cursor-pointer select-none" onClick={() => handleSortCompletados("fecha")}>Fecha Finalización{sortIndicatorCompletados("fecha")}</th>
@@ -4640,7 +4708,7 @@ export default function AsignarOperadoresPage() {
                             <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">{embarque.folio}</td>
                             <td className="px-3 py-2 w-48 md:w-64 truncate">{embarque.cliente?.nombre || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-14 md:w-16 truncate">{embarque.load_number || ""}</td>
-                            <td className="px-2 py-2 whitespace-nowrap w-12 md:w-16 truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
+                            <td className="px-2 py-2 whitespace-nowrap w-[100px] truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {(() => {
                                 const monto =
@@ -4683,7 +4751,15 @@ export default function AsignarOperadoresPage() {
                                 size="sm"
                                 onClick={() => {
                                   // Abrir el modal de detalles manteniendo abierto el de registros completados
-                                  setEmbarqueDetalle(embarque);
+                                  const normalized = {
+                                    ...embarque,
+                                    fecha_recolecta: normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta,
+                                    fecha_entrega: normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega,
+                                  } as typeof embarque;
+                                  try { if ((embarque.folio || "").toString().toUpperCase().includes("2509-015") || (embarque.folio || "").toString().toUpperCase().includes("TIM 2509 015") || (embarque.folio || "").toString().toUpperCase().includes("TIM-2509-015")) {
+                                    console.debug('openDetailsFromCompleted: folio match', { raw: embarque, normalized });
+                                  } } catch(e) {}
+                                  setEmbarqueDetalle(normalized);
                                   setActiveTab("general");
                                   setSelectedImage(null);
                                   setShowDetailsModal(true);
@@ -4860,7 +4936,7 @@ export default function AsignarOperadoresPage() {
         </div>
       )}
     </MainLayout>
-    {/* Dialog de confirmación para asignar recursos (ubicado fuera de printContent) */}
+    {/* Dialog de confirmación para finalizar un embarque */}
     <Dialog open={showFinalizarDialog} onOpenChange={setShowFinalizarDialog}>
       <DialogContent>
         {embarqueAFinalizar ? (
@@ -4877,7 +4953,18 @@ export default function AsignarOperadoresPage() {
             </div>
             <div className="flex justify-end gap-2 mt-4">
               <Button variant="outline" onClick={() => setShowFinalizarDialog(false)}>Cancelar</Button>
-              <Button className="bg-green-600 hover:bg-green-700 text-white" onClick={async () => { await confirmarFinalizarEmbarque(); }}>
+              <Button
+                className="bg-green-600 hover:bg-green-700 text-white"
+                onClick={async () => {
+                  try {
+                    setSaving(true);
+                    await confirmarFinalizarEmbarque();
+                    setShowFinalizarDialog(false);
+                  } finally {
+                    setSaving(false);
+                  }
+                }}
+              >
                 Confirmar
               </Button>
             </div>

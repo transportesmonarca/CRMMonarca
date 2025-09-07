@@ -16,7 +16,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Camera, Phone, Check, ThumbsUp } from "lucide-react"
+import { Camera } from "lucide-react"
 import { supabase, obtenerFotosEmbarque } from "@/lib/supabase"
 
 export default function EmbarquePublicPage() {
@@ -259,17 +259,7 @@ export default function EmbarquePublicPage() {
           {/* Sección de acciones rápidas: botones entre las fotos y el bloque de comentarios */}
           {/* Quick action removed: replaced by a single persistent red contact button at the bottom of the page */}
 
-          {/* Comentarios */}
-            <div className="mt-6 bg-white p-4 rounded shadow">
-            <h4 className="font-medium mb-2">Compártenos tus comentarios</h4>
-            <input value={commentName} onChange={(e)=>setCommentName(e.target.value)} placeholder="Tu nombre (opcional)" className="w-full border rounded px-2 py-1 mb-2" />
-            <textarea value={comment} onChange={(e)=>setComment(e.target.value)} placeholder="Escribe tu comentario..." className="w-full border rounded px-2 py-2 mb-2" rows={4} />
-              <div className="flex justify-end">
-                <button className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded" onClick={async ()=>{
-                  await sendQuickComment(commentName || 'Cliente', comment || '');
-                }}>Enviar comentario</button>
-              </div>
-            </div>
+          {/* Comentarios removidos por requerimiento de UX */}
           {/* Confirmación modal */}
           <AlertDialog open={confirmOpen} onOpenChange={(v)=>setConfirmOpen(v)}>
             <AlertDialogContent className="max-w-sm">
@@ -291,42 +281,7 @@ export default function EmbarquePublicPage() {
           </AlertDialog>
         </div>
       </main>
-      {/* Floating action buttons on the bottom-right: contact (red) and enterado (green icon) */}
-      <div className="fixed right-4 bottom-6 flex flex-col items-end gap-3 pointer-events-none">
-        <button
-          onClick={async () => {
-            await sendQuickComment(commentName || 'Cliente', 'Enterado')
-          }}
-          className="pointer-events-auto inline-flex items-center justify-center h-12 w-12 bg-green-600 hover:bg-green-700 text-white rounded-full shadow-lg"
-          aria-label="Enterado"
-          title="Enterado"
-        >
-          <ThumbsUp className="h-5 w-5" />
-        </button>
-
-        <button
-          onClick={async () => {
-            // copy phone to clipboard (if available) and show toast
-            const phone = embarque?.cliente?.telefono || embarque?.cliente?.telefono_contacto || ''
-            if (phone) {
-              try {
-                await navigator.clipboard.writeText(phone)
-                toast({ title: 'Número copiado', description: phone, className: 'bg-blue-600 text-white' })
-              } catch (e) {
-                alert('Número de teléfono: ' + phone)
-              }
-            } else {
-              toast({ title: 'Teléfono no disponible', variant: 'destructive' })
-            }
-          }}
-          title={embarque?.cliente?.telefono || ''}
-          className="pointer-events-auto inline-flex items-center justify-center gap-3 w-56 h-12 bg-red-500 hover:bg-red-600 text-white rounded-full shadow-lg px-4 py-2"
-          aria-label="Contáctanos"
-        >
-          <Phone className="h-4 w-4" />
-          <span className="font-medium text-sm">Contáctanos</span>
-        </button>
-      </div>
+  {/* Botones flotantes removidos por requerimiento de UX */}
     </div>
   )
 }

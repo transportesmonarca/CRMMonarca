@@ -639,19 +639,7 @@ export default function ConfiguracionPage() {
                                             onChange={(e) => setConfiguracion({ ...configuracion, nombreEmpresa: e.target.value })}
                                         />
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label>Formato de fecha</Label>
-                                        <select
-                                            className="w-full border rounded px-3 py-2"
-                                            value={configuracion.formatoFecha}
-                                            onChange={(e) => setConfiguracion({ ...configuracion, formatoFecha: e.target.value })}
-                                        >
-                                            <option value="dd/MM/yyyy">dd/MM/yyyy</option>
-                                            <option value="MM/dd/yyyy">MM/dd/yyyy</option>
-                                            <option value="yyyy-MM-dd">yyyy-MM-dd</option>
-                                        </select>
-                                        <p className="text-xs text-gray-500">Afecta cómo se muestran las fechas en reportes y listados.</p>
-                                    </div>
+                                    {/* Formato de fecha removed from UI per request */}
                                     <div className="space-y-2">
                                         <Label>Retención de datos (meses) — Solo Embarques</Label>
                                         <Input
@@ -687,6 +675,72 @@ export default function ConfiguracionPage() {
                                             // Si cambió retención, reprogramar siguiente corrida
                                             scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))
                                         }}>Guardar configuración</Button>
+                                        {currentUser?.role === 'admin' && (
+                                            <>
+                                                <Button
+                                                    className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                    onClick={async () => {
+                                                        try {
+                                                            const res = await fetch('/api/export-full')
+                                                            if (!res.ok) throw new Error('Export failed')
+                                                            const blob = await res.blob()
+                                                            const url = URL.createObjectURL(blob)
+                                                            const a = document.createElement('a')
+                                                            a.href = url
+                                                            a.download = `monarca-export-${new Date().toISOString().slice(0,10)}.json.gz`
+                                                            document.body.appendChild(a)
+                                                            a.click()
+                                                            a.remove()
+                                                            URL.revokeObjectURL(url)
+                                                            alert('Export descargado correctamente')
+                                                        } catch (e: any) {
+                                                            alert('Error exportando: ' + (e.message || e))
+                                                        }
+                                                    }}
+                                                >
+                                                    Exportar datos ahora
+                                                </Button>
+
+                                                {/* Import preview */}
+                                                <div className="ml-2">
+                                                    <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" />
+                                                    <Button
+                                                        className="ml-2"
+                                                        onClick={async () => {
+                                                            const input = document.getElementById('importFile') as HTMLInputElement | null
+                                                            if (!input || !input.files || input.files.length === 0) { alert('Selecciona un archivo exportado primero'); return }
+                                                            const file = input.files[0]
+                                                            try {
+                                                                let text = ''
+                                                                if (file.name.endsWith('.gz')) {
+                                                                    // try to read gz in browser if supported
+                                                                    const arrayBuffer = await file.arrayBuffer()
+                                                                    // browsers don't have native gzip decompression; inform user
+                                                                    alert('Archivo .gz recibido. Descomprime localmente y sube el JSON resultante para previsualizar.')
+                                                                    return
+                                                                } else {
+                                                                    text = await file.text()
+                                                                }
+                                                                const parsed = JSON.parse(text)
+                                                                const res = await fetch('/api/import-full', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: parsed, dryRun: true }) })
+                                                                const json = await res.json()
+                                                                if (!res.ok) throw new Error(json.error || 'Preview failed')
+                                                                // show summary
+                                                                let msg = 'Resumen de import (dry-run):\n'
+                                                                for (const k of Object.keys(json.summary || {})) {
+                                                                    msg += `${k}: ${json.summary[k].count} registros\n`
+                                                                }
+                                                                alert(msg)
+                                                            } catch (e: any) {
+                                                                alert('Error previsualizando import: ' + (e.message || e))
+                                                            }
+                                                        }}
+                                                    >
+                                                        Previsualizar import
+                                                    </Button>
+                                                </div>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
                             </CardContent>

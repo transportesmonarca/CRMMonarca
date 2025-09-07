@@ -64,6 +64,7 @@ import { exportOperadoresToExcel, exportOperadorDetalleToExcel } from "./excel-e
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, type Operador } from "@/lib/supabase";
+import { formatDateMatamoros, normalizeDate } from '@/lib/date-utils';
 import { subirDocumentoOperador, eliminarDocumentoOperador, subirFotoPerfilOperador, eliminarFotoPerfilOperador, subirArchivoOperador, listarArchivosOperador, eliminarArchivoOperador } from "@/lib/blob";
 import { agregarAuditLog } from "@/lib/audit";
 import { toast } from "@/hooks/use-toast";
@@ -421,20 +422,37 @@ export default function OperadoresPage() {
       }
     });
 
-    // Limpiar campos de fecha
+    // Limpiar campos de fecha y normalizar a YYYY-MM-DD (sin timezone)
     camposFecha.forEach((campo) => {
-      if (dataLimpia[campo] === "" || !dataLimpia[campo]) {
+      const val = dataLimpia[campo];
+      if (val === "" || !val) {
         dataLimpia[campo] = null;
+      } else {
+        // normalizeDate acepta strings como 'DD/MM/YYYY', 'YYYY-MM-DD', ISO y devuelve 'YYYY-MM-DD'
+        try {
+          dataLimpia[campo] = normalizeDate(String(val)) || null;
+        } catch {
+          dataLimpia[campo] = null;
+        }
       }
     });
 
     // Manejar contactos_emergencia (convertir array a JSON)
-    const contactosValidos = contactosEmergencia.filter(
-      (contacto) =>
-        contacto.nombre.trim() ||
-        contacto.telefono.trim() ||
-        contacto.correo.trim()
-    );
+    // Filtrar defensivamente entradas vacías y normalizar teléfonos
+    const contactosValidos = (contactosEmergencia || []).map((c) => ({
+      nombre: (c?.nombre || "").trim(),
+      relacion: (c?.relacion || "").trim(),
+      direccion: (c?.direccion || "").trim(),
+      telefono: normalizarTelefonoParaGuardar((c?.telefono || "").trim()) || null,
+      correo: (c?.correo || "").trim() || null,
+    })).filter((contacto) => {
+      return (
+        (contacto.nombre && contacto.nombre.length > 0) ||
+        (contacto.telefono && String(contacto.telefono).trim().length > 0) ||
+        (contacto.correo && contacto.correo.length > 0)
+      );
+    });
+
     if (contactosValidos.length > 0) {
       dataLimpia.contactos_emergencia = JSON.stringify(contactosValidos);
     } else {
@@ -444,6 +462,17 @@ export default function OperadoresPage() {
   // Normalizar teléfonos finales a formato seguro (<=15 chars)
   dataLimpia.telefono = normalizarTelefonoParaGuardar(dataLimpia.telefono);
   dataLimpia.telefono_emergencia = normalizarTelefonoParaGuardar(dataLimpia.telefono_emergencia);
+  // Truncar campos que tienen límites en la base de datos para evitar errores 22001
+  const safeTruncate = (v: any, max: number) => (v === null || v === undefined) ? v : String(v).slice(0, max);
+  dataLimpia.nombre = safeTruncate(dataLimpia.nombre, 100);
+  dataLimpia.apellidos = safeTruncate(dataLimpia.apellidos, 100);
+  dataLimpia.telefono = safeTruncate(dataLimpia.telefono, 15);
+  dataLimpia.telefono_emergencia = safeTruncate(dataLimpia.telefono_emergencia, 15);
+  dataLimpia.email = safeTruncate(dataLimpia.email, 100);
+  dataLimpia.licencia = safeTruncate(dataLimpia.licencia, 50);
+  dataLimpia.curp = safeTruncate(dataLimpia.curp, 18);
+  dataLimpia.rfc = safeTruncate(dataLimpia.rfc, 13);
+  dataLimpia.nss = safeTruncate(dataLimpia.nss, 11);
   return dataLimpia;
   };
 
@@ -502,6 +531,27 @@ export default function OperadoresPage() {
         if (isNaN(fecha.getTime())) {
           return `${nombre} no es una fecha válida.`;
         }
+      }
+    }
+
+    // Validaciones de longitud para evitar errores de tipo 22001 en Postgres
+    const lengthChecks: Array<{ campo: keyof typeof formData | string; nombre: string; max: number }> = [
+      { campo: 'nombre', nombre: 'Nombre', max: 100 },
+      { campo: 'apellidos', nombre: 'Apellidos', max: 100 },
+      { campo: 'telefono', nombre: 'Teléfono', max: 15 },
+      { campo: 'telefono_emergencia', nombre: 'Teléfono de emergencia', max: 15 },
+      { campo: 'email', nombre: 'Email', max: 100 },
+      { campo: 'licencia', nombre: 'Licencia', max: 50 },
+      { campo: 'curp', nombre: 'CURP', max: 18 },
+      { campo: 'rfc', nombre: 'RFC', max: 13 },
+      { campo: 'nss', nombre: 'NSS', max: 11 },
+      { campo: 'estado', nombre: 'Estado', max: 20 },
+    ];
+
+    for (const chk of lengthChecks) {
+      const val = (data as any)[chk.campo];
+      if (val !== undefined && val !== null && String(val).length > chk.max) {
+        return `${chk.nombre} es demasiado largo (máximo ${chk.max} caracteres). Por favor acorta el valor.`;
       }
     }
 
@@ -885,6 +935,24 @@ export default function OperadoresPage() {
   }, [comentariosTotalPages]);
   const comentariosPaginated = comentarios.slice((comentariosPage - 1) * comentariosPerPage, comentariosPage * comentariosPerPage);
 
+  // Mantener los comentarios sincronizados con el operador actualmente mostrado en el modal de detalles
+  useEffect(() => {
+    if (!operadorDetalle) return;
+    try {
+      const raw = (operadorDetalle as any).observaciones ?? null;
+      const lista = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+      if (Array.isArray(lista)) {
+        setComentarios(lista as ComentarioOperador[]);
+        setComentariosPage(1);
+      } else {
+        setComentarios([]);
+      }
+    } catch (e) {
+      console.error('Error parsing observaciones desde operadorDetalle', e);
+      setComentarios([]);
+    }
+  }, [operadorDetalle]);
+
   const persistirComentarios = async (lista: ComentarioOperador[]) => {
     if (!operadorDetalle) return;
     try {
@@ -1044,7 +1112,16 @@ export default function OperadoresPage() {
       // Validar formulario
       const errorValidacion = validarFormulario(formData);
       if (errorValidacion) {
-        setError(errorValidacion);
+        // Para mensajes de CURP demasiado largo mostramos solo toast y no el mensaje en la sección principal
+        const isCurpLengthMsg = /CURP es demasiado largo/i.test(errorValidacion);
+        try {
+          toast({ title: errorValidacion, variant: "destructive" });
+        } catch (e) {
+          // ignore toast errors
+        }
+        if (!isCurpLengthMsg) {
+          setError(errorValidacion);
+        }
         setSaving(false);
         return;
       }
@@ -1052,18 +1129,35 @@ export default function OperadoresPage() {
       // Limpiar y preparar datos
       const dataToSave = limpiarDatosFormulario(formData);
 
+      // If we have in-memory comentarios (observaciones list), prefer persisting it
+      if (comentarios && comentarios.length > 0) {
+        dataToSave.observaciones = JSON.stringify(comentarios);
+      } else if (formData.observaciones && !dataToSave.observaciones) {
+        // legacy single-string obs
+        dataToSave.observaciones = formData.observaciones;
+      }
+
       if (editingId) {
-        const { error } = await supabase
+        const { data: updatedData, error } = await supabase
           .from("operadores")
           .update({
             ...dataToSave,
             updated_at: new Date().toISOString(),
           })
-          .eq("id", editingId);
+          .eq("id", editingId)
+          .select()
+          .single();
 
         if (error) {
-          console.error("Error actualizando operador:", error);
-          setError(`Error al actualizar operador: ${error.message}`);
+          // Mejor logging y mensaje robusto para errores que pueden ser objetos vacíos
+          try {
+            console.error("Error actualizando operador:", safeStringify(error));
+          } catch (e) {
+            console.error("Error actualizando operador (no serializable):", error);
+          }
+          const msg = (error && (error.message || error.details || error.hint)) || JSON.stringify(error) || 'Error desconocido';
+          setError(`Error al actualizar operador: ${msg}`);
+          setSaving(false);
           return;
         }
 
@@ -1083,13 +1177,21 @@ export default function OperadoresPage() {
             setSuccess(
               `Operador actualizado exitosamente. ${resultados.join(", ")}`
             );
+              try { toast({ title: 'Operador actualizado exitosamente', variant: 'success' }); } catch {}
           } catch (error) {
             setSuccess(
               "Operador actualizado exitosamente, pero hubo errores subiendo algunos archivos"
             );
+              try { toast({ title: 'Operador actualizado exitosamente', variant: 'success' }); } catch {}
           }
         } else {
           setSuccess("Operador actualizado exitosamente");
+          try { toast({ title: 'Operador actualizado exitosamente', variant: 'success' }); } catch {}
+        }
+
+        // Keep operadorDetalle in sync with server response
+        if (updatedData) {
+          setOperadorDetalle((prev) => ({ ...(prev || {}), ...(updatedData as any) } as any));
         }
       } else {
         // For new operator creation, we need to get the created operator ID
@@ -1135,7 +1237,7 @@ export default function OperadoresPage() {
         }
 
         // Manejar respuesta con más detalles
-        if (insertResult?.error) {
+  if (insertResult?.error) {
           const err = insertResult.error as any;
           try {
             console.error('[DEBUG] Error creando operador (supabase):', JSON.stringify(err, null, 2));
@@ -1147,6 +1249,14 @@ export default function OperadoresPage() {
         }
 
         const newOperador = insertResult?.data;
+        // If we had comentarios in memory, ensure they were persisted
+        if (comentarios && comentarios.length > 0 && newOperador) {
+          try {
+            await supabase.from('operadores').update({ observaciones: JSON.stringify(comentarios) }).eq('id', newOperador.id);
+          } catch (e) {
+            console.error('Error asegurando observaciones tras insert:', e);
+          }
+        }
         console.log('[DEBUG] Operador creado:', newOperador);
 
         // Crear automáticamente un recordatorio de cumpleaños para el nuevo operador
@@ -1305,13 +1415,26 @@ export default function OperadoresPage() {
 
         if (Array.isArray(contactosExistentes)) {
           contactosExistentes.forEach((contacto) => {
-            contactosCargados.push({
-              nombre: contacto.nombre || "",
-              relacion: contacto.relacion || "",
-              direccion: contacto.direccion || "",
-              telefono: contacto.telefono || "",
-              correo: contacto.correo || contacto.email || "",
-            });
+            // Legacy shape: item could be a string or an object. Normalize and skip empties.
+            if (!contacto) return; // skip null/undefined/empty
+            if (typeof contacto === 'string') {
+              const s = contacto.trim();
+              if (!s) return; // skip empty string entries
+              contactosCargados.push({ nombre: s, relacion: '', direccion: '', telefono: '', correo: '' });
+              return;
+            }
+
+            // If object, extract fields defensively
+            const nombre = (contacto.nombre || '').trim();
+            const relacion = (contacto.relacion || '').trim();
+            const direccion = (contacto.direccion || '').trim();
+            const telefono = (contacto.telefono || '').trim();
+            const correo = (contacto.correo || contacto.email || '').trim();
+
+            // Only add if there's at least one meaningful field
+            if (nombre || telefono || correo || relacion || direccion) {
+              contactosCargados.push({ nombre, relacion, direccion, telefono, correo });
+            }
           });
         }
       } catch (error) {
@@ -1319,7 +1442,9 @@ export default function OperadoresPage() {
       }
     }
 
-    setContactosEmergencia(contactosCargados);
+    // Filter again for safety (remove accidental empty entries) and set state
+    const filtered = contactosCargados.filter(c => c && (String(c.nombre || '').trim() || String(c.telefono || '').trim() || String(c.correo || '').trim() || String(c.relacion || '').trim() || String(c.direccion || '').trim() ));
+    setContactosEmergencia(filtered);
 
     setEditingId(operador.id);
     // Mostrar la foto de perfil vigente en el modal de edición si existe
@@ -2438,9 +2563,7 @@ export default function OperadoresPage() {
                       </p>
                       {operador.fecha_vencimiento_licencia && (
                         <p className="text-xs text-gray-500">
-                          {new Date(
-                            operador.fecha_vencimiento_licencia
-                          ).toLocaleDateString()}
+                          {formatDateMatamoros(operador.fecha_vencimiento_licencia)}
                         </p>
                       )}
                     </div>
@@ -2469,9 +2592,7 @@ export default function OperadoresPage() {
                       </p>
                       {operador.fecha_vencimiento_visa && (
                         <p className="text-xs text-gray-500">
-                          {new Date(
-                            operador.fecha_vencimiento_visa
-                          ).toLocaleDateString()}
+                          {formatDateMatamoros(operador.fecha_vencimiento_visa)}
                         </p>
                       )}
                     </div>
@@ -2488,9 +2609,7 @@ export default function OperadoresPage() {
                       </p>
                       {operador.fecha_vencimiento_fast && (
                         <p className="text-xs text-gray-500">
-                          {new Date(
-                            operador.fecha_vencimiento_fast
-                          ).toLocaleDateString()}
+                          {formatDateMatamoros(operador.fecha_vencimiento_fast)}
                         </p>
                       )}
                     </div>
@@ -2507,19 +2626,53 @@ export default function OperadoresPage() {
                       </span>
                     </div>
                     <p className="text-xs text-gray-600">
-                      {(parseDateOnlyLocal(operador.fecha_nacimiento) ?? new Date(operador.fecha_nacimiento)).toLocaleDateString()}
+                      {operador.fecha_nacimiento ? formatDateMatamoros(operador.fecha_nacimiento) : '—'}
                     </p>
                   </div>
                 )}
 
-                {/* Observaciones si existen */}
+                {/* Observaciones si existen (mostrar solo el texto del comentario, no el id ni JSON crudo) */}
                 {operador.observaciones && (
                   <div className="bg-gray-50 p-2 rounded">
                     <p className="text-xs">
                       <strong>Obs:</strong>{" "}
-                      {operador.observaciones.length > 50
-                        ? `${operador.observaciones.substring(0, 50)}...`
-                        : operador.observaciones}
+                      {(() => {
+                        try {
+                          const raw = operador.observaciones;
+                          let text = "";
+                          if (!raw) text = "";
+                          else if (typeof raw === "string") {
+                            // intentar parsear JSON
+                            try {
+                              const parsed = JSON.parse(raw);
+                              if (Array.isArray(parsed) && parsed.length > 0) {
+                                    const first: any = parsed[0];
+                                    text = typeof first === "string" ? first : (first?.texto || first?.text || "");
+                                  } else if (typeof parsed === "string") {
+                                text = parsed;
+                              } else {
+                                text = String(parsed || "");
+                              }
+                            } catch {
+                              // no JSON, usar el string tal cual
+                              text = raw;
+                            }
+                          } else if (Array.isArray(raw)) {
+                            const first: any = raw[0];
+                            text = typeof first === "string" ? first : (first?.texto || first?.text || "");
+                          } else {
+                            text = String(raw);
+                          }
+
+                          const display = (text || "").trim();
+                          if (!display) return <span className="text-xs text-gray-500">Sin observaciones</span>;
+                          return display.length > 50 ? `${display.substring(0, 50)}...` : display;
+                        } catch (e) {
+                          console.error("Error parseando observaciones en card", e);
+                          const s = String(operador.observaciones || "");
+                          return s.length > 50 ? `${s.substring(0,50)}...` : s;
+                        }
+                      })()}
                     </p>
                   </div>
                 )}
@@ -2622,7 +2775,7 @@ export default function OperadoresPage() {
             </ul>
           </div>
           <div className="flex justify-end pt-4">
-            <Button onClick={() => setOperadorEmbarquesDialogOpen(false)}>Cerrar</Button>
+            <Button onClick={() => setOperadorEmbarquesDialogOpen(false)} className="bg-red-600 hover:bg-red-700 text-white">Cerrar</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -2762,6 +2915,11 @@ export default function OperadoresPage() {
                           }
                           placeholder="Ej: +52 123 456 7890"
                           maxLength={20}
+                          onBlur={() => {
+                            if (formData.telefono && !validarTelefono(formData.telefono)) {
+                              try { toast({ title: 'Formato de teléfono inválido', variant: 'destructive' }); } catch {}
+                            }
+                          }}
                         />
                         {formData.telefono &&
                           !validarTelefono(formData.telefono) && (
@@ -3108,6 +3266,11 @@ export default function OperadoresPage() {
                         placeholder="Ej: +52 123 456 7890"
                         maxLength={20}
                         className="bg-red-50/40 border-red-100 focus:ring-red-200"
+                        onBlur={() => {
+                          if (formData.telefono_emergencia && !validarTelefono(formData.telefono_emergencia)) {
+                            try { toast({ title: 'Formato de teléfono inválido', variant: 'destructive' }); } catch {}
+                          }
+                        }}
                       />
                       {formData.telefono_emergencia &&
                         !validarTelefono(formData.telefono_emergencia) && (
@@ -3182,8 +3345,14 @@ export default function OperadoresPage() {
                               <Button
                                 type="button"
                                 onClick={() => {
+                                  // No agregar si está vacío
                                   if (!nuevoContacto.nombre && !nuevoContacto.telefono && !nuevoContacto.correo) return;
                                   if (contactosEmergencia.length >= 5) return;
+                                  // Validar formato de teléfono del nuevo contacto si se proporcionó
+                                  if (nuevoContacto.telefono && !validarTelefono(nuevoContacto.telefono)) {
+                                    try { toast({ title: 'Formato de teléfono inválido en contacto', variant: 'destructive' }); } catch {}
+                                    return;
+                                  }
                                   setContactosEmergencia([...contactosEmergencia, { ...nuevoContacto }]);
                                   setNuevoContacto({ nombre: "", relacion: "", direccion: "", telefono: "", correo: "" });
                                 }}
@@ -3471,25 +3640,25 @@ export default function OperadoresPage() {
                       <p className="text-base">
                         <span className="font-semibold">Licencia:</span> <span className="font-medium text-gray-800">{operadorDetalle.licencia || '—'}</span>
                         {operadorDetalle.fecha_vencimiento_licencia && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_licencia) ?? new Date(operadorDetalle.fecha_vencimiento_licencia)).toLocaleDateString()}</span>
+                          <span className="text-sm text-gray-500 ml-2">Vence {formatDateMatamoros(operadorDetalle.fecha_vencimiento_licencia)}</span>
                         )}
                       </p>
                       <p className="text-base">
                         <span className="font-semibold">Apto Médico:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_apto_medico || '—'}</span>
                         {operadorDetalle.fecha_vencimiento_apto_medico && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_apto_medico) ?? new Date(operadorDetalle.fecha_vencimiento_apto_medico)).toLocaleDateString()}</span>
+                          <span className="text-sm text-gray-500 ml-2">Vence {formatDateMatamoros(operadorDetalle.fecha_vencimiento_apto_medico)}</span>
                         )}
                       </p>
                       <p className="text-base">
                         <span className="font-semibold">FAST:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_fast || '—'}</span>
                         {operadorDetalle.fecha_vencimiento_fast && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_fast) ?? new Date(operadorDetalle.fecha_vencimiento_fast)).toLocaleDateString()}</span>
+                          <span className="text-sm text-gray-500 ml-2">Vence {formatDateMatamoros(operadorDetalle.fecha_vencimiento_fast)}</span>
                         )}
                       </p>
                       <p className="text-base">
                         <span className="font-semibold">Visa:</span> <span className="font-medium text-gray-800">{operadorDetalle.numero_visa || '—'}</span>
                         {operadorDetalle.fecha_vencimiento_visa && (
-                          <span className="text-sm text-gray-500 ml-2">Vence {(parseDateOnlyLocal(operadorDetalle.fecha_vencimiento_visa) ?? new Date(operadorDetalle.fecha_vencimiento_visa)).toLocaleDateString()}</span>
+                          <span className="text-sm text-gray-500 ml-2">Vence {formatDateMatamoros(operadorDetalle.fecha_vencimiento_visa)}</span>
                         )}
                       </p>
                     </div>
@@ -3696,10 +3865,10 @@ export default function OperadoresPage() {
                               value={String(comentariosPerPage)}
                               onValueChange={(v) => { setComentariosPerPage(Number.parseInt(v, 10)); setComentariosPage(1); }}
                             >
-                              <SelectTrigger className="w-[90px]">
+                              <SelectTrigger className="w-[140px]">
                                 <SelectValue />
                               </SelectTrigger>
-                              <SelectContent>
+                              <SelectContent className="min-w-[180px]">
                                 {comentariosPageOptions.map((opt) => (
                                   <SelectItem key={opt} value={String(opt)}>{opt} por página</SelectItem>
                                 ))}
@@ -3884,35 +4053,44 @@ export default function OperadoresPage() {
                         observaciones: op.observaciones || "",
                         estado: op.estado || "activo",
                       });
-                      // contactos emergencia
+                      // contactos emergencia - parse defensively and only load real entries
                       try {
-                        const contactosExistentes =
-                          op.contactos_emergencia
-                            ? typeof op.contactos_emergencia === "string"
-                              ? JSON.parse(op.contactos_emergencia)
-                              : op.contactos_emergencia
-                            : [];
-                        const base = [
-                          { nombre: "", relacion: "", direccion: "", telefono: "", correo: "" },
-                          { nombre: "", relacion: "", direccion: "", telefono: "", correo: "" },
-                          { nombre: "", relacion: "", direccion: "", telefono: "", correo: "" },
-                          { nombre: "", relacion: "", direccion: "", telefono: "", correo: "" },
-                          { nombre: "", relacion: "", direccion: "", telefono: "", correo: "" },
-                        ];
+                        const contactosExistentes = op.contactos_emergencia
+                          ? typeof op.contactos_emergencia === "string"
+                            ? JSON.parse(op.contactos_emergencia)
+                            : op.contactos_emergencia
+                          : [];
+
+                        const contactosCargados: Array<any> = [];
+
                         if (Array.isArray(contactosExistentes)) {
-                          contactosExistentes.forEach((c, i) => {
-                            if (i < 5) {
-                              base[i] = {
-                                nombre: c.nombre || "",
-                                relacion: c.relacion || "",
-                                direccion: c.direccion || "",
-                                telefono: c.telefono || "",
-                                correo: c.correo || c.email || "",
-                              };
+                          contactosExistentes.forEach((c: any) => {
+                            if (!c) return;
+
+                            // legacy string entries
+                            if (typeof c === "string") {
+                              const nombre = c.trim();
+                              if (nombre) {
+                                contactosCargados.push({ nombre, relacion: "", direccion: "", telefono: "", correo: "" });
+                              }
+                              return;
+                            }
+
+                            const nombre = (c.nombre || "").toString().trim();
+                            const relacion = (c.relacion || "").toString().trim();
+                            const direccion = (c.direccion || "").toString().trim();
+                            const telefono = (c.telefono || "").toString().trim();
+                            const correo = (c.correo || c.email || "").toString().trim();
+
+                            // only include contacts that have at least one meaningful field
+                            if (nombre || relacion || direccion || telefono || correo) {
+                              contactosCargados.push({ nombre, relacion, direccion, telefono, correo });
                             }
                           });
                         }
-                        setContactosEmergencia(base);
+
+                        // limit to 5 contacts and set
+                        setContactosEmergencia(contactosCargados.slice(0, 5));
                       } catch (e) {
                         console.error("Error contactos emergencia:", e);
                       }
@@ -4172,13 +4350,39 @@ export default function OperadoresPage() {
 
                 <TabsContent value="observaciones" className="space-y-6 mt-6">
                   <h4 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">Observaciones</h4>
-                  {operadorQuickDetalle.observaciones ? (
-                    <p className="text-sm whitespace-pre-line bg-gray-50 border rounded p-4 text-gray-700">
-                      {operadorQuickDetalle.observaciones}
-                    </p>
-                  ) : (
-                    <p className="text-xs text-gray-500">Sin observaciones</p>
-                  )}
+                  {(() => {
+                    try {
+                      const raw = operadorQuickDetalle.observaciones ?? null;
+                      let lista: any = null;
+                      if (!raw) lista = null;
+                      else if (typeof raw === 'string') {
+                        try { lista = JSON.parse(raw); } catch { lista = raw; }
+                      } else {
+                        lista = raw;
+                      }
+
+                      if (Array.isArray(lista) && lista.length > 0) {
+                        return (
+                          <div className="space-y-2">
+                            {lista.filter(Boolean).map((c: any, i: number) => (
+                              <p key={i} className="text-sm whitespace-pre-line bg-gray-50 border rounded p-3 text-gray-700">
+                                {typeof c === 'string' ? c : (c.texto || '')}
+                              </p>
+                            ))}
+                          </div>
+                        );
+                      }
+
+                      if (typeof lista === 'string' && lista.trim()) {
+                        return <p className="text-sm whitespace-pre-line bg-gray-50 border rounded p-4 text-gray-700">{lista}</p>;
+                      }
+
+                      return <p className="text-xs text-gray-500">Sin observaciones</p>;
+                    } catch (e) {
+                      console.error('Error parseando observaciones (quick modal)', e);
+                      return <p className="text-xs text-gray-500">Sin observaciones</p>;
+                    }
+                  })()}
                 </TabsContent>
                 </Tabs>
               </div>

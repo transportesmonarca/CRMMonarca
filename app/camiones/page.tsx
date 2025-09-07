@@ -115,6 +115,29 @@ function formatDateMatamoros(value?: string | null) {
   return dt.toLocaleDateString("es-MX", { timeZone: "America/Matamoros" });
 }
 
+// Normalizar fecha: devolver siempre YYYY-MM-DD cuando sea posible.
+// - Si ya es date-only (YYYY-MM-DD) devolver tal cual.
+// - Si viene un timestamp/ISO, convertir a fecha en la zona America/Matamoros y devolver YYYY-MM-DD.
+// - Si es vacío o inválido, devolver null.
+const normalizeDate = (v?: string | null) => {
+  if (!v) return null;
+  const s = String(v).trim();
+  if (!s) return null;
+  // Si ya viene como YYYY-MM-DD, devolver tal cual
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+  // Intentar parsear como fecha/timestamp y formatear a YYYY-MM-DD en la zona local esperada
+  const dt = new Date(s);
+  if (isNaN(+dt)) return null;
+  try {
+    // 'en-CA' produce YYYY-MM-DD; usar timeZone para que la fecha corresponda a America/Matamoros
+    return dt.toLocaleDateString("en-CA", { timeZone: "America/Matamoros" });
+  } catch (e) {
+    // Fallback robusto: usar ISO (UTC) y tomar la parte de fecha
+    return dt.toISOString().split("T")[0];
+  }
+};
+
 export default function CamionesPage() {
   // Main state variables
   const [camiones, setCamiones] = useState<Camion[]>([]);
@@ -211,7 +234,11 @@ export default function CamionesPage() {
 
       setCamiones(prev => prev.map(c => c.id === editingCamion.id ? { ...c, ...updatedRow } as any : c));
       if (updatedRow) setCamionDetalle(updatedRow as any);
-      toast({ title: "Camión actualizado exitosamente", variant: "success" });
+      toast({
+        title: "Camión actualizado exitosamente",
+        variant: "success",
+        className: "bg-green-600 text-white"
+      });
     } catch (e) {
       console.error("Error inesperado en performUpdate:", e);
       toast({ title: "Error inesperado al actualizar el camión", variant: "destructive" });
@@ -332,10 +359,13 @@ export default function CamionesPage() {
   };
 
   // Limpiar formulario de camión
-  const limpiarFormulario = () => {
+  // options.resetTab: si es false, preserva el valor actual de activeTab (útil al abrir el detalle luego de editar)
+  const limpiarFormulario = (options: { resetTab?: boolean } = { resetTab: true }) => {
     setFormData({ ...initialFormData });
     setEditingCamion(null);
-    setActiveTab("basica");
+    if (options.resetTab !== false) {
+      setActiveTab("basica");
+    }
   };
 
   // Poblar formulario al editar un camión existente
@@ -370,8 +400,9 @@ export default function CamionesPage() {
       placas: camion.placas || "",
       kilometraje: camion.kilometraje?.toString() || "",
       estado: camion.estado || "disponible",
-      ultima_verificacion: datosAdicionales.ultima_verificacion || "",
-      frecuencia_verificacion: datosAdicionales.frecuencia_verificacion || "",
+  ultima_verificacion: datosAdicionales.ultima_verificacion || "",
+  // Compatibilidad: algunos registros usan `frecuencia_verificacion`, otros `proxima_verificacion`
+  frecuencia_verificacion: datosAdicionales.frecuencia_verificacion || datosAdicionales.proxima_verificacion || "",
       poliza_seguro_mexicano: datosAdicionales.poliza_seguro_mexicano || "",
       fecha_vencimiento_seguro_mexicano:
         datosAdicionales.fecha_vencimiento_seguro_mexicano || "",
@@ -476,18 +507,24 @@ export default function CamionesPage() {
         numero_serie: formData.numero_serie || null,
         poliza_seguro_mexicano: formData.poliza_seguro_mexicano || null,
         fecha_vencimiento_seguro_mexicano:
-          formData.fecha_vencimiento_seguro_mexicano || null,
+          normalizeDate(formData.fecha_vencimiento_seguro_mexicano) || null,
         poliza_seguro_americano: formData.poliza_seguro_americano || null,
         fecha_vencimiento_seguro_americano:
-          formData.fecha_vencimiento_seguro_americano || null,
+          normalizeDate(formData.fecha_vencimiento_seguro_americano) || null,
         ultima_verificacion: formData.ultima_verificacion || null,
-        frecuencia_verificacion: formData.frecuencia_verificacion || null,
+  // Guardamos la fecha normalizada bajo la clave preferida y, por compatibilidad, duplicamos
+  // también en `proxima_verificacion` puesto que algunas vistas esperan ese nombre.
+  frecuencia_verificacion: normalizeDate(formData.frecuencia_verificacion) || null,
+  proxima_verificacion: normalizeDate(formData.frecuencia_verificacion) || null,
         tag_americano: formData.tag_americano || null,
         tag_mexicano: formData.tag_mexicano || null,
         numero_base: formData.numero_base || null,
-        numeros_adicionales: formData.numeros_adicionales.filter(
-          (item) => item.nombre && item.numero
-        ),
+        numeros_adicionales: formData.numeros_adicionales
+          .filter((item) => item.nombre && item.numero)
+          .map((item) => ({
+            ...item,
+            fecha_vencimiento: normalizeDate(item.fecha_vencimiento) || null,
+          })),
         // We'll keep comentarios for backward compatibility, but maintain historial_comentarios as the source of truth.
         comentarios: formData.comentarios || null,
         // Preserve existing historial_comentarios (array) and, if none exist but comentarios provided, initialize it.
@@ -529,11 +566,11 @@ export default function CamionesPage() {
         numeros_adicionales: (formData.numeros_adicionales || [])
           .filter((x) => x?.nombre && x?.numero) || null, // si tu columna es JSONB
 
-        // Pólizas / vencimientos (si tus columnas son DATE, manda YYYY-MM-DD string)
-        poliza_seguro_mexicano: formData.poliza_seguro_mexicano || null,
-        fecha_vencimiento_seguro_mexicano: asDateOnly(formData.fecha_vencimiento_seguro_mexicano),
-        poliza_seguro_americano: formData.poliza_seguro_americano || null,
-        fecha_vencimiento_seguro_americano: asDateOnly(formData.fecha_vencimiento_seguro_americano),
+  // Pólizas / vencimientos (si tus columnas son DATE, manda YYYY-MM-DD string)
+  poliza_seguro_mexicano: formData.poliza_seguro_mexicano || null,
+  fecha_vencimiento_seguro_mexicano: normalizeDate(formData.fecha_vencimiento_seguro_mexicano),
+  poliza_seguro_americano: formData.poliza_seguro_americano || null,
+  fecha_vencimiento_seguro_americano: normalizeDate(formData.fecha_vencimiento_seguro_americano),
       };
 
       const camionData = {
@@ -550,18 +587,6 @@ export default function CamionesPage() {
       };
 
       if (editingCamion) {
-        // Show a confirmation with the payload so user can inspect without DevTools
-        try {
-          const pretty = JSON.stringify(camionData, null, 2);
-          const ok = confirm("Confirmar actualización del camión con el siguiente payload:\n\n" + pretty);
-          if (!ok) {
-            setSaving(false);
-            return;
-          }
-        } catch (e) {
-          // ignore confirm errors and proceed
-        }
-
         // Perform update using helper which updates local state
         await performUpdate(camionData);
       } else {
@@ -611,10 +636,12 @@ export default function CamionesPage() {
       await cargarCamiones();
       setShowForm(false);
       if (editingCamion) {
+        // Esperar cierre de animación del modal de edición antes de abrir detalles
         setActiveTab("informacion");
-        setTimeout(() => setShowDetallesCamion(true), 60);
+        setTimeout(() => setShowDetallesCamion(true), 300);
       }
-      limpiarFormulario();
+      // No resetear la pestaña cuando venimos de una edición para que "informacion" se muestre
+      limpiarFormulario({ resetTab: !!editingCamion ? false : true });
     } catch (error) {
       console.error("Error guardando camión:", error);
       toast({ title: "Error inesperado al guardar el camión", variant: "destructive" });
@@ -1201,7 +1228,7 @@ export default function CamionesPage() {
               tipo: "verificacion",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
-              fecha: proximaVerificacion.toLocaleDateString(),
+              fecha: formatDateMatamoros(datos.frecuencia_verificacion),
               mensaje:
                 diasRestantes <= 0
                   ? `Verificación vencida hace ${Math.abs(diasRestantes)} días`
@@ -1462,9 +1489,9 @@ export default function CamionesPage() {
         kilometraje_agregado: kilometrajeAgregado,
         kilometraje_nuevo: kilometrajeActual,
         tramo_recorrido: kilometrajeFormData.tramo_recorrido,
-        fecha_viaje: kilometrajeFormData.fecha_viaje,
+        fecha_viaje: normalizeDate(kilometrajeFormData.fecha_viaje) || null,
         comentarios: kilometrajeFormData.comentarios_viaje,
-        fecha_registro: new Date().toISOString(),
+        fecha_registro: new Date().toISOString().split("T")[0],
       };
 
       // Intentar guardar en tabla de registros de viaje
@@ -1706,7 +1733,7 @@ export default function CamionesPage() {
           kilometraje_nuevo:
             editingRegistro.kilometraje_anterior + nuevoKilometrajeAgregado,
           tramo_recorrido: editRegistroFormData.tramo_recorrido,
-          fecha_viaje: editRegistroFormData.fecha_viaje,
+          fecha_viaje: normalizeDate(editRegistroFormData.fecha_viaje) || null,
           comentarios: editRegistroFormData.comentarios_viaje,
           updated_at: new Date().toISOString(),
         })
@@ -1779,12 +1806,12 @@ export default function CamionesPage() {
       const { error } = await supabase
         .from("registros_mantenimiento")
         .update({
-          fecha_mantenimiento: editMantenimientoFormData.fecha_mantenimiento,
+          fecha_mantenimiento: normalizeDate(editMantenimientoFormData.fecha_mantenimiento),
           tipo_mantenimiento: editMantenimientoFormData.tipo_mantenimiento,
           detalles_mantenimiento:
             editMantenimientoFormData.detalles_mantenimiento,
           proximo_mantenimiento:
-            editMantenimientoFormData.proximo_mantenimiento,
+            normalizeDate(editMantenimientoFormData.proximo_mantenimiento),
           updated_at: new Date().toISOString(),
         })
         .eq("id", editingRegistroMantenimiento.id);
@@ -1884,17 +1911,19 @@ export default function CamionesPage() {
       // Guardar registro de mantenimiento en la tabla si existe
       if (registrosMantenimientoTableExists) {
         // Normalizar campos y alinear con esquema de la tabla
-        const fechaM = (mantenimientoFormData.fecha_mantenimiento || "").trim();
-        const proxM = (mantenimientoFormData.proximo_mantenimiento || "").trim();
+  const fechaMraw = (mantenimientoFormData.fecha_mantenimiento || "").trim();
+  const proxMraw = (mantenimientoFormData.proximo_mantenimiento || "").trim();
+  const fechaM = normalizeDate(fechaMraw) || null;
+  const proxM = normalizeDate(proxMraw) || null;
         const tipoM = (mantenimientoFormData.tipo_mantenimiento || "general").trim();
         const detalles = mantenimientoFormData.detalles_mantenimiento;
 
         const registroMantenimiento: any = {
           camion_id: selectedCamionMantenimiento.id,
-          fecha_mantenimiento: fechaM || null, // DATE
+          fecha_mantenimiento: fechaM, // DATE
           tipo_mantenimiento: tipoM,
           detalles_mantenimiento: detalles,
-          proximo_mantenimiento: proxM || null, // DATE
+          proximo_mantenimiento: proxM, // DATE
           kilometraje_actual: selectedCamionMantenimiento.kilometraje,
         };
 
@@ -2011,9 +2040,9 @@ export default function CamionesPage() {
       // Kilometraje actual formateado para lectura humana
       ["Kilometraje actual", camion.kilometraje != null ? (typeof camion.kilometraje === 'number' ? `${camion.kilometraje.toLocaleString('es-MX')} km` : String(camion.kilometraje)) : "No registrado"],
       ["Número de serie", obs.numero_serie || obs.numeroSerie || "No especificado"],
-      ["Último viaje - Fecha", latestTripDate ? new Date(latestTripDate).toLocaleDateString('es-MX') : "No registrado"],
+  ["Último viaje - Fecha", latestTripDate ? formatDateMatamoros(latestTripDate) : "No registrado"],
       ["Último viaje - Kilometraje", latestTripKm ? (typeof latestTripKm === 'number' ? `${latestTripKm.toLocaleString('es-MX')} km` : String(latestTripKm)) : "No registrado"],
-      ["Último mantenimiento - Fecha", latestMantDate ? new Date(latestMantDate).toLocaleDateString('es-MX') : "No registrado"],
+  ["Último mantenimiento - Fecha", latestMantDate ? formatDateMatamoros(latestMantDate) : "No registrado"],
       ["Comentarios", obs.comentarios || ""],
     ];
 
@@ -2066,7 +2095,7 @@ export default function CamionesPage() {
           csvLines.push(["Fecha (km+)", "Kilometraje anterior", "Kilometraje nuevo", "Tramo recorrido", "Comentarios"].map(h => `"${h}"`).join(","));
           (data as any[]).forEach((row) => {
             const fechaRaw = row?.fecha_viaje || row?.fecha_registro || "";
-            const fecha = fechaRaw ? new Date(fechaRaw).toLocaleDateString('es-MX') : "";
+            const fecha = fechaRaw ? formatDateMatamoros(fechaRaw) : "";
 
             const kmAgregadoRaw = row?.kilometraje_agregado != null ? Number(row.kilometraje_agregado) : null;
             const kmAgregadoDisplay = kmAgregadoRaw != null ? `(+${kmAgregadoRaw.toLocaleString('es-MX')} km)` : "";
@@ -2092,10 +2121,10 @@ export default function CamionesPage() {
           // Columns: Fecha, Tipo, Detalles, Próximo mantenimiento, Kilometraje actual, Comentarios, Proveedor (if any)
           csvLines.push(["Fecha", "Tipo", "Detalles", "Próximo mantenimiento", "Kilometraje actual", "Comentarios", "Proveedor"].map(h => `"${h}"`).join(","));
           (data as any[]).forEach((row) => {
-            const fecha = row?.fecha_mantenimiento ? new Date(row.fecha_mantenimiento).toLocaleDateString('es-MX') : "";
+            const fecha = row?.fecha_mantenimiento ? formatDateMatamoros(row.fecha_mantenimiento) : "";
             const tipo = row?.tipo_mantenimiento || "";
             const detalles = row?.detalles_mantenimiento || row?.detalles || "";
-            const prox = row?.proximo_mantenimiento ? new Date(row.proximo_mantenimiento).toLocaleDateString('es-MX') : "";
+            const prox = row?.proximo_mantenimiento ? formatDateMatamoros(row.proximo_mantenimiento) : "";
             const kmActual = row?.kilometraje_actual != null ? `${Number(row.kilometraje_actual).toLocaleString('es-MX')} km` : "";
             const comentarios = gatherComments(row);
             const proveedor = row?.proveedor || row?.taller || "";
@@ -2156,7 +2185,7 @@ export default function CamionesPage() {
         if (rel.table === "recordatorios") {
           csvLines.push(["Fecha", "Tipo", "Kilometraje asociado", "Notas", "Comentarios"].map(h => `"${h}"`).join(","));
           (data as any[]).forEach((row) => {
-            const fecha = row?.fecha_vencimiento ? new Date(row.fecha_vencimiento).toLocaleDateString('es-MX') : (row?.fecha ? new Date(row.fecha).toLocaleDateString('es-MX') : "");
+            const fecha = row?.fecha_vencimiento ? formatDateMatamoros(row.fecha_vencimiento) : (row?.fecha ? formatDateMatamoros(row.fecha) : "");
             const tipo = row?.tipo || row?.categoria || row?.nombre || "";
             const km = row?.kilometraje != null ? (typeof row.kilometraje === 'number' ? row.kilometraje.toLocaleString('es-MX') : String(row.kilometraje)) : (row?.km != null ? String(row.km) : "");
             const notas = row?.notas || row?.descripcion || row?.comentarios || "";
@@ -2175,10 +2204,10 @@ export default function CamionesPage() {
               if (v && idFieldMap[h]) {
                 v = idFieldMap[h][String(v)] || String(v);
               }
-              // Format date-like fields
+              // Format date-like fields using consistent Matamoros display
               if (v && /fecha|fecha_creacion|fecha_registro|fecha_vencimiento|fecha_mantenimiento|fecha_viaje/i.test(h)) {
                 try {
-                  v = new Date(v).toLocaleDateString('es-MX');
+                  v = formatDateMatamoros(String(v));
                 } catch {}
               }
               return `"${esc(v)}"`;
@@ -2250,24 +2279,6 @@ export default function CamionesPage() {
             <p className="text-gray-600 mt-2">Administrar flota de camiones</p>
           </div>
           <div className="flex space-x-2">
-            <div className="flex items-center">
-              <span className="text-sm text-gray-600 mr-2 hidden sm:inline">Ver por fila:</span>
-              <Select
-                value={String(cardsPerRow)}
-                onValueChange={(v) => setCardsPerRow(Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)))}
-              >
-                <SelectTrigger className="w-[110px]">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="2">2 por fila</SelectItem>
-                  <SelectItem value="3">3 por fila</SelectItem>
-                  <SelectItem value="4">4 por fila</SelectItem>
-                  <SelectItem value="5">5 por fila</SelectItem>
-                  <SelectItem value="6">6 por fila</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
             <Button
               variant="outline"
               onClick={descargarExcel}
@@ -3193,6 +3204,21 @@ export default function CamionesPage() {
                   </Button>
                   <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
                   <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-700">Ver por fila:</span>
+                    <Select
+                      value={String(cardsPerRow)}
+                      onValueChange={(v) => setCardsPerRow(Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)))}
+                    >
+                      <SelectTrigger className="w-[110px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="2">2 por fila</SelectItem>
+                        <SelectItem value="3">3 por fila</SelectItem>
+                        <SelectItem value="4">4 por fila</SelectItem>
+           
+                      </SelectContent>
+                    </Select>
                     <span className="text-sm text-gray-700">Por página:</span>
                     <Select
                       value={String(pageSize)}
@@ -3410,8 +3436,7 @@ export default function CamionesPage() {
                     <div className="flex items-center space-x-2 text-sm">
                       <Calendar className="h-4 w-4 text-gray-400" />
                       <span>
-                        Registrado:{" "}
-                        {new Date(camion.fecha_registro).toLocaleDateString()}
+                        Registrado: {formatDateMatamoros(camion.fecha_registro)}
                       </span>
                     </div>
                     {datosAdicionales.comentarios && (
@@ -3937,7 +3962,7 @@ export default function CamionesPage() {
                                         </div>
                                         <div>
                                           <span className="font-medium text-gray-600">Vencimiento:</span>
-                                          <p>{numero.fecha_vencimiento ? new Date(numero.fecha_vencimiento).toLocaleDateString() : 'No especificado'}</p>
+                                          <p>{numero.fecha_vencimiento ? formatDateMatamoros(numero.fecha_vencimiento) : 'No especificado'}</p>
                                         </div>
                                       </div>
                                     </div>
@@ -3960,14 +3985,9 @@ export default function CamionesPage() {
                         let datosAdicionales: any = {};
                         if (camionDetalle.observaciones) {
                           try {
-                            datosAdicionales = JSON.parse(
-                              camionDetalle.observaciones
-                            );
+                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
                           } catch (error) {
-                            console.error(
-                              "Error parsing observaciones:",
-                              error
-                            );
+                            console.error("Error parsing observaciones:", error);
                           }
                         }
 
@@ -4085,7 +4105,7 @@ export default function CamionesPage() {
                                     <span className="font-medium text-gray-600">
                                       Próxima Verificación:
                                     </span>
-                                    <p>{formatDateMatamoros(datosAdicionales.proxima_verificacion)}</p>
+                                    <p>{formatDateMatamoros(datosAdicionales.proxima_verificacion || datosAdicionales.frecuencia_verificacion)}</p>
                                   </div>
                                 </div>
                               </CardContent>
@@ -4164,7 +4184,7 @@ export default function CamionesPage() {
                             <tbody className="divide-y divide-gray-100">
                               {paginated.map((registro) => (
                                 <tr key={registro.id} className="hover:bg-gray-50">
-                                  <td className="px-3 py-2 whitespace-nowrap">{new Date(registro.fecha_viaje).toLocaleDateString()}</td>
+                                  <td className="px-3 py-2 whitespace-nowrap">{formatDateMatamoros(registro.fecha_viaje)}</td>
                                   <td className="px-3 py-2 font-semibold text-blue-600">+{registro.kilometraje_agregado.toLocaleString('es-MX')} km</td>
                                   <td className="px-3 py-2">{registro.tramo_recorrido}</td>
                                   <td className="px-3 py-2 max-w-[240px] truncate" title={registro.comentarios || ''}>{registro.comentarios || '-'}</td>
@@ -4361,11 +4381,11 @@ export default function CamionesPage() {
                                       const truncated = detalles.length > 70 ? detalles.slice(0,70) + '…' : detalles;
                                       return (
                                         <tr key={registro.id} className="hover:bg-gray-50">
-                                          <td className="px-3 py-2 whitespace-nowrap">{new Date(registro.fecha_mantenimiento).toLocaleDateString()}</td>
+                                          <td className="px-3 py-2 whitespace-nowrap">{formatDateMatamoros(registro.fecha_mantenimiento)}</td>
                                           <td className="px-3 py-2 capitalize">{registro.tipo_mantenimiento || 'General'}</td>
                                           <td className="px-3 py-2" title={detalles}>{truncated || <span className="text-gray-400 italic">Sin detalles</span>}</td>
                                           <td className="px-3 py-2 whitespace-nowrap">
-                                            {registro.proximo_mantenimiento ? new Date(registro.proximo_mantenimiento).toLocaleDateString() : <span className="text-gray-400 italic">—</span>}
+                                            {registro.proximo_mantenimiento ? formatDateMatamoros(registro.proximo_mantenimiento) : <span className="text-gray-400 italic">—</span>}
                                           </td>
                                           <td className="px-3 py-2 whitespace-nowrap">
                                             <div className="flex items-center gap-2">
@@ -4476,13 +4496,13 @@ export default function CamionesPage() {
                         <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div>
                             <span className="font-medium text-gray-600">Fecha de Registro:</span>
-                            <p>{new Date(camionDetalle.fecha_registro).toLocaleDateString()}</p>
+                            <p>{formatDateMatamoros(camionDetalle.fecha_registro)}</p>
                           </div>
                           <div>
                             <span className="font-medium text-gray-600">Última Actualización:</span>
                             <p>
                               {camionDetalle.updated_at
-                                ? new Date(camionDetalle.updated_at).toLocaleDateString()
+                                ? formatDateMatamoros(camionDetalle.updated_at)
                                 : "No disponible"}
                             </p>
                           </div>
@@ -4601,7 +4621,20 @@ export default function CamionesPage() {
                                           ) : (
                                             <div className="space-y-1">
                                               <p className="text-gray-800 break-words leading-snug">{comentario.text}</p>
-                                              <p className="text-[10px] uppercase tracking-wide text-gray-500">{new Date(comentario.date).toLocaleString()}</p>
+                                              <p className="text-[11px] text-gray-600">
+                                                {(() => {
+                                                  try {
+                                                    const d = comentario.date;
+                                                    const dt = new Date(d);
+                                                    if (isNaN(+dt)) return "No especificado";
+                                                    const fecha = formatDateMatamoros(String(d));
+                                                    const hora = dt.toLocaleTimeString("es-MX", { timeZone: "America/Matamoros", hour: "2-digit", minute: "2-digit" });
+                                                    return `${fecha} ${hora}`;
+                                                  } catch (e) {
+                                                    return "No especificado";
+                                                  }
+                                                })()}
+                                              </p>
                                             </div>
                                           )}
                                         </div>
@@ -5104,7 +5137,7 @@ export default function CamionesPage() {
               <Button variant="outline" onClick={cancelarEdicionMantenimiento}>
                 Cancelar
               </Button>
-              <Button onClick={guardarEdicionMantenimiento}>
+              <Button onClick={guardarEdicionMantenimiento} className="bg-green-600 text-white hover:bg-green-700">
                 Actualizar Mantenimiento
               </Button>
             </div>

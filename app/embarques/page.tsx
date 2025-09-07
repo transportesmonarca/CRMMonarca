@@ -50,6 +50,8 @@ import { useToast } from "@/hooks/use-toast";
 import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
 import { agregarAuditLog } from "@/lib/audit";
+import { formatDateMatamoros } from '@/lib/date-utils';
+import { normalizeDate } from '@/lib/date-utils';
 import {
   supabase,
   type Embarque,
@@ -104,6 +106,22 @@ export default function EmbarquesPage() {
   const [embarqueFotos, setEmbarqueFotos] = useState<FotoEmbarque[]>([]);
 
   const { toast } = useToast();
+
+  // Parse a date-only string (YYYY-MM-DD) into a local Date at midnight
+  const parseDateOnlyLocal = (value?: string | null) => {
+    if (!value) return null;
+    try {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+        const [y, m, d] = value.split("-");
+        return new Date(Number(y), Number(m) - 1, Number(d));
+      }
+      const dt = new Date(value);
+      if (isNaN(dt.getTime())) return null;
+      return new Date(dt.getFullYear(), dt.getMonth(), dt.getDate());
+    } catch (e) {
+      return null;
+    }
+  };
 
   // Estado para el formulario
   const [formData, setFormData] = useState({
@@ -614,12 +632,9 @@ export default function EmbarquesPage() {
     // Validación: fecha_recolecta no puede ser después de fecha_entrega
     try {
       if (formData.fecha_recolecta && formData.fecha_entrega) {
-        const fr = new Date(formData.fecha_recolecta);
-        const fe = new Date(formData.fecha_entrega);
-        // comparar solo fechas (sin hora)
-        fr.setHours(0,0,0,0);
-        fe.setHours(0,0,0,0);
-        if (fr.getTime() > fe.getTime()) {
+        const fr = parseDateOnlyLocal(formData.fecha_recolecta) ?? new Date(formData.fecha_recolecta);
+        const fe = parseDateOnlyLocal(formData.fecha_entrega) ?? new Date(formData.fecha_entrega);
+        if (fr && fe && fr.getTime() > fe.getTime()) {
           toast({
             title: "Fechas inconsistentes",
             description: "La fecha de recolecta no puede ser posterior a la fecha de entrega.",
@@ -715,10 +730,10 @@ export default function EmbarquesPage() {
         destino: formData.direccion_entrega || "Por definir",
         direccion_recolecta: formData.direccion_recolecta,
         direccion_entrega: formData.direccion_entrega,
-        fecha_recolecta: formData.fecha_recolecta || null,
-        hora_recolecta: formData.hora_recolecta || null,
-        fecha_entrega: formData.fecha_entrega || null,
-        hora_entrega: formData.hora_entrega || null,
+  fecha_recolecta: normalizeDate(formData.fecha_recolecta) || null,
+  hora_recolecta: formData.hora_recolecta || null,
+  fecha_entrega: normalizeDate(formData.fecha_entrega) || null,
+  hora_entrega: formData.hora_entrega || null,
         contenido: formData.contenido || null,
         peso: formData.peso ? Number.parseFloat(formData.peso) : null,
         estado: embarqueEditando ? embarqueEditando.estado : "creado",
@@ -866,6 +881,56 @@ export default function EmbarquesPage() {
   const handleViewDetails = async (embarque: Embarque) => {
     setEmbarqueDetalle(embarque);
     setShowDetailModal(true);
+
+    // Diagnostics: if this is the problematic folio, log more info
+    const isTargetFolio = String(embarque.folio || "").includes("2509-015") || String(embarque.folio || "").includes("TIM-2509-015");
+
+    // If the embedded cliente object is missing billing fields
+    // (forma_facturacion, divisa_pago, empresa_facturadora), try fetching
+    // the full cliente record so the General tab can show accurate data.
+    try {
+      const clienteObj = (embarque as any).cliente;
+      const clienteIdFromEmbed = clienteObj?.id;
+      const clienteIdFromRoot = (embarque as any).cliente_id;
+      const clienteId = clienteIdFromEmbed || clienteIdFromRoot;
+
+      const hasBillingFields = !!((clienteObj as any)?.forma_facturacion || (clienteObj as any)?.divisa_pago || (clienteObj as any)?.empresa_facturadora || (clienteObj as any)?.razon_social);
+
+      if (isTargetFolio) console.debug("handleViewDetails called for folio", embarque.folio, "embedded cliente:", clienteObj, "cliente_id:", clienteId);
+
+      if (clienteId && !hasBillingFields) {
+        const { data: clienteData, error: clienteError } = await supabase
+          .from("clientes")
+          .select("*")
+          .eq("id", clienteId)
+          .single();
+
+        if (!clienteError && clienteData) {
+          // merge the fresh cliente into the detalle so the UI reads it
+          setEmbarqueDetalle((prev) => ({ ...(prev as any), cliente: clienteData }));
+          if (isTargetFolio) console.debug("Fetched cliente for details view (supabase):", clienteData);
+        } else {
+          if (isTargetFolio) console.debug("Cliente fetch returned no data or error:", clienteId, clienteError);
+          // fallback: try to find the cliente in the in-memory `clientes` list
+          try {
+            const local = clientes.find((c) => c.id === clienteId);
+            if (local) {
+              setEmbarqueDetalle((prev) => ({ ...(prev as any), cliente: local }));
+              if (isTargetFolio) console.debug("Used cliente from in-memory clientes:", local);
+            } else if (isTargetFolio) {
+              console.debug("No cliente found in in-memory clientes for id:", clienteId);
+            }
+          } catch (eLocal) {
+            if (isTargetFolio) console.warn("Error looking up local cliente:", eLocal);
+          }
+        }
+      } else if (isTargetFolio) {
+        console.debug("No fetch needed; cliente already has billing fields:", clienteObj);
+      }
+    } catch (e) {
+      console.warn("Error fetching cliente for details view:", e);
+    }
+
     if (embarque.id) {
       const fotos = await obtenerFotosEmbarque(embarque.id); // Fetch photos
       setEmbarqueFotos(fotos); // Set photos in state
@@ -1351,7 +1416,7 @@ export default function EmbarquesPage() {
 
               <div class="section meta-row">
                 <div class="label">Recolecta</div>
-                <div class="value">${embarqueDetalle.fecha_recolecta ? new Date(embarqueDetalle.fecha_recolecta).toLocaleDateString() : ''} ${embarqueDetalle.hora_recolecta || ''}</div>
+                <div class="value">${embarqueDetalle.fecha_recolecta ? formatDateMatamoros(embarqueDetalle.fecha_recolecta) : ''} ${embarqueDetalle.hora_recolecta || ''}</div>
               </div>
 
               <div class="section meta-row">
@@ -1361,7 +1426,7 @@ export default function EmbarquesPage() {
 
               <div class="section meta-row">
                 <div class="label">Entrega</div>
-                <div class="value">${embarqueDetalle.fecha_entrega ? new Date(embarqueDetalle.fecha_entrega).toLocaleDateString() : ''} ${embarqueDetalle.hora_entrega || ''}</div>
+                <div class="value">${embarqueDetalle.fecha_entrega ? formatDateMatamoros(embarqueDetalle.fecha_entrega) : ''} ${embarqueDetalle.hora_entrega || ''}</div>
               </div>
 
               <div class="section meta-row">
@@ -2811,11 +2876,8 @@ export default function EmbarquesPage() {
                       <div>
                         <p className="font-medium">Fecha Recolecta</p>
                         <p className="text-gray-600">
-                          {new Date(
-                            embarque.fecha_recolecta
-                          ).toLocaleDateString()}
-                          {embarque.hora_recolecta &&
-                            ` ${embarque.hora_recolecta}`}
+                          {formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta)}
+                          {embarque.hora_recolecta && ` ${embarque.hora_recolecta}`}
                         </p>
                       </div>
                     </div>
@@ -2837,9 +2899,7 @@ export default function EmbarquesPage() {
                       <div>
                         <p className="font-medium">Fecha Entrega</p>
                         <p className="text-gray-600">
-                          {new Date(
-                            embarque.fecha_entrega
-                          ).toLocaleDateString()}
+                          {formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega)}
                           {embarque.hora_entrega && ` ${embarque.hora_entrega}`}
                         </p>
                       </div>
@@ -3908,31 +3968,27 @@ export default function EmbarquesPage() {
                                 "Sin especificar"}
                             </p>
                           </div>
-                          <div className="space-y-4">
-                            <div>
+                          <div className="flex items-start gap-4">
+                            <div className="flex-1">
                               <Label className="text-sm font-medium text-gray-700">
                                 Fecha de Recolecta
                               </Label>
                               <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
                                 {embarqueDetalle.fecha_recolecta
-                                  ? new Date(
-                                      embarqueDetalle.fecha_recolecta
-                                    ).toLocaleDateString("es-MX", {
-                                      weekday: "long",
-                                      year: "numeric",
-                                      month: "long",
-                                      day: "numeric",
-                                    })
+                                  ? formatDateMatamoros(
+                                      normalizeDate(
+                                        embarqueDetalle.fecha_recolecta
+                                      ) || embarqueDetalle.fecha_recolecta
+                                    )
                                   : "Sin especificar"}
                               </p>
                             </div>
-                            <div>
+                            <div className="w-40 shrink-0">
                               <Label className="text-sm font-medium text-gray-700">
                                 Hora de Recolecta
                               </Label>
                               <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {embarqueDetalle.hora_recolecta ||
-                                  "Sin especificar"}
+                                {embarqueDetalle.hora_recolecta || "Sin especificar"}
                               </p>
                             </div>
                           </div>
@@ -3954,31 +4010,29 @@ export default function EmbarquesPage() {
                             </p>
                           </div>
                           <div className="space-y-4">
-                            <div>
-                              <Label className="text-sm font-medium text-gray-700">
-                                Fecha de Entrega
-                              </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {embarqueDetalle.fecha_entrega
-                                  ? new Date(
-                                      embarqueDetalle.fecha_entrega
-                                    ).toLocaleDateString("es-MX", {
-                                      weekday: "long",
-                                      year: "numeric",
-                                      month: "long",
-                                      day: "numeric",
-                                    })
-                                  : "Sin especificar"}
-                              </p>
-                            </div>
-                            <div>
-                              <Label className="text-sm font-medium text-gray-700">
-                                Hora de Entrega
-                              </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {embarqueDetalle.hora_entrega ||
-                                  "Sin especificar"}
-                              </p>
+                            <div className="flex items-start gap-4">
+                              <div className="flex-1">
+                                <Label className="text-sm font-medium text-gray-700">
+                                  Fecha de Entrega
+                                </Label>
+                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                  {embarqueDetalle.fecha_entrega
+                                    ? formatDateMatamoros(
+                                        normalizeDate(
+                                          embarqueDetalle.fecha_entrega
+                                        ) || embarqueDetalle.fecha_entrega
+                                      )
+                                    : "Sin especificar"}
+                                </p>
+                              </div>
+                              <div className="w-40 shrink-0">
+                                <Label className="text-sm font-medium text-gray-700">
+                                  Hora de Entrega
+                                </Label>
+                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                  {embarqueDetalle.hora_entrega || "Sin especificar"}
+                                </p>
+                              </div>
                             </div>
                           </div>
                         </div>
