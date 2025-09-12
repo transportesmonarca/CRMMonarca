@@ -271,7 +271,7 @@ export function Header({ onMenuClick, showControls = true }: HeaderProps) {
               <Link href="/" passHref>
                 <Image
                   src="/images/logo-monarca-transparent.png"
-                  alt="Transportes Monarca"
+                  alt="Transportes Internacionales Monarca"
                   fill
                   className="object-contain"
                   priority
@@ -279,7 +279,7 @@ export function Header({ onMenuClick, showControls = true }: HeaderProps) {
               </Link>
             </div>
             <div className="hidden sm:block">
-              <h1 className="text-xl font-bold text-gray-900">Transportes Monarca</h1>
+              <h1 className="text-xl font-bold text-gray-900">Transportes Internacionales Monarca</h1>
               <p className="text-sm text-gray-600 flex items-center gap-1">
                 <span className="text-base">🇲🇽</span>
                 <span className="text-base">🇺🇸</span>

@@ -6,8 +6,8 @@ import "./globals.css"
 const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
-  title: "Transportes Monarca App",
-  description: "Sistema de gestión para Transportes Monarca",
+  title: "Transportes Internacionales Monarca App",
+  description: "Sistema de gestión para Transportes Internacionales Monarca",
   icons: {
     icon: "/images/logo-monarca-transparent.png",
     shortcut: "/images/logo-monarca-transparent.png",

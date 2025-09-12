@@ -1,33 +1,20 @@
 "use client";
 
+import { useState, useEffect, useRef } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+
+import { supabase } from "@/lib/supabase";
+import { formatDateMatamoros, todayLocalISODate } from "@/lib/date-utils";
+import { uploadFile, eliminarDocumentoOperador } from "@/lib/blob";
+import { agregarAuditLog } from "@/lib/audit";
+import { toast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -40,43 +27,45 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import {
-  Truck,
-  Plus,
-  Search,
-  Edit,
-  Trash2,
-  Download,
-  Gauge,
-  Calendar,
-  Shield,
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
   AlertTriangle,
-  Eye,
-  ClipboardList,
+  Shield,
+  Calendar,
+  UploadCloud,
+  Truck,
   ChevronLeft,
   ChevronRight,
+  Download,
+  Plus,
+  Search,
+  Eye,
+  Edit,
+  Trash2,
+  Paperclip,
+  Gauge,
+  FileText,
+  ImageIcon,
+  Save,
+  CheckCircle,
+  X,
 } from "lucide-react";
-import { useState, useEffect } from "react";
-import { supabase, type Camion, type MarcaCamion } from "@/lib/supabase";
-import { v4 as uuidv4 } from "uuid";
-import { agregarAuditLog } from "@/lib/audit";
-import { toast } from "@/hooks/use-toast";
-import { formatDate } from "date-fns";
+import type { Camion, MarcaCamion } from "@/lib/supabase";
 
-// Definir una interfaz para la estructura de los comentarios
 interface Comentario {
   id: string;
   text: string;
   date: string;
 }
 
-// Definir interfaz para números adicionales
-interface NumeroAdicional {
-  nombre: string;
-  numero: string;
-  fecha_vencimiento: string;
-}
-
-// Definir la estructura inicial del formulario
 const initialFormData = {
   numero_economico: "",
   marca: "",
@@ -96,24 +85,18 @@ const initialFormData = {
   tag_americano: "",
   tag_mexicano: "",
   numero_base: "",
-  numeros_adicionales: [] as NumeroAdicional[],
+  numeros_adicionales: [] as any[],
+  documentos: [] as any[],
 };
 
-function formatDateMatamoros(value?: string | null) {
-  if (!value) return "No especificado";
-
-  // Caso 1: fecha "date-only" (YYYY-MM-DD) -> NO usar new Date()
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    const [y, m, d] = value.split("-");
-    // Formato local es-MX: dd/mm/aaaa
-    return `${d}/${m}/${y}`;
-  }
-
-  // Caso 2: timestamp/ISO -> sí podemos usar Date con timeZone
-  const dt = new Date(value);
-  if (isNaN(+dt)) return "No especificado";
-  return dt.toLocaleDateString("es-MX", { timeZone: "America/Matamoros" });
-}
+// Small UUID helper used in this file
+const uuidv4 = () => {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+};
 
 // Normalizar fecha: devolver siempre YYYY-MM-DD cuando sea posible.
 // - Si ya es date-only (YYYY-MM-DD) devolver tal cual.
@@ -175,8 +158,10 @@ export default function CamionesPage() {
   const [notificationOpen, setNotificationOpen] = useState(false);
   const [notificationMessage, setNotificationMessage] = useState("");
   const [notificationFolios, setNotificationFolios] = useState<string[]>([]);
-  const [activeTab, setActiveTab] = useState("basica");
+  const [activeTab, setActiveTab] = useState<string>("basica");
   const [loading, setLoading] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [selectedCamionKilometraje, setSelectedCamionKilometraje] =
     useState<Camion | null>(null);
   const [kilometrajeFormData, setKilometrajeFormData] = useState({
@@ -212,6 +197,40 @@ export default function CamionesPage() {
   });
   const [camionDetalle, setCamionDetalle] = useState<Camion | null>(null);
   const [showDetallesCamion, setShowDetallesCamion] = useState(false);
+
+  // Handler para selección/subida de archivos (usado por dropzone y input)
+  async function handleFilesSelected(files: File[]) {
+    if (!files || files.length === 0) return;
+    const existing = Array.isArray(formData.documentos) ? formData.documentos : [];
+    if (existing.length + files.length > 8) {
+      toast({ title: 'No puedes subir más de 8 archivos', variant: 'destructive' });
+      return;
+    }
+    setUploading(true);
+    try {
+      for (const file of files) {
+        const safeName = file.name.replace(/\s+/g, '_');
+        const folder = formData.numero_economico?.trim() ? `camiones/${formData.numero_economico}/adjuntos` : `camiones/sin-numero/adjuntos`;
+        const targetName = `${folder}/${Date.now()}_${safeName}`;
+        try {
+          const { url, pathname } = await uploadFile(targetName, file);
+          setFormData((prev) => ({
+            ...prev,
+            documentos: [
+              ...(Array.isArray(prev.documentos) ? prev.documentos : []),
+              { nombre_archivo: file.name, url, pathname },
+            ],
+          }));
+          toast({ title: `Archivo ${file.name} subido`, variant: 'success' });
+        } catch (err) {
+          console.error('upload error', err);
+          toast({ title: `Error subiendo ${file.name}`, variant: 'destructive' });
+        }
+      }
+    } finally {
+      setUploading(false);
+    }
+  }
 
   // Update helper moved above guardarCamion so it can be called from confirmation
   async function performUpdate(camionDataToUpdate: any) {
@@ -361,7 +380,7 @@ export default function CamionesPage() {
   // Limpiar formulario de camión
   // options.resetTab: si es false, preserva el valor actual de activeTab (útil al abrir el detalle luego de editar)
   const limpiarFormulario = (options: { resetTab?: boolean } = { resetTab: true }) => {
-    setFormData({ ...initialFormData });
+  setFormData({ ...initialFormData, documentos: [] });
     setEditingCamion(null);
     if (options.resetTab !== false) {
       setActiveTab("basica");
@@ -420,6 +439,7 @@ export default function CamionesPage() {
             fecha_vencimiento: item.fecha_vencimiento || "",
           }))
         : [],
+  documentos: Array.isArray(datosAdicionales.documentos) ? datosAdicionales.documentos : [],
     });
   setEditingCamion(camion);
   // Ensure the basic tab is active before opening the modal so fields render immediately
@@ -531,6 +551,9 @@ export default function CamionesPage() {
         historial_comentarios: Array.isArray(existingObservaciones.historial_comentarios)
           ? existingObservaciones.historial_comentarios
           : (existingObservaciones.comentarios ? [{ id: uuidv4(), text: existingObservaciones.comentarios, date: new Date().toISOString() }] : []),
+        documentos: Array.isArray(existingObservaciones.documentos)
+          ? existingObservaciones.documentos
+          : (Array.isArray(formData.documentos) ? formData.documentos : []),
       };
 
       // If user edited the comentarios textarea, append/update the historial_comentarios with the latest comment
@@ -2310,7 +2333,7 @@ export default function CamionesPage() {
                   Nuevo Camión
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+              <DialogContent className={`max-w-4xl ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
                 <DialogHeader>
                   <DialogTitle>
                     {editingCamion ? "Editar Camión" : "Nuevo Camión"}
@@ -2352,6 +2375,16 @@ export default function CamionesPage() {
                         }`}
                       >
                         Tags y Números
+                      </button>
+                      <button
+                        onClick={() => setActiveTab("adjuntos")}
+                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                          activeTab === "adjuntos"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        Adjuntos
                       </button>
                       <button
                         onClick={() => setActiveTab("comentarios")}
@@ -2885,12 +2918,102 @@ export default function CamionesPage() {
                       </div>
                     )}
 
+                    {activeTab === "adjuntos" && (
+                      <div className="space-y-4 min-h-[55vh]">
+                        <div>
+                          <Label>Adjuntos (máx 5)</Label>
+                          <div
+                            onDragOver={(e) => e.preventDefault()}
+                            onDrop={async (e) => {
+                              e.preventDefault();
+                              const dropped = Array.from(e.dataTransfer?.files || []);
+                              await handleFilesSelected(dropped);
+                            }}
+                            className="mt-2 border-2 border-dashed border-gray-300 rounded-lg p-4 flex flex-col items-center justify-center text-center bg-gray-50 hover:bg-gray-100 cursor-pointer"
+                            onClick={() => fileInputRef.current?.click()}
+                          >
+                            <UploadCloud className="h-6 w-6 text-gray-500 mb-2" />
+                            <div className="text-sm text-gray-700">Arrastra archivos aquí o haz clic para seleccionar</div>
+                            <div className="text-xs text-gray-500 mt-1">Acepta imágenes y PDFs. Máximo 8 archivos por camión.</div>
+                            <button type="button" className="mt-3 bg-white border rounded px-3 py-1 text-sm text-gray-700" onClick={(e) => { e.stopPropagation(); fileInputRef.current?.click(); }}>
+                              <Paperclip className="inline-block mr-2" />Seleccionar archivos
+                            </button>
+                          </div>
+
+                            <input ref={fileInputRef} id="adjuntos" type="file" accept="image/*,.pdf" multiple className="hidden" onChange={async (e) => {
+                            const files = Array.from((e.target as HTMLInputElement).files || []);
+                            await handleFilesSelected(files);
+                            (e.target as HTMLInputElement).value = '';
+                          }} />
+
+                          <div className="mt-4">
+                            {uploading ? (
+                              <div className="flex items-center space-x-2 text-sm text-gray-600">
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-700" /> Subiendo...
+                              </div>
+                            ) : null}
+
+                            {((Array.isArray(formData.documentos) ? formData.documentos : [])).length === 0 ? (
+                              <div className="text-sm text-gray-500">No hay adjuntos</div>
+                            ) : (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                {(formData.documentos || []).map((doc, idx) => {
+                                  const name = doc.nombre_archivo || doc.url || 'archivo';
+                                  const isPdf = (name || '').toLowerCase().endsWith('.pdf') || (doc.url || '').toLowerCase().includes('.pdf');
+                                  return (
+                                    <div key={idx} className="flex flex-col items-stretch bg-white border rounded overflow-hidden">
+                                      <div className="h-28 w-full flex items-center justify-center bg-gray-50">
+                                        {isPdf ? (
+                                          <div className="flex flex-col items-center text-gray-600">
+                                            <svg className="h-8 w-8 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                              <path d="M12 2L7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7l-5-5z" />
+                                              <path d="M7 7h10" />
+                                            </svg>
+                                            <span className="text-xs mt-1 text-gray-700">PDF</span>
+                                          </div>
+                                        ) : (
+                                          <img src={doc.url} alt={name} className="h-24 w-full object-cover" />
+                                        )}
+                                      </div>
+                                      <div className="p-2 flex-1 flex flex-col justify-between">
+                                        <div className="text-xs text-gray-700 truncate">{name}</div>
+                                        <div className="mt-2 flex items-center justify-end space-x-2">
+                                          <Button variant="ghost" size="sm" onClick={() => window.open(doc.url, '_blank')}>
+                                            <Eye className="h-4 w-4 mr-1" />Ver
+                                          </Button>
+                                          <Button variant="outline" size="sm" onClick={async () => {
+                                            if (!doc.pathname) return;
+                                            try {
+                                              setUploading(true);
+                                              await eliminarDocumentoOperador(doc.pathname);
+                                              setFormData((prev) => ({
+                                                ...prev,
+                                                documentos: (Array.isArray(prev.documentos) ? prev.documentos : []).filter((_, i) => i !== idx),
+                                              }));
+                                              toast({ title: 'Adjunto eliminado', variant: 'success' });
+                                            } catch (e) {
+                                              console.error(e);
+                                              toast({ title: 'Error eliminando', variant: 'destructive' });
+                                            } finally { setUploading(false); }
+                                          }}>
+                                            <Trash2 className="h-4 w-4 mr-1" />Eliminar
+                                          </Button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
                     {activeTab === "comentarios" && (
                       <div className="space-y-4">
                         <div className="space-y-2">
-                          <Label htmlFor="comentarios">
-                            Comentarios Adicionales
-                          </Label>
+                          <Label htmlFor="comentarios">Comentarios Adicionales</Label>
                           <Textarea
                             id="comentarios"
                             value={formData.comentarios}
@@ -3757,6 +3880,16 @@ export default function CamionesPage() {
                     >
                       Comentarios
                     </button>
+                    <button
+                      onClick={() => setActiveTab("adjuntos")}
+                      className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                        activeTab === "adjuntos"
+                          ? "border-blue-500 text-blue-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                      }`}
+                    >
+                      Adjuntos
+                    </button>
                   </nav>
                 </div>
 
@@ -3979,9 +4112,103 @@ export default function CamionesPage() {
                     </div>
                   )}
 
-                  {activeTab === "documentos-detalle" && (
+                  {(activeTab === "documentos-detalle" || activeTab === "adjuntos") && (
+                    <div className="space-y-6">
+
+                  {activeTab === "adjuntos" && (
                     <div className="space-y-6">
                       {(() => {
+                        let datosAdicionales: any = {};
+                        if (camionDetalle && camionDetalle.observaciones) {
+                          try {
+                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
+                          } catch (e) {
+                            console.error('Error parsing observaciones for detalles adjuntos', e);
+                          }
+                        }
+                        const docs = Array.isArray(datosAdicionales.documentos) ? datosAdicionales.documentos : [];
+
+                        // Normalize each document to include a display_url we can safely use in <img> and links.
+                        const normalized = docs.map((d: any) => {
+                          const pathname = d.pathname || d.path || '';
+                          const rawUrl = d.url || d.url_blob || d.urlBlob || '';
+                          let display_url = '';
+                          if (rawUrl && /^https?:\/\//i.test(rawUrl)) {
+                            display_url = rawUrl;
+                          } else if (rawUrl) {
+                            // rawUrl might actually be a pathname; proxy it
+                            display_url = `/api/blob-proxy?pathname=${encodeURIComponent(String(rawUrl))}`;
+                          } else if (pathname) {
+                            display_url = `/api/blob-proxy?pathname=${encodeURIComponent(String(pathname))}`;
+                          }
+                          return { ...d, display_url };
+                        });
+
+                        const images = normalized.filter((d: any) => {
+                          const url = (d.display_url || '').toString().toLowerCase();
+                          const mime = (d.tipo_mime || d.contentType || d.content_type || '').toString().toLowerCase();
+                          return url.endsWith('.png') || url.endsWith('.jpg') || url.endsWith('.jpeg') || mime.startsWith('image');
+                        });
+                        const others = normalized.filter((d: any) => !images.includes(d));
+
+                        return (
+                          <div className="space-y-4">
+                            <h3 className="text-sm font-semibold text-gray-900">Adjuntos del Registro</h3>
+                            {images.length > 0 ? (
+                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                                {images.map((img: any, i: number) => (
+                                  <div key={i} className="flex flex-col bg-white border rounded overflow-hidden">
+                                    <div className="h-32 w-full flex items-center justify-center bg-gray-50">
+                                      <img src={img.display_url} alt={img.nombre_archivo || `imagen-${i}`} className="h-32 w-full object-cover" onError={(e: any) => { e.currentTarget.src = '/placeholder.jpg' }} />
+                                    </div>
+                                    <div className="p-2 flex items-center justify-between">
+                                      <div className="text-xs text-gray-700 truncate">{img.nombre_archivo || img.display_url}</div>
+                                      <Button variant="ghost" size="sm" onClick={() => img.display_url ? window.open(img.display_url, '_blank') : null}>Ver</Button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="text-sm text-gray-500">No hay imágenes en este registro.</div>
+                            )}
+
+                            {others.length > 0 && (
+                              <div>
+                                <h4 className="text-sm font-medium mt-4 mb-2">Otros archivos</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                                  {others.map((doc: any, idx: number) => {
+                                    const name = doc.nombre_archivo || doc.display_url || 'archivo';
+                                    const isPdf = (name || '').toLowerCase().endsWith('.pdf') || (doc.display_url || '').toLowerCase().includes('.pdf');
+                                    return (
+                                      <div key={idx} className="flex items-center justify-between bg-white border rounded p-3">
+                                        <div className="flex items-center gap-3">
+                                          <div className="w-10 h-10 flex items-center justify-center bg-gray-50 rounded">
+                                            {isPdf ? (
+                                              <svg className="h-6 w-6 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M12 2L7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7l-5-5z" />
+                                                <path d="M7 7h10" />
+                                              </svg>
+                                            ) : (
+                                              <Paperclip className="h-5 w-5 text-gray-600" />
+                                            )}
+                                          </div>
+                                          <div className="text-sm text-gray-700 break-all">{name}</div>
+                                        </div>
+                                        <div>
+                                          <Button variant="ghost" size="sm" onClick={() => doc.display_url ? window.open(doc.display_url, '_blank') : null}>Ver</Button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                    </div>
+                  )}
+                      {activeTab === "documentos-detalle" && (() => {
                         let datosAdicionales: any = {};
                         if (camionDetalle.observaciones) {
                           try {
@@ -4004,14 +4231,7 @@ export default function CamionesPage() {
                                 </h3>
                                 <div className="mt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
                                   {alertas.map((alerta, index) => (
-                                    <div
-                                      key={index}
-                                      className={`relative rounded-md border text-xs md:text-sm p-3 flex flex-col gap-2 shadow-sm ${
-                                        alerta.vencido
-                                          ? 'border-red-300 bg-red-50/70'
-                                          : 'border-yellow-300 bg-yellow-50/70'
-                                      }`}
-                                    >
+                                    <div key={index} className={`relative rounded-md border text-xs md:text-sm p-3 flex flex-col gap-2 shadow-sm ${alerta.vencido ? 'border-red-300 bg-red-50/70' : 'border-yellow-300 bg-yellow-50/70'}`}>
                                       <div className="flex items-start gap-2">
                                         <span className={`mt-0.5 inline-block h-2 w-2 rounded-full ${alerta.vencido ? 'bg-red-600' : 'bg-yellow-500'}`}></span>
                                         <div className="space-y-0.5 leading-tight pr-10">
@@ -4118,6 +4338,8 @@ export default function CamionesPage() {
 
                   {activeTab === "kilometraje" && (
                     <div className="space-y-4">
+
+                  
                       <div className="flex items-center justify-between">
                         <h3 className="text-base font-semibold flex items-center gap-2">
                           <Gauge className="h-5 w-5" />
