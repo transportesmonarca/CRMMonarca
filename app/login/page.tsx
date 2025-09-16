@@ -1,20 +1,69 @@
 "use client"
 
 import { LoginForm } from "@/components/auth/login-form"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
+import {
+  Carousel,
+  CarouselContent,
+  CarouselItem,
+  CarouselNext,
+  CarouselPrevious,
+  type CarouselApi,
+} from "@/components/ui/carousel"
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { getLoginImageByTime, getGreetingByTime } from "@/lib/login-images"
+import {
+  getLoginImageByTime,
+  getGreetingByTime,
+  getLoginMomentByHour,
+  FALLBACK_LOGIN_IMAGES,
+  LOGIN_MOMENTS,
+  type LoginMoment,
+} from "@/lib/login-images"
 import { isAuthenticated } from "@/lib/auth"
 import { useRouter } from "next/navigation"
 
+const createDefaultBackgroundSets = (): Record<LoginMoment, string[]> => ({
+  day: [...FALLBACK_LOGIN_IMAGES.day],
+  evening: [...FALLBACK_LOGIN_IMAGES.evening],
+  night: [...FALLBACK_LOGIN_IMAGES.night],
+})
+
+const isValidMoment = (value: unknown): value is LoginMoment =>
+  typeof value === "string" && (LOGIN_MOMENTS as readonly string[]).includes(value)
+
 export default function LoginPage() {
-  const [backgroundImage, setBackgroundImage] = useState("")
+  const [isPortraitish, setIsPortraitish] = useState(false)
+  const [isHoveringCarousel, setIsHoveringCarousel] = useState(false)
+
+  const onBgLoad = useCallback((e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget
+    const iw = img.naturalWidth
+    const ih = img.naturalHeight
+    if (!iw || !ih) return
+
+    // calcula AR de imagen vs. contenedor (mitad izquierda de la pantalla)
+    const container = img.parentElement?.getBoundingClientRect()
+    const contAR = container ? container.width / container.height : 16 / 9
+    const imgAR = iw / ih
+
+    // "portraitish" = bastante más vertical que el contenedor
+    setIsPortraitish(imgAR < contAR * 0.9)
+  }, [])
+  
+  const [backgroundImage, setBackgroundImage] = useState(() =>
+    getLoginImageByTime(createDefaultBackgroundSets()),
+  )
   const [greeting, setGreeting] = useState("")
   const [tagline, setTagline] = useState("")
   const [privacyOpen, setPrivacyOpen] = useState(false)
   const [termsOpen, setTermsOpen] = useState(false)
+  const [backgroundSets, setBackgroundSets] = useState<Record<LoginMoment, string[]>>(() =>
+    createDefaultBackgroundSets(),
+  )
+  const [currentMoment, setCurrentMoment] = useState<LoginMoment>(() => getLoginMomentByHour())
+  const [carouselApi, setCarouselApi] = useState<CarouselApi | null>(null)
   const router = useRouter()
 
   useEffect(() => {
@@ -24,13 +73,15 @@ export default function LoginPage() {
       return
     }
 
-    const updateContent = () => {
-      setBackgroundImage(getLoginImageByTime())
+    const updateBackground = () => {
+      const nowMoment = getLoginMomentByHour()
+      setCurrentMoment(nowMoment)
+      setBackgroundImage(getLoginImageByTime(backgroundSets))
       setGreeting(getGreetingByTime())
     }
 
     // Actualizar inmediatamente
-    updateContent()
+    updateBackground()
 
     // Seleccionar un eslogan aleatorio al cargar la página
     const taglines = [
@@ -47,10 +98,72 @@ export default function LoginPage() {
     ]
     setTagline(taglines[Math.floor(Math.random() * taglines.length)])
 
-    const interval = setInterval(updateContent, 300000)
+    const interval = setInterval(updateBackground, 300000)
 
     return () => clearInterval(interval)
-  }, [router])
+  }, [router, backgroundSets])
+
+  useEffect(() => {
+    let active = true
+
+    const loadCustomBackgrounds = async () => {
+      try {
+        const response = await fetch("/api/login-backgrounds", { cache: "no-store" })
+        if (!response.ok) return
+        const payload = await response.json()
+        if (!Array.isArray(payload?.data)) return
+
+        const grouped: Record<LoginMoment, string[]> = {
+          day: [],
+          evening: [],
+          night: [],
+        }
+        for (const entry of payload.data) {
+          if (!entry || typeof entry !== "object") continue
+          const moment = (entry as any).moment
+          const url = (entry as any).url
+          if (!isValidMoment(moment) || typeof url !== "string" || url.length === 0) continue
+          grouped[moment].push(url)
+        }
+
+        if (active) {
+          setBackgroundSets({
+            day: grouped.day.length ? grouped.day : [...FALLBACK_LOGIN_IMAGES.day],
+            evening: grouped.evening.length ? grouped.evening : [...FALLBACK_LOGIN_IMAGES.evening],
+            night: grouped.night.length ? grouped.night : [...FALLBACK_LOGIN_IMAGES.night],
+          })
+        }
+      } catch (error) {
+        console.error("No se pudieron cargar fondos de login personalizados:", error)
+      }
+    }
+
+    void loadCustomBackgrounds()
+
+    return () => {
+      active = false
+    }
+  }, [])
+
+  const imagesForMoment = backgroundSets[currentMoment] ?? []
+  const showCarousel = imagesForMoment.length > 1
+
+  // Autoplay: avanza el carrusel cada 10s cuando hay más de 1 imagen
+    useEffect(() => {
+      if (!carouselApi || !showCarousel || isHoveringCarousel) return
+      const id = setInterval(() => {
+        carouselApi.scrollNext()
+      }, 10_000)
+      return () => clearInterval(id)
+      }, [carouselApi, showCarousel, isHoveringCarousel])
+
+  useEffect(() => {
+    if (!showCarousel && carouselApi) {
+      setCarouselApi(null)
+    }
+  }, [carouselApi, showCarousel])
+  const fallbackImage =
+    backgroundImage || "/placeholder.svg?height=1080&width=1920&query=white trucks on highway"
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -59,12 +172,56 @@ export default function LoginPage() {
         <div className="hidden lg:flex lg:w-1/2 relative bg-gradient-to-br from-gray-900 via-gray-800 to-gray-900">
           {/* Dynamic background image */}
           <div className="absolute inset-0">
-            <img
-              src={backgroundImage || "/placeholder.svg?height=1080&width=1920&query=white trucks on highway"}
-              alt="Tractocamiones en carretera"
-              className="w-full h-full object-cover transition-opacity duration-1000"
-            />
-            <div className="absolute inset-0 bg-gradient-to-r from-black/70 via-black/50 to-black/30"></div>
+            {showCarousel ? (
+              <Carousel
+                key={currentMoment}
+                className="h-full w-full overflow-hidden"
+                opts={{ loop: true, align: "start" }}
+                setApi={setCarouselApi}
+                onMouseEnter={() => setIsHoveringCarousel(true)}
+                onMouseLeave={() => setIsHoveringCarousel(false)}
+              >
+                <CarouselContent className="h-full">
+                  {imagesForMoment.map((imageUrl, index) => (
+                    // 👈 ancho del slide = viewport del carrusel
+                    <CarouselItem
+                      key={`${currentMoment}-${index}`}
+                      className="h-full basis-full"
+                    >
+                      <div className="h-full w-full flex items-center justify-center bg-black">
+                        <img
+                          src={imageUrl}
+                          alt="Tractocamiones en carretera"
+                          className="block max-h-full max-w-full object-contain"
+                          loading="eager"
+                          decoding="async"
+                        />
+                      </div>
+                    </CarouselItem>
+                  ))}
+                </CarouselContent>
+
+                {/* asegúrate de que los controles queden encima del gradiente */}
+                <CarouselPrevious
+                  variant="ghost"
+                  className="z-20 !left-6 top-1/2 -translate-y-1/2 !bg-black/30 text-white hover:!bg-black/50"
+                />
+                <CarouselNext
+                  variant="ghost"
+                  className="z-20 !right-6 top-1/2 -translate-y-1/2 !bg-black/30 text-white hover:!bg-black/50"
+                />
+              </Carousel>
+            ) : (
+                <div className="absolute inset-0 flex items-center justify-center bg-black">
+                  <img
+                    src={fallbackImage}
+                    alt="Tractocamiones en carretera"
+                    className="block max-h-full max-w-full object-contain transition-opacity duration-1000"
+                  />
+                  <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black/70 via-black/50 to-black/30" />
+                </div>
+            )}
+            <div className="pointer-events-none absolute inset-0 bg-gradient-to-r from-black/70 via-black/50 to-black/30"></div>
           </div>
 
           {/* Content overlay */}
@@ -80,9 +237,9 @@ export default function LoginPage() {
             <div className="space-y-4">
               <div className="flex items-center gap-4 text-sm text-gray-300">
                 <div className="flex items-center gap-2">
-                  <span className="text-2xl">🇲🇽</span>
-                  <span className="text-2xl">🇺🇸</span>
-                  <span className="text-2xl">🇨🇦</span>
+                  <img src="https://flagcdn.com/w20/mx.png" alt="México" className="w-6 h-4 rounded-sm" />
+                  <img src="https://flagcdn.com/w20/us.png" alt="USA" className="w-6 h-4 rounded-sm" />
+                  <img src="https://flagcdn.com/w20/ca.png" alt="Canadá" className="w-6 h-4 rounded-sm" />
                 </div>
                 <span className="font-medium">Transportes Internacionales Monarca</span>
               </div>

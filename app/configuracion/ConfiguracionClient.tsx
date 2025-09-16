@@ -11,6 +11,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import LoginBackgroundManager from "@/components/configuracion/login-background-manager";
 import { Settings, Shield, Bell, FileText, User, Trash2, Download, Filter, AlertTriangle, Edit2, Save } from "lucide-react";
 import { getCurrentUser, verifyAuditPassword, listUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser } from "@/lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -496,8 +497,9 @@ export default function ConfiguracionPage() {
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList className="grid w-full grid-cols-6">
+                    <TabsList className="grid w-full grid-cols-7">
                         <TabsTrigger value="general">General</TabsTrigger>
+                        <TabsTrigger value="branding">Branding</TabsTrigger>
                         <TabsTrigger value="backup">Backup</TabsTrigger>
                         <TabsTrigger value="seguridad">Seguridad</TabsTrigger>
                         <TabsTrigger value="alertas">Alertas de Vencimiento</TabsTrigger>
@@ -712,6 +714,10 @@ export default function ConfiguracionPage() {
                                 </div>
                             </CardContent>
                         </Card>
+                    </TabsContent>
+
+                    <TabsContent value="branding" className="space-y-4">
+                        <LoginBackgroundManager />
                     </TabsContent>
 
                     <TabsContent value="backup" className="space-y-4">
