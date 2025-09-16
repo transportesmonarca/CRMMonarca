@@ -535,7 +535,25 @@ export default function ConfiguracionPage() {
                                                 {alertThresholds.map((t, idx) => (
                                                     <tr key={t.id} className="border-b">
                                                         <td className="px-2 py-1 border">{t.modulo}</td>
-                                                        <td className="px-2 py-1 border">{t.campo.replace(/_/g, ' ')}</td>
+                                                        <td className="px-2 py-1 border">
+                                                            {(() => {
+                                                                // Mostrar etiquetas amigables por módulo/campo
+                                                                if (t.modulo === 'camiones' || t.modulo === 'tractocamiones') {
+                                                                    if (t.campo === 'seguro_mexicano') return 'Póliza de vencimiento del seguro mexicano';
+                                                                    if (t.campo === 'seguro_americano') return 'Póliza de vencimiento del seguro americano';
+                                                                    if (t.campo === 'verificacion') return 'Próxima verificación';
+                                                                    if (t.campo === 'poliza_vencimiento') return 'Póliza de vencimiento';
+                                                                }
+                                                                if (t.modulo === 'remolques') {
+                                                                    if (t.campo === 'proxima_inspeccion') return 'Próxima inspección del remolque';
+                                                                    if (t.campo === 'seguro_vigencia') return 'Vigencia del seguro del remolque';
+                                                                }
+                                                                if (t.modulo === 'operadores') {
+                                                                    if (t.campo === 'fecha_nacimiento') return 'Fecha de nacimiento';
+                                                                }
+                                                                return t.campo.replace(/_/g, ' ');
+                                                            })()}
+                                                        </td>
                                                         {editIdx === idx ? (
                                                             <>
                                                                 <td className="px-2 py-1 border"><Input type="number" value={editValues.dias_rojo ?? t.dias_rojo} min={0} onChange={e => setEditValues(v => ({ ...v, dias_rojo: Number(e.target.value) }))} className="w-20" /></td>

@@ -15,6 +15,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { getAlertThresholds, calcularNivelAlerta, type AlertThreshold } from "@/lib/alert-thresholds";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -34,6 +35,7 @@ import {
   DialogDescription,
   DialogTrigger,
 } from "@/components/ui/dialog";
+import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -57,6 +59,7 @@ import {
   Save,
   CheckCircle,
   X,
+  Info,
 } from "lucide-react";
 import type { Camion, MarcaCamion } from "@/lib/supabase";
 
@@ -1178,6 +1181,30 @@ export default function CamionesPage() {
     );
   };
 
+    // Umbrales de alertas configurables para camiones
+    const [alertThresholdsCamiones, setAlertThresholdsCamiones] = useState<{
+      seguro_mexicano: AlertThreshold | null;
+      seguro_americano: AlertThreshold | null;
+      verificacion: AlertThreshold | null;
+    }>({ seguro_mexicano: null, seguro_americano: null, verificacion: null });
+
+    useEffect(() => {
+      // Cargar umbrales de alertas para camiones desde configuración
+      (async () => {
+        try {
+          const [mx, us, vr] = await Promise.all([
+            getAlertThresholds("camiones", "seguro_mexicano"),
+            getAlertThresholds("camiones", "seguro_americano"),
+            getAlertThresholds("camiones", "verificacion"),
+          ]);
+          setAlertThresholdsCamiones({ seguro_mexicano: mx, seguro_americano: us, verificacion: vr });
+        } catch (e) {
+          // Silencioso; se usan valores por defecto si no hay configuración
+          console.warn("No se pudieron cargar umbrales de camiones", e);
+        }
+      })();
+    }, []);
+
   const verificarVencimientos = (camion: Camion) => {
     const alertas = [];
 
@@ -1194,12 +1221,17 @@ export default function CamionesPage() {
           const diasRestantes = Math.ceil(
             (fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
           );
-
-          if (diasRestantes <= 30) {
+          const th = alertThresholdsCamiones.seguro_mexicano;
+          const nivel = th
+            ? calcularNivelAlerta(datos.fecha_vencimiento_seguro_mexicano, th)
+            : undefined;
+          const mostrar = diasRestantes <= 30 || (th ? nivel !== "ninguna" : false) || diasRestantes <= 0;
+          if (mostrar) {
             alertas.push({
               tipo: "seguro_mexicano",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
+              nivel: diasRestantes <= 0 ? "alta" : nivel,
               fecha: formatDateMatamoros(datos.fecha_vencimiento_seguro_mexicano),
               mensaje:
                 diasRestantes <= 0
@@ -1220,12 +1252,17 @@ export default function CamionesPage() {
           const diasRestantes = Math.ceil(
             (fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
           );
-
-          if (diasRestantes <= 30) {
+          const th = alertThresholdsCamiones.seguro_americano;
+          const nivel = th
+            ? calcularNivelAlerta(datos.fecha_vencimiento_seguro_americano, th)
+            : undefined;
+          const mostrar = diasRestantes <= 30 || (th ? nivel !== "ninguna" : false) || diasRestantes <= 0;
+          if (mostrar) {
             alertas.push({
               tipo: "seguro_americano",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
+              nivel: diasRestantes <= 0 ? "alta" : nivel,
               fecha: formatDateMatamoros(datos.fecha_vencimiento_seguro_americano),
               mensaje:
               diasRestantes <= 0
@@ -1245,12 +1282,17 @@ export default function CamionesPage() {
             (proximaVerificacion.getTime() - hoy.getTime()) /
               (1000 * 60 * 60 * 24)
           );
-
-          if (diasRestantes <= 15) {
+          const th = alertThresholdsCamiones.verificacion;
+          const nivel = th
+            ? calcularNivelAlerta(datos.frecuencia_verificacion, th)
+            : undefined;
+          const mostrar = diasRestantes <= 15 || (th ? nivel !== "ninguna" : false) || diasRestantes <= 0;
+          if (mostrar) {
             alertas.push({
               tipo: "verificacion",
               dias: Math.abs(diasRestantes),
               vencido: diasRestantes <= 0,
+              nivel: diasRestantes <= 0 ? "alta" : nivel,
               fecha: formatDateMatamoros(datos.frecuencia_verificacion),
               mensaje:
                 diasRestantes <= 0
@@ -2563,9 +2605,34 @@ export default function CamionesPage() {
                     {activeTab === "documentos" && (
                       <div className="space-y-6">
                         <div className="space-y-4">
-                          <h4 className="text-md font-medium text-gray-900">
-                            Verificación y Mantenimiento
-                          </h4>
+                          <div className="flex items-center justify-between">
+                            <h4 className="text-md font-medium text-gray-900">
+                              Verificación y Mantenimiento
+                            </h4>
+                            {/* Botón de información sobre campos con alerta configurable, alineado en la misma fila que el label */}
+                            <Popover>
+                              <PopoverTrigger asChild>
+                                <Button type="button" variant="outline" size="sm" className="text-gray-700">
+                                  <Info className="h-4 w-4 mr-2" />
+                                  Campos con alerta
+                                </Button>
+                              </PopoverTrigger>
+                              <PopoverContent className="w-96">
+                                <div className="space-y-2">
+                                  <p className="text-sm font-medium">Campos con alerta configurable</p>
+                                  <ul className="list-disc pl-5 text-sm space-y-1">
+                                    <li>Próxima Verificación (fecha próxima de verificación/mantenimiento).</li>
+                                    <li>Seguro Mexicano (fecha de vencimiento del seguro).</li>
+                                    <li>Seguro Americano (fecha de vencimiento del seguro).</li>
+                                    <li>Números Adicionales (fecha de vencimiento por cada documento adicional).</li>
+                                  </ul>
+                                  <p className="text-xs text-gray-500">
+                                    Puedes ajustar los días de alerta Alta/Media/Baja en Configuración → "Alertas de Vencimiento".
+                                  </p>
+                                </div>
+                              </PopoverContent>
+                            </Popover>
+                          </div>
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div className="space-y-2">
                               <Label htmlFor="ultima_verificacion">

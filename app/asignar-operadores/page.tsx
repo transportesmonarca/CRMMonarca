@@ -28,6 +28,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Truck,
   Users,
@@ -43,6 +44,7 @@ import {
   Package,
   MapPin,
   FileText,
+  FileSpreadsheet,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
@@ -491,6 +493,20 @@ export default function AsignarOperadoresPage() {
   const [embarqueAFinalizar, setEmbarqueAFinalizar] = useState<Embarque | null>(null);
   const { toast } = useToast();
 
+  // Kilometraje (reutiliza lógica de Camiones en forma simplificada)
+  const [registrosKilometrajeTableExists, setRegistrosKilometrajeTableExists] = useState<boolean>(false);
+  const [showKilometrajeModal, setShowKilometrajeModal] = useState(false);
+  const [selectedCamionKilometraje, setSelectedCamionKilometraje] = useState<Camion | null>(null);
+  const [embarqueParaKilometraje, setEmbarqueParaKilometraje] = useState<Embarque | null>(null);
+  const [kilometrajeFormData, setKilometrajeFormData] = useState({
+    modo: "viaje" as "odometro" | "viaje",
+    kilometraje_actual: "",
+    kilometros_viaje: "",
+    tramo_recorrido: "",
+    fecha_viaje: "",
+    comentarios_viaje: "",
+  });
+
   const cancelarEmbarque = async () => {
     if (!cancelingEmbarque || !cancelReason.trim()) {
       alert("Por favor ingresa una justificación para la cancelación");
@@ -815,6 +831,137 @@ export default function AsignarOperadoresPage() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  // Verificar existencia de tabla registros_kilometraje (best-effort)
+  useEffect(() => {
+    const verificarTablaRegistrosKilometraje = async () => {
+      try {
+        const { error } = await supabase.from("registros_kilometraje").select("id").limit(1);
+        if (error) {
+          setRegistrosKilometrajeTableExists(false);
+        } else {
+          setRegistrosKilometrajeTableExists(true);
+        }
+      } catch (e) {
+        setRegistrosKilometrajeTableExists(false);
+      }
+    };
+    verificarTablaRegistrosKilometraje();
+  }, []);
+
+  const abrirModalKilometraje = (embarque: Embarque) => {
+    const camion = embarque.camion;
+    if (!camion || !camion.id) {
+      try { toast({ title: "Asigna un tractocamión", description: "No se puede capturar kilometraje sin tractocamión asignado.", variant: "destructive" }); } catch {}
+      return;
+    }
+    setSelectedCamionKilometraje(camion as Camion);
+    setEmbarqueParaKilometraje(embarque);
+  setKilometrajeFormData({ modo: "viaje", kilometraje_actual: "", kilometros_viaje: "", tramo_recorrido: "", fecha_viaje: "", comentarios_viaje: "" });
+    setShowKilometrajeModal(true);
+  };
+
+  const guardarKilometraje = async () => {
+    try {
+      if (!selectedCamionKilometraje || !embarqueParaKilometraje) return;
+      const { modo, kilometraje_actual, kilometros_viaje, tramo_recorrido, fecha_viaje } = kilometrajeFormData;
+      if (!tramo_recorrido || !fecha_viaje) {
+        toast({ title: "Completa los campos", description: "Tramo y fecha son obligatorios.", variant: "destructive" });
+        return;
+      }
+      const kmAnterior = Number(selectedCamionKilometraje.kilometraje || 0);
+      let kmActual = 0;
+      let kmAgregado = 0;
+
+      if (modo === "viaje") {
+        const kmV = Number.parseInt(kilometros_viaje);
+        if (!kilometros_viaje || isNaN(kmV) || kmV <= 0) {
+          toast({ title: "Kilómetros del viaje inválidos", description: "Ingresa un número mayor a 0.", variant: "destructive" });
+          return;
+        }
+        kmAgregado = kmV;
+        kmActual = kmAnterior + kmAgregado;
+      } else {
+        // modo odómetro
+        const kmO = Number.parseInt(kilometraje_actual);
+        if (!kilometraje_actual || isNaN(kmO) || kmO <= kmAnterior) {
+          toast({ title: "Odómetro inválido", description: "El odómetro actual debe ser mayor al registrado.", variant: "destructive" });
+          return;
+        }
+        kmActual = kmO;
+        kmAgregado = kmActual - kmAnterior;
+      }
+
+      // Actualizar camión
+      const { error: errorCamion } = await supabase
+        .from("camiones")
+        .update({ kilometraje: kmActual })
+        .eq("id", selectedCamionKilometraje.id);
+      if (errorCamion) {
+        console.error("Error actualizando kilometraje de camión:", errorCamion);
+        toast({ title: "Error al actualizar camión", description: String((errorCamion as any)?.message || errorCamion), variant: "destructive" });
+        return;
+      }
+
+      // Insertar registro si la tabla existe
+      if (registrosKilometrajeTableExists) {
+        const payload: any = {
+          camion_id: selectedCamionKilometraje.id,
+          kilometraje_anterior: kmAnterior,
+          kilometraje_agregado: kmAgregado,
+          kilometraje_nuevo: kmActual,
+          tramo_recorrido: tramo_recorrido,
+          fecha_viaje: normalizeDate(fecha_viaje) || null,
+          comentarios: kilometrajeFormData.comentarios_viaje || null,
+        };
+        const { error: errorReg } = await supabase.from("registros_kilometraje").insert(payload);
+        if (errorReg) {
+          console.warn("No se pudo insertar registro de kilometraje:", errorReg);
+        }
+      } else {
+        toast({ title: "Registro parcial", description: "Se actualizó el kilometraje del camión. La tabla de registros no existe.", variant: "default" });
+      }
+
+      // Audit
+      try {
+        await agregarAuditLog(
+          "ACTUALIZAR",
+          "Camiones",
+          `Actualizó kilometraje de camión ${selectedCamionKilometraje.numero_economico} a ${kmActual} (+${kmAgregado})`
+        );
+      } catch {}
+
+      // Actualizar estados locales: camión y embarque en memoria
+      setSelectedCamionKilometraje({ ...selectedCamionKilometraje, kilometraje: kmActual } as any);
+      setEmbarques(prev => prev.map(e => e.id === embarqueParaKilometraje.id ? ({
+        ...e,
+        camion: e.camion ? { ...e.camion, kilometraje: kmActual } as any : e.camion,
+        // Campos transitorios para mostrar en Detalles → Recursos
+        km_total_anterior: kmAnterior as any,
+        km_agregado_ultimo: kmAgregado as any,
+        km_total_nuevo: kmActual as any,
+        km_tramo_ultimo: (kilometrajeFormData.tramo_recorrido || null) as any,
+        km_fecha_viaje_ultimo: (kilometrajeFormData.fecha_viaje || null) as any,
+        km_comentarios_ultimo: (kilometrajeFormData.comentarios_viaje || null) as any,
+      }) : e));
+      // Si el modal de Detalles está abierto para este embarque, actualizar también
+      setEmbarqueDetalle(prev => prev && prev.id === embarqueParaKilometraje.id ? ({
+        ...prev,
+        km_total_anterior: kmAnterior as any,
+        km_agregado_ultimo: kmAgregado as any,
+        km_total_nuevo: kmActual as any,
+        km_tramo_ultimo: (kilometrajeFormData.tramo_recorrido || null) as any,
+        km_fecha_viaje_ultimo: (kilometrajeFormData.fecha_viaje || null) as any,
+        km_comentarios_ultimo: (kilometrajeFormData.comentarios_viaje || null) as any,
+      } as any) : prev);
+  setShowKilometrajeModal(false);
+  setKilometrajeFormData({ modo: "viaje", kilometraje_actual: "", kilometros_viaje: "", tramo_recorrido: "", fecha_viaje: "", comentarios_viaje: "" });
+      toast({ title: "Kilometraje guardado", description: `Nuevo total: ${kmActual.toLocaleString('es-MX')} km (+${kmAgregado})` });
+    } catch (error) {
+      console.error("Error guardando kilometraje:", error);
+      toast({ title: "Error al guardar kilometraje", description: String((error as any)?.message || error), variant: "destructive" });
+    }
+  };
 
   useEffect(() => {
     // Contar fotos para todos los embarques cuando se cargan
@@ -1841,6 +1988,94 @@ export default function AsignarOperadoresPage() {
     }
   };
 
+  // Exporta todos los registros visibles actualmente (según filtros) a CSV compatible con Excel
+  const exportarEmbarquesVisibles = () => {
+    try {
+      const headers = [
+        "Folio",
+        "Estado",
+        "Cliente",
+        "Load",
+        "Tipo de Servicio",
+        "Origen",
+        "Destino",
+        "Fecha Recolecta",
+        "Hora Recolecta",
+        "Fecha Entrega",
+        "Hora Entrega",
+        "Operador",
+        "Teléfono Operador",
+        "Tractocamión",
+        "Remolque (No. Económico)",
+        "Remolque (Placa)",
+        "Precio Flete",
+        "Moneda",
+        "% QuickPaid",
+        "Monto Descuento QuickPaid",
+        "Precio QuickPaid",
+        "Flete en Falso",
+        "Observaciones",
+      ];
+
+      const rows = embarquesFiltrados.map((e) => {
+        const precioFleteVal = Number(e.precio_flete) || 0;
+        const descuentoAmt = typeof e.quickpaid_descuento === "number" ? Number(e.quickpaid_descuento) : 0;
+        const percent = typeof e.quickpaid_percent === "number" && e.quickpaid_percent > 0
+          ? e.quickpaid_percent
+          : (descuentoAmt > 0 && precioFleteVal > 0 ? descuentoAmt / precioFleteVal : 0);
+        const precioQuick = (typeof e.precio_quickpaid === 'number' && e.precio_quickpaid > 0) ? e.precio_quickpaid : '';
+        return [
+          e.folio || "",
+          e.estado || "",
+          e.cliente?.nombre || "",
+          e.load_number || "",
+          getServiceDisplayName(e.tipo_servicio_id || ""),
+          e.direccion_recolecta || e.origen || "",
+          e.direccion_entrega || e.destino || "",
+          e.fecha_recolecta ? formatDateMatamoros(normalizeDate(e.fecha_recolecta) || e.fecha_recolecta) : "",
+          e.hora_recolecta || "",
+          e.fecha_entrega ? formatDateMatamoros(normalizeDate(e.fecha_entrega) || e.fecha_entrega) : "",
+          e.hora_entrega || "",
+          e.operador ? `${e.operador.nombre} ${e.operador.apellidos}` : "",
+          e.operador?.telefono || "",
+          e.camion?.numero_economico || "",
+          e.remolque?.numero_economico || e.remolque_numero_economico || "",
+          e.remolque?.placas || e.remolque_placa || "",
+          e.precio_flete ?? "",
+          e.moneda_flete || "",
+          percent > 0 ? (percent * 100).toFixed(2) : "",
+          descuentoAmt > 0 ? descuentoAmt.toFixed(2) : "",
+          precioQuick,
+          e.flete_falso ? "Sí" : "No",
+          (e.observaciones || "").replace(/\s+/g, " ").trim(),
+        ];
+      });
+
+      const csvContent = [
+        headers.join(','),
+        ...rows.map((row) => row.map((field) => {
+          const val = field == null ? '' : String(field);
+          // Escapar comillas dobles y envolver en comillas
+          const escaped = val.replace(/"/g, '""');
+          return `"${escaped}"`;
+        }).join(',')),
+      ].join('\n');
+
+      const blob = new Blob(["\ufeff" + csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `embarques_visibles_${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Error exportando CSV:', err);
+      try { toast({ title: 'Error al exportar', description: (err as any)?.message || 'No se pudo generar el archivo', variant: 'destructive' }); } catch {}
+    }
+  };
+
   const descargarExcel = () => {
     if (!embarqueDetalle) return;
 
@@ -2171,29 +2406,40 @@ export default function AsignarOperadoresPage() {
               Asignar recursos a embarques listos
             </p>
           </div>
-          <Button
-            onClick={() => {
-              setShowCompletedModal(true);
-              cargarEmbarquesFinalizados();
-            }}
-            variant="outline"
-            className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-          >
-            <svg
-              className="h-4 w-4 mr-2"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black whitespace-nowrap"
+              onClick={exportarEmbarquesVisibles}
+              title="Descargar en Excel (CSV) los registros visibles"
             >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth={2}
-                d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-              />
-            </svg>
-            Registros Completados
-          </Button>
+              <FileSpreadsheet className="h-4 w-4 mr-1" />
+              Exportar Excel
+            </Button>
+            <Button
+              onClick={() => {
+                setShowCompletedModal(true);
+                cargarEmbarquesFinalizados();
+              }}
+              variant="outline"
+              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+            >
+              <svg
+                className="h-4 w-4 mr-2"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                />
+              </svg>
+              Registros Completados
+            </Button>
+          </div>
         </div>
 
         {/* Estadísticas */}
@@ -2312,6 +2558,164 @@ export default function AsignarOperadoresPage() {
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div>
+
+                  {/* Modal de Kilometraje */}
+                  <Dialog open={showKilometrajeModal} onOpenChange={setShowKilometrajeModal}>
+                    <DialogContent hideOverlay className="sm:max-w-[560px]">
+                      <DialogHeader>
+                        <DialogTitle>Capturar Kilometraje</DialogTitle>
+                        <DialogDescription>
+                          {selectedCamionKilometraje
+                            ? `Tractocamión ${selectedCamionKilometraje.numero_economico} (actual: ${Number(selectedCamionKilometraje.kilometraje || 0).toLocaleString('es-MX')} km)`
+                            : 'Selecciona un embarque con tractocamión asignado'}
+                        </DialogDescription>
+                      </DialogHeader>
+                      <div className="grid gap-3 py-2">
+                        <div className="grid grid-cols-1 gap-2">
+                          <Label>¿Cómo deseas capturar?</Label>
+                          <div className="flex items-center gap-6 text-sm">
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                id="modo_km_odometro"
+                                checked={kilometrajeFormData.modo === 'odometro'}
+                                onCheckedChange={(checked)=>
+                                  setKilometrajeFormData(v=>({
+                                    ...v,
+                                    modo: checked === true ? 'odometro' : 'viaje',
+                                  }))
+                                }
+                              />
+                              <label htmlFor="modo_km_odometro" className="cursor-pointer select-none">
+                                Odómetro actual
+                              </label>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <Checkbox
+                                id="modo_km_viaje"
+                                checked={kilometrajeFormData.modo === 'viaje'}
+                                onCheckedChange={(checked)=>
+                                  setKilometrajeFormData(v=>({
+                                    ...v,
+                                    modo: checked === true ? 'viaje' : 'odometro',
+                                  }))
+                                }
+                              />
+                              <label htmlFor="modo_km_viaje" className="cursor-pointer select-none">
+                                Km del viaje
+                              </label>
+                            </div>
+                          </div>
+                        </div>
+                        {kilometrajeFormData.modo === 'odometro' ? (
+                          <div className="grid grid-cols-1 gap-2">
+                            <Label htmlFor="km_actual">Kilometraje (odómetro actual)</Label>
+                            <Input
+                              id="km_actual"
+                              type="number"
+                              placeholder="Ej. 456000"
+                              min={Math.max(0, Number(selectedCamionKilometraje?.kilometraje || 0) + 1)}
+                              step={1}
+                              value={kilometrajeFormData.kilometraje_actual}
+                              onChange={(e)=>setKilometrajeFormData(v=>({...v, kilometraje_actual: e.target.value}))}
+                            />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 gap-2">
+                            <Label htmlFor="km_viaje">Kilómetros del viaje</Label>
+                            <Input
+                              id="km_viaje"
+                              type="number"
+                              placeholder="Ej. 850"
+                              min={1}
+                              step={1}
+                              value={kilometrajeFormData.kilometros_viaje}
+                              onChange={(e)=>setKilometrajeFormData(v=>({...v, kilometros_viaje: e.target.value}))}
+                            />
+                          </div>
+                        )}
+                        {/* Preview de kilómetros a sumar y nuevo total */}
+                        {(() => {
+                          const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
+                          if (kilometrajeFormData.modo === 'odometro') {
+                            const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
+                            if (!Number.isNaN(kmO) && kmO > kmAnterior) {
+                              const sum = kmO - kmAnterior;
+                              return (
+                                <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                                  Se sumarían +{sum.toLocaleString('es-MX')} km. Nuevo total: {kmO.toLocaleString('es-MX')} km
+                                </div>
+                              );
+                            } else if (!Number.isNaN(kmO)) {
+                              return (
+                                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                                  El odómetro debe ser mayor al actual ({kmAnterior.toLocaleString('es-MX')} km).
+                                </div>
+                              );
+                            }
+                          } else {
+                            const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
+                            if (!Number.isNaN(kmV) && kmV > 0) {
+                              const total = kmAnterior + kmV;
+                              return (
+                                <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                                  Se sumarían +{kmV.toLocaleString('es-MX')} km. Nuevo total: {total.toLocaleString('es-MX')} km
+                                </div>
+                              );
+                            }
+                          }
+                          return null;
+                        })()}
+                        <div className="grid grid-cols-1 gap-2">
+                          <Label htmlFor="tramo">Tramo recorrido</Label>
+                          <Input
+                            id="tramo"
+                            placeholder="Ej. Matamoros → Monterrey"
+                            value={kilometrajeFormData.tramo_recorrido}
+                            onChange={(e)=>setKilometrajeFormData(v=>({...v, tramo_recorrido: e.target.value}))}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                          <Label htmlFor="fecha_viaje">Fecha del viaje</Label>
+                          <Input
+                            id="fecha_viaje"
+                            type="date"
+                            value={kilometrajeFormData.fecha_viaje}
+                            onChange={(e)=>setKilometrajeFormData(v=>({...v, fecha_viaje: e.target.value}))}
+                          />
+                        </div>
+                        <div className="grid grid-cols-1 gap-2">
+                          <Label htmlFor="comentarios">Comentarios</Label>
+                          <Textarea
+                            id="comentarios"
+                            placeholder="Opcional"
+                            value={kilometrajeFormData.comentarios_viaje}
+                            onChange={(e)=>setKilometrajeFormData(v=>({...v, comentarios_viaje: e.target.value}))}
+                          />
+                        </div>
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={()=>setShowKilometrajeModal(false)}>Cancelar</Button>
+                        <Button
+                          onClick={guardarKilometraje}
+                          className="bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          disabled={(() => {
+                            const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
+                            const tramoOk = Boolean((kilometrajeFormData.tramo_recorrido || '').trim());
+                            const fechaOk = Boolean(kilometrajeFormData.fecha_viaje);
+                            if (kilometrajeFormData.modo === 'odometro') {
+                              const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
+                              return !(tramoOk && fechaOk && !Number.isNaN(kmO) && kmO > kmAnterior);
+                            } else {
+                              const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
+                              return !(tramoOk && fechaOk && !Number.isNaN(kmV) && kmV > 0);
+                            }
+                          })()}
+                        >
+                          Guardar
+                        </Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
                     <CardTitle>
                       <span className="inline-flex items-center text-blue-600 text-xl">
                         <Package className="h-5 w-5 text-blue-600 mr-1" />
@@ -2361,7 +2765,7 @@ export default function AsignarOperadoresPage() {
                         }}
                       >
                         <Eye className="h-4 w-4 mr-1" />
-                        Ver Detalles
+                        Detalles
                       </Button>
                       {(embarque.estado === "listo-para-asignar" ||
                         embarque.estado === "asignado" ||
@@ -2406,7 +2810,18 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <FileText className="h-4 w-4 mr-1" />
-                          Reporte Cliente
+                          Reporte
+                        </Button>
+                      )}
+                      {/* Kilometraje - abrir modal para el tractocamión asignado */}
+                      {embarque.camion && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => abrirModalKilometraje(embarque)}
+                        >
+                          <Truck className="h-4 w-4 mr-1" />
+                          Km
                         </Button>
                       )}
                       {embarque.estado === "asignado" && (
@@ -2448,7 +2863,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <AlertTriangle className="h-4 w-4 mr-1" />
-                          Contingencia
+                          Modificar
                         </Button>
                       )}
                       {(embarque.estado === "asignado" ||
@@ -3723,6 +4138,46 @@ export default function AsignarOperadoresPage() {
                             </div>
                           </div>
                         </div>
+                        {/* Km agregado en este viaje (si se capturó) */}
+                        {typeof (embarqueDetalle as any)?.km_agregado_ultimo === 'number' && (embarqueDetalle as any)?.km_agregado_ultimo > 0 && (
+                          <div className="mt-4 bg-white border rounded-lg">
+                            <div className="px-4 py-2 border-b bg-gray-50 rounded-t-lg">
+                              <h4 className="text-sm font-semibold text-gray-800">Kilometraje</h4>
+                            </div>
+                            <div className="p-4 text-sm text-gray-800 space-y-2">
+                              <div className="text-blue-700">
+                                Kilómetros sumados en este viaje: <span className="font-semibold">+{Number((embarqueDetalle as any).km_agregado_ultimo).toLocaleString('es-MX')}</span> km
+                                {typeof (embarqueDetalle as any)?.km_total_nuevo === 'number' && (
+                                  <>
+                                    {" "}| Total actual del odómetro: <span className="font-semibold">{Number((embarqueDetalle as any).km_total_nuevo).toLocaleString('es-MX')}</span> km
+                                  </>
+                                )}
+                              </div>
+                              {((embarqueDetalle as any)?.km_tramo_ultimo || (embarqueDetalle as any)?.km_fecha_viaje_ultimo || (embarqueDetalle as any)?.km_comentarios_ultimo) && (
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                                  {(embarqueDetalle as any)?.km_tramo_ultimo && (
+                                    <div>
+                                      <span className="block text-xs text-gray-500 uppercase tracking-wide">Tramo (Origen → Destino)</span>
+                                      <span className="block text-gray-900">{(embarqueDetalle as any).km_tramo_ultimo}</span>
+                                    </div>
+                                  )}
+                                  {(embarqueDetalle as any)?.km_fecha_viaje_ultimo && (
+                                    <div>
+                                      <span className="block text-xs text-gray-500 uppercase tracking-wide">Fecha del viaje</span>
+                                      <span className="block text-gray-900">{formatDateMatamoros(normalizeDate((embarqueDetalle as any).km_fecha_viaje_ultimo) || (embarqueDetalle as any).km_fecha_viaje_ultimo)}</span>
+                                    </div>
+                                  )}
+                                  {(embarqueDetalle as any)?.km_comentarios_ultimo && (
+                                    <div className="md:col-span-3">
+                                      <span className="block text-xs text-gray-500 uppercase tracking-wide">Comentarios</span>
+                                      <span className="block text-gray-900 whitespace-pre-wrap">{(embarqueDetalle as any).km_comentarios_ultimo}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
