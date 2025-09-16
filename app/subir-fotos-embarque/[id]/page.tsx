@@ -860,27 +860,7 @@ export default function SubirFotosEmbarquePage() {
           </CardContent>
         </Card>
 
-        {/* Botón para abrir vista pública (enviable al dueño de la mercancía) */}
-        <div className="mt-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <button
-              onClick={async () => {
-                try {
-                  const res = await fetch('/api/public-link', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ embarqueId: embarqueId, hours: 72 }) })
-                  const json = await res.json()
-                  if (json?.token) {
-                    window.open(json.url, '_blank')
-                  } else {
-                    setError('No se pudo generar el enlace público: ' + (json?.error || 'error'))
-                  }
-                } catch (e) { setError('Error generando enlace público') }
-              }}
-              className="inline-block w-full sm:w-auto flex-1 text-center bg-green-600 hover:bg-green-700 text-white py-2 rounded"
-            >
-              Ver reporte para el cliente
-            </button>
-          </div>
-        </div>
+  {/* (Botón de reporte para cliente eliminado; ahora se usa el botón del card principal en Asignar Operadores) */}
         
         {/* Estadísticas */}
         {fotos.length > 0 && (

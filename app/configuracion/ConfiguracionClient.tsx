@@ -43,6 +43,8 @@ interface ConfiguracionGeneral {
     notificacionesPush: boolean;
     backupAutomatico: boolean;
     retencionDatos: number;
+    // Indicador de uso del almacenamiento Blob (porcentaje 0-100)
+    blobStorageUsagePercent?: number;
     formatoFecha: string;
 }
 
@@ -61,7 +63,8 @@ export default function ConfiguracionPage() {
         notificacionesEmail: false,
         notificacionesPush: false,
         backupAutomatico: false,
-        retencionDatos: 12,
+    retencionDatos: 12,
+    blobStorageUsagePercent: 0,
         formatoFecha: "",
     });
     const currentUser = getCurrentUser();
@@ -493,8 +496,9 @@ export default function ConfiguracionPage() {
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList className="grid w-full grid-cols-5">
+                    <TabsList className="grid w-full grid-cols-6">
                         <TabsTrigger value="general">General</TabsTrigger>
+                        <TabsTrigger value="backup">Backup</TabsTrigger>
                         <TabsTrigger value="seguridad">Seguridad</TabsTrigger>
                         <TabsTrigger value="alertas">Alertas de Vencimiento</TabsTrigger>
                         <TabsTrigger value="auditlog">Audit Log</TabsTrigger>
@@ -651,6 +655,42 @@ export default function ConfiguracionPage() {
                                         <p className="text-xs text-gray-500">El sistema eliminará únicamente Embarques anteriores al periodo configurado. Clientes, usuarios, operadores y unidades nunca se eliminan por retención.</p>
                                     </div>
                                     <div className="space-y-2">
+                                        <Label>Uso de almacenamiento Blob (%)</Label>
+                                        <div>
+                                            {/* Progress Bar container */}
+                                            <div className="w-full bg-gray-200 rounded h-4 overflow-hidden">
+                                                {(() => {
+                                                    const pct = Number(configuracion.blobStorageUsagePercent ?? 0);
+                                                    const color = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-400' : 'bg-green-500';
+                                                    return (
+                                                        <div className={`${color} h-4`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+                                                    )
+                                                })()}
+                                            </div>
+                                            <div className="mt-2 flex items-center justify-between">
+                                                <div className="text-sm text-gray-700">{configuracion.blobStorageUsagePercent ?? 0}% usado</div>
+                                                <div className="text-xs">
+                                                    {Number(configuracion.blobStorageUsagePercent ?? 0) > 90 ? (
+                                                        <span className="text-red-600 font-medium">Alerta: almacenamiento casi lleno</span>
+                                                    ) : Number(configuracion?.blobStorageUsagePercent ?? 0) > 70 ? (
+                                                        <span className="text-yellow-700 font-medium">Advertencia: límite cercano</span>
+                                                    ) : (
+                                                        <span className="text-green-700 font-medium">Espacio suficiente</span>
+                                                    )}
+                                                </div>
+                                            </div>
+                                            <div className="mt-2 flex gap-2">
+                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 75 })}>Marcar 75%</Button>
+                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 85 })}>Marcar 85%</Button>
+                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 95 })}>Marcar 95%</Button>
+                                                <Button size="sm" variant="ghost" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 0 })}>Reset</Button>
+                                            </div>
+                                            <p className="text-xs text-gray-500 mt-1">Valor informativo. Para limpieza real, usa la sección de limpieza de Blob.</p>
+                                            {/* Hidden numeric input for manual edits if needed */}
+                                            <input type="number" value={configuracion.blobStorageUsagePercent ?? 0} onChange={(e) => setConfiguracion({ ...configuracion, blobStorageUsagePercent: Math.max(0, Math.min(100, Number(e.target.value))) })} className="hidden" />
+                                        </div>
+                                    </div>
+                                    <div className="space-y-2">
                                         <Label className="block">Respaldo automático</Label>
                                         <div className="flex items-center gap-2">
                                             <Switch
@@ -667,81 +707,93 @@ export default function ConfiguracionPage() {
                                         Próxima ejecución de retención: {retencionNextRun ? new Date(retencionNextRun).toLocaleString() : 'no programada'}
                                     </div>
                                     <div className="flex gap-2">
-                                        <Button variant="outline" onClick={() => scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))}>Reprogramar siguiente ejecución</Button>
-                                        <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={() => {
-                                            // Solo admin puede guardar cambios de retención
-                                            if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede guardar estos cambios.'); return }
-                                            guardarConfiguracion()
-                                            // Si cambió retención, reprogramar siguiente corrida
-                                            scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))
-                                        }}>Guardar configuración</Button>
-                                        {currentUser?.role === 'admin' && (
-                                            <>
+                                        <span className="text-xs text-gray-500">Los controles de backup, exportación e importación están disponibles en la pestaña <strong>Backup</strong>.</span>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+                    </TabsContent>
+
+                    <TabsContent value="backup" className="space-y-4">
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Download className="h-5 w-5" />
+                                    <span>Backup y Export/Import</span>
+                                </CardTitle>
+                                <CardDescription>Controles para exportar datos, programar respaldos y previsualizar imports</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="text-xs text-gray-600">Próxima ejecución de retención: {retencionNextRun ? new Date(retencionNextRun).toLocaleString() : 'no programada'}</div>
+                                <div className="flex gap-2">
+                                    <Button variant="outline" onClick={() => scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))}>Reprogramar siguiente ejecución</Button>
+                                    <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={() => {
+                                        if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede guardar estos cambios.'); return }
+                                        guardarConfiguracion()
+                                        scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))
+                                    }}>Guardar configuración</Button>
+                                    {currentUser?.role === 'admin' && (
+                                        <>
+                                            <Button
+                                                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                onClick={async () => {
+                                                    try {
+                                                        const res = await fetch('/api/export-full')
+                                                        if (!res.ok) throw new Error('Export failed')
+                                                        const blob = await res.blob()
+                                                        const url = URL.createObjectURL(blob)
+                                                        const a = document.createElement('a')
+                                                        a.href = url
+                                                        a.download = `monarca-export-${new Date().toISOString().slice(0,10)}.json.gz`
+                                                        document.body.appendChild(a)
+                                                        a.click()
+                                                        a.remove()
+                                                        URL.revokeObjectURL(url)
+                                                        alert('Export descargado correctamente')
+                                                    } catch (e: any) {
+                                                        alert('Error exportando: ' + (e.message || e))
+                                                    }
+                                                }}
+                                            >
+                                                Exportar datos ahora
+                                            </Button>
+
+                                            <div className="ml-2">
+                                                <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" />
                                                 <Button
-                                                    className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                    className="ml-2"
                                                     onClick={async () => {
+                                                        const input = document.getElementById('importFile') as HTMLInputElement | null
+                                                        if (!input || !input.files || input.files.length === 0) { alert('Selecciona un archivo exportado primero'); return }
+                                                        const file = input.files[0]
                                                         try {
-                                                            const res = await fetch('/api/export-full')
-                                                            if (!res.ok) throw new Error('Export failed')
-                                                            const blob = await res.blob()
-                                                            const url = URL.createObjectURL(blob)
-                                                            const a = document.createElement('a')
-                                                            a.href = url
-                                                            a.download = `monarca-export-${new Date().toISOString().slice(0,10)}.json.gz`
-                                                            document.body.appendChild(a)
-                                                            a.click()
-                                                            a.remove()
-                                                            URL.revokeObjectURL(url)
-                                                            alert('Export descargado correctamente')
+                                                            let text = ''
+                                                            if (file.name.endsWith('.gz')) {
+                                                                const arrayBuffer = await file.arrayBuffer()
+                                                                alert('Archivo .gz recibido. Descomprime localmente y sube el JSON resultante para previsualizar.')
+                                                                return
+                                                            } else {
+                                                                text = await file.text()
+                                                            }
+                                                            const parsed = JSON.parse(text)
+                                                            const res = await fetch('/api/import-full', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: parsed, dryRun: true }) })
+                                                            const json = await res.json()
+                                                            if (!res.ok) throw new Error(json.error || 'Preview failed')
+                                                            let msg = 'Resumen de import (dry-run):\n'
+                                                            for (const k of Object.keys(json.summary || {})) {
+                                                                msg += `${k}: ${json.summary[k].count} registros\n`
+                                                            }
+                                                            alert(msg)
                                                         } catch (e: any) {
-                                                            alert('Error exportando: ' + (e.message || e))
+                                                            alert('Error previsualizando import: ' + (e.message || e))
                                                         }
                                                     }}
                                                 >
-                                                    Exportar datos ahora
+                                                    Previsualizar import
                                                 </Button>
-
-                                                {/* Import preview */}
-                                                <div className="ml-2">
-                                                    <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" />
-                                                    <Button
-                                                        className="ml-2"
-                                                        onClick={async () => {
-                                                            const input = document.getElementById('importFile') as HTMLInputElement | null
-                                                            if (!input || !input.files || input.files.length === 0) { alert('Selecciona un archivo exportado primero'); return }
-                                                            const file = input.files[0]
-                                                            try {
-                                                                let text = ''
-                                                                if (file.name.endsWith('.gz')) {
-                                                                    // try to read gz in browser if supported
-                                                                    const arrayBuffer = await file.arrayBuffer()
-                                                                    // browsers don't have native gzip decompression; inform user
-                                                                    alert('Archivo .gz recibido. Descomprime localmente y sube el JSON resultante para previsualizar.')
-                                                                    return
-                                                                } else {
-                                                                    text = await file.text()
-                                                                }
-                                                                const parsed = JSON.parse(text)
-                                                                const res = await fetch('/api/import-full', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ data: parsed, dryRun: true }) })
-                                                                const json = await res.json()
-                                                                if (!res.ok) throw new Error(json.error || 'Preview failed')
-                                                                // show summary
-                                                                let msg = 'Resumen de import (dry-run):\n'
-                                                                for (const k of Object.keys(json.summary || {})) {
-                                                                    msg += `${k}: ${json.summary[k].count} registros\n`
-                                                                }
-                                                                alert(msg)
-                                                            } catch (e: any) {
-                                                                alert('Error previsualizando import: ' + (e.message || e))
-                                                            }
-                                                        }}
-                                                    >
-                                                        Previsualizar import
-                                                    </Button>
-                                                </div>
-                                            </>
-                                        )}
-                                    </div>
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
                             </CardContent>
                         </Card>

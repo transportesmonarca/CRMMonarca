@@ -501,6 +501,8 @@ export default function AsignarOperadoresPage() {
       const baseUpdate: any = {
         estado: "cancelado",
         updated_at: new Date().toISOString(),
+        // Garantizar que el pago al operador no se contabilice al cancelar
+        pago_operador: 0,
       };
       try {
         baseUpdate.observaciones = `${
@@ -1046,21 +1048,79 @@ export default function AsignarOperadoresPage() {
   updateData.precio_quickpaid = null;
       }
 
-      const { error: updateError } = await supabase
+      // Asegurar que el indicador flete_falso se persista aunque no se cambie explícitamente el precio de flete
+      // (el checkbox vive en la pestaña Flete y puede marcarse sin capturar un nuevo precio)
+      updateData.flete_falso = modificacionData.flete_en_falso;
+
+      // Si se marca Flete en Falso, y existe un tipo de servicio especial con el monto,
+      // usar ese monto como pago_operador en el embarque
+  if (modificacionData.flete_en_falso) {
+        try {
+          const fleteTipo = (tiposServicio || []).find((t: any) => {
+            const slug = (t?.slug || "").toString().toLowerCase();
+            const nombre = (t?.nombre || "").toString().toLowerCase();
+            return slug === 'flete-en-falso' || nombre === 'flete en falso';
+          });
+          if (fleteTipo && (typeof fleteTipo.precio_base === 'number' || fleteTipo.precio_base)) {
+            const montoFalso = Number(fleteTipo.precio_base) || 0;
+            // Establecer el pago_operador al monto definido para flete en falso
+    // Requerimiento: al marcar el checkbox, el pago asignado al operador debe ser el capturado en "Precio Flete en Falso"
+    updateData.pago_operador = montoFalso;
+            // Notificar al usuario (mejor esfuerzo)
+            try {
+              toast({ title: 'Aplicado monto flete en falso', description: `$${montoFalso.toLocaleString('es-MX')}` });
+            } catch (e) {}
+          }
+        } catch (e) {
+          console.warn('No se pudo aplicar monto flete en falso al sueldo del operador:', e);
+        }
+      }
+
+      // Intentar actualizar; si falla por columna inexistente (por ejemplo pago_operador), reintentar sin ese campo
+      let { error: updateError } = await supabase
         .from("embarques")
         .update(updateData)
         .eq("id", embarqueAModificar.id);
 
       if (updateError) {
-        // Mostrar más detalles si existen (mensaje, detalles, hint)
         const detailedMsg =
           (updateError as any)?.message ||
           (updateError as any)?.details ||
           (updateError as any)?.hint ||
           JSON.stringify(updateError);
-        console.error("Error actualizando embarque:", updateError);
-        toast({ title: "Error al actualizar embarque", description: String(detailedMsg), variant: "destructive" });
-        return;
+        const looksMissingColumn = /column\s+\"?([a-zA-Z0-9_]+)\"?\s+does not exist|42703|column .* does not exist/i.test(detailedMsg);
+        if (looksMissingColumn) {
+          try {
+            const retryPayload = { ...updateData } as any;
+            // Quitar posibles columnas que aún no existen en la tabla embarques
+            delete retryPayload.pago_operador;
+            delete retryPayload.sueldo_operador_nuevo;
+            delete retryPayload.moneda_sueldo_operador_nuevo;
+            delete retryPayload.sueldo_operador_original;
+            delete retryPayload.moneda_sueldo_operador_original;
+            const { error: retryError } = await supabase
+              .from("embarques")
+              .update(retryPayload)
+              .eq("id", embarqueAModificar.id);
+            if (retryError) {
+              const retryMsg = (retryError as any)?.message || (retryError as any)?.details || (retryError as any)?.hint || JSON.stringify(retryError);
+              console.error("Error actualizando embarque (retry):", retryError);
+              toast({ title: "Error al actualizar embarque", description: String(retryMsg), variant: "destructive" });
+              return;
+            }
+            // Informar que se aplicaron cambios, pero sin persistir pago_operador por falta de columna
+            toast({ title: "Modificación guardada", description: "Actualizado sin el campo pago_operador (ejecuta scripts/49-add-pago-operador-embarques.sql)", variant: "destructive" });
+          } catch (retryEx) {
+            console.error("Excepción en retry actualizar embarque:", retryEx);
+            toast({ title: "Error al actualizar embarque", description: String((retryEx as any)?.message || retryEx), variant: "destructive" });
+            return;
+          }
+        } else {
+          console.error("Error actualizando embarque:", updateError);
+          const msg = detailedMsg && detailedMsg !== '{}' ? detailedMsg : 'Error desconocido al actualizar (revisa columnas en la BD)';
+          toast({ title: "Error al actualizar embarque", description: String(msg), variant: "destructive" });
+          return;
+        }
       }
 
       const operadorOriginal = operadores.find(
@@ -2333,6 +2393,20 @@ export default function AsignarOperadoresPage() {
                         >
                           <Camera className="h-4 w-4 mr-1" />
                           Fotos
+                        </Button>
+                      )}
+                      {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
+                      {(embarque.estado === "asignado" || embarque.modificado || embarque.estado === "listo-para-asignar") && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            // Abrir la vista especializada de reporte para cliente (fotos ordenadas + datos del embarque)
+                            window.open(`/embarque-reporte-cliente/${embarque.id}`, '_blank')
+                          }}
+                        >
+                          <FileText className="h-4 w-4 mr-1" />
+                          Reporte Cliente
                         </Button>
                       )}
                       {embarque.estado === "asignado" && (
@@ -4486,6 +4560,24 @@ export default function AsignarOperadoresPage() {
                                 <p className="text-xs text-red-600 mt-1">
                                   Esta opción indica que el flete no se realizó
                                   o fue cancelado
+                                </p>
+                                {/* Mostrar monto configurado para flete en falso */}
+                                <p className="text-xs text-gray-700 mt-2">
+                                  {(() => {
+                                    try {
+                                      const f = (tiposServicio || []).find((t: any) => {
+                                        const slug = (t?.slug || "").toString().toLowerCase();
+                                        const nombre = (t?.nombre || "").toString().toLowerCase();
+                                        return slug === 'flete-en-falso' || nombre === 'flete en falso';
+                                      });
+                                      const monto = f ? Number(f.precio_base) || 0 : null;
+                                      return monto != null
+                                        ? `Al marcar como flete en falso se actualizará el pago del operador por el monto de: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        : 'Al marcar como flete en falso se actualizará el pago del operador por el monto configurado en la sección de Tipos de Servicio (no definido aún).';
+                                    } catch (e) {
+                                      return 'Al marcar como flete en falso se actualizará el pago del operador por el monto configurado en la sección de Tipos de Servicio.';
+                                    }
+                                  })()}
                                 </p>
                               </div>
                             </div>

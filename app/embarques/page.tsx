@@ -43,6 +43,7 @@ import {
   Printer,
   Link,
   ImageIcon,
+  ExternalLink,
   Copy,
 } from "lucide-react";
 import { useState, useEffect } from "react";
@@ -103,6 +104,11 @@ export default function EmbarquesPage() {
   const [proximoFolio, setProximoFolio] = useState("");
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [generatedLink, setGeneratedLink] = useState("");
+  const [showPublicLinkModal, setShowPublicLinkModal] = useState(false);
+  const [publicGeneratedLink, setPublicGeneratedLink] = useState("");
+  const [publicLinkExpiresAt, setPublicLinkExpiresAt] = useState<string | null>(null);
+  const [publicExpirationInput, setPublicExpirationInput] = useState<string | null>(null);
+  const [publicForEmbarqueId, setPublicForEmbarqueId] = useState<string | null>(null);
   const [embarqueFotos, setEmbarqueFotos] = useState<FotoEmbarque[]>([]);
 
   const { toast } = useToast();
@@ -132,12 +138,11 @@ export default function EmbarquesPage() {
     contenido: "",
     peso: "",
     observaciones: "",
-    direccion_recolecta: "",
-    direccion_entrega: "",
-    fecha_recolecta: "",
-    hora_recolecta: "",
-    fecha_entrega: "",
-    hora_entrega: "",
+    // New: support multiple recolecta/entrega points. Each item: { direccion, fecha, hora }
+    recolectas: [
+      { direccion: "", fecha: "", hora: "" },
+    ],
+    entregas: [{ direccion: "", fecha: "", hora: "" }],
     load_number: "",
     patente_agente_aduanal: "",
     aduana_cruce: "",
@@ -491,12 +496,8 @@ export default function EmbarquesPage() {
       contenido: "",
       peso: "",
       observaciones: "",
-      direccion_recolecta: "",
-      direccion_entrega: "",
-      fecha_recolecta: "",
-      hora_recolecta: "",
-      fecha_entrega: "",
-      hora_entrega: "",
+  recolectas: [{ direccion: "", fecha: "", hora: "" }],
+  entregas: [{ direccion: "", fecha: "", hora: "" }],
       load_number: "",
       patente_agente_aduanal: "",
       aduana_cruce: "",
@@ -546,14 +547,20 @@ export default function EmbarquesPage() {
       cliente_id: sampleClienteId,
       tipo_servicio_id: sampleTipoServicioId,
       representante_cliente: "",
-      direccion_recolecta:
-        "Parque Industrial Norte #100, Col. Centro, Monterrey, NL",
-      fecha_recolecta: formatDate(now),
-      hora_recolecta: formatTime(9, 0),
-      direccion_entrega:
-        "Av. Insurgentes Sur 1234, Col. Del Valle, CDMX, MX",
-      fecha_entrega: formatDate(addDays(now, 1)),
-      hora_entrega: formatTime(17, 0),
+      recolectas: [
+        {
+          direccion: "Parque Industrial Norte #100, Col. Centro, Monterrey, NL",
+          fecha: formatDate(now),
+          hora: formatTime(9, 0),
+        },
+      ],
+      entregas: [
+        {
+          direccion: "Av. Insurgentes Sur 1234, Col. Del Valle, CDMX, MX",
+          fecha: formatDate(addDays(now, 1)),
+          hora: formatTime(17, 0),
+        },
+      ],
       contenido: "Tarimas con mercancía general",
       peso: "1250",
       observaciones:
@@ -591,12 +598,21 @@ export default function EmbarquesPage() {
       cliente_id: embarque.cliente_id || "",
       camion_id: embarque.camion_id || "",
       remolque_id: embarque.remolque_id || "",
-      direccion_recolecta: embarque.direccion_recolecta || "",
-      direccion_entrega: embarque.direccion_entrega || "",
-      fecha_recolecta: embarque.fecha_recolecta || "",
-      hora_recolecta: embarque.hora_recolecta || "",
-      fecha_entrega: embarque.fecha_entrega || "",
-      hora_entrega: embarque.hora_entrega || "",
+      // Preserve legacy single fields by mapping into arrays for editing
+      recolectas: [
+        {
+          direccion: (embarque as any).direccion_recolecta || "",
+          fecha: (embarque as any).fecha_recolecta || "",
+          hora: (embarque as any).hora_recolecta || "",
+        },
+      ],
+      entregas: [
+        {
+          direccion: (embarque as any).direccion_entrega || "",
+          fecha: (embarque as any).fecha_entrega || "",
+          hora: (embarque as any).hora_entrega || "",
+        },
+      ],
       contenido: embarque.contenido || "",
       peso: embarque.peso?.toString() || "",
       observaciones: embarque.observaciones || "",
@@ -630,10 +646,46 @@ export default function EmbarquesPage() {
 
   const handleSave = async () => {
     // Validación: fecha_recolecta no puede ser después de fecha_entrega
+    // Helper: consider a direccion valid only if it's non-empty and not a placeholder
+    const isValidDireccion = (d: any) => {
+      const dir = String(d ?? "").trim();
+      if (!dir) return false;
+
+      const s = dir.toLowerCase();
+
+      // Reject single-letter values (e.g. 'S') and extremely short values
+      if (s.length <= 1) return false;
+
+      // Common placeholder values to ignore
+      const placeholders = new Set([
+        "s",
+        "-",
+        "--",
+        "---",
+        "placeholder",
+        "sin direccion",
+        "sin dirección",
+        "n/a",
+        "na",
+        "none",
+      ]);
+      if (placeholders.has(s)) return false;
+
+      // Reject values that are only punctuation (e.g. '---', '...')
+      if (/^[^\w\d]+$/.test(s)) return false;
+
+      // Looks reasonable
+      return true;
+    };
+
     try {
-      if (formData.fecha_recolecta && formData.fecha_entrega) {
-        const fr = parseDateOnlyLocal(formData.fecha_recolecta) ?? new Date(formData.fecha_recolecta);
-        const fe = parseDateOnlyLocal(formData.fecha_entrega) ?? new Date(formData.fecha_entrega);
+      // Compare first recolecta date vs last entrega date (if present)
+      // For origin/destination display, choose the first/last non-empty raw direccion as fallback
+      const firstReco = (formData.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || (formData.recolectas || [])[0];
+      const lastEntrega = (formData.entregas || []).slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || (formData.entregas || [])[0];
+      if (firstReco?.fecha && lastEntrega?.fecha) {
+        const fr = parseDateOnlyLocal(firstReco.fecha) ?? new Date(firstReco.fecha);
+        const fe = parseDateOnlyLocal(lastEntrega.fecha) ?? new Date(lastEntrega.fecha);
         if (fr && fe && fr.getTime() > fe.getTime()) {
           toast({
             title: "Fechas inconsistentes",
@@ -646,10 +698,13 @@ export default function EmbarquesPage() {
     } catch (e) {
       // si el parse falla, dejar que las validaciones posteriores manejen el caso
     }
-    if (!formData.direccion_recolecta || !formData.direccion_entrega) {
+    // Require at least one recolecta and one entrega with direccion
+    const hasReco = (formData.recolectas || []).some((r: any) => (r.direccion || "").trim() !== "");
+    const hasEnt = (formData.entregas || []).some((e: any) => (e.direccion || "").trim() !== "");
+    if (!hasReco || !hasEnt) {
       toast({
         title: "Campos obligatorios",
-        description: "Completa dirección de recolecta y dirección de entrega",
+        description: "Agrega al menos una dirección de recolecta y una de entrega",
         variant: "destructive",
       });
       return;
@@ -711,7 +766,10 @@ export default function EmbarquesPage() {
         }
       }
 
-      const embarqueData: any = {
+  const firstReco = (formData.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || (formData.recolectas || [])[0];
+  const lastEntrega = (formData.entregas || []).slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || (formData.entregas || [])[0];
+
+  const embarqueData: any = {
         folio,
         cliente_id:
           formData.cliente_id && formData.cliente_id !== "none"
@@ -726,14 +784,16 @@ export default function EmbarquesPage() {
           formData.remolque_id && formData.remolque_id !== "none"
             ? formData.remolque_id
             : null,
-        origen: formData.direccion_recolecta || "Por definir",
-        destino: formData.direccion_entrega || "Por definir",
-        direccion_recolecta: formData.direccion_recolecta,
-        direccion_entrega: formData.direccion_entrega,
-  fecha_recolecta: normalizeDate(formData.fecha_recolecta) || null,
-  hora_recolecta: formData.hora_recolecta || null,
-  fecha_entrega: normalizeDate(formData.fecha_entrega) || null,
-  hora_entrega: formData.hora_entrega || null,
+        origen: (firstReco && firstReco.direccion) || "Por definir",
+        destino: (lastEntrega && lastEntrega.direccion) || "Por definir",
+        // keep legacy single fields for compatibility
+        direccion_recolecta: firstReco?.direccion || null,
+        direccion_entrega: lastEntrega?.direccion || null,
+        fecha_recolecta: firstReco?.fecha ? normalizeDate(firstReco.fecha) : null,
+        hora_recolecta: firstReco?.hora || null,
+        fecha_entrega: lastEntrega?.fecha ? normalizeDate(lastEntrega.fecha) : null,
+        hora_entrega: lastEntrega?.hora || null,
+  // we'll merge the full arrays into observaciones below to avoid DB migrations
         contenido: formData.contenido || null,
         peso: formData.peso ? Number.parseFloat(formData.peso) : null,
         estado: embarqueEditando ? embarqueEditando.estado : "creado",
@@ -772,7 +832,13 @@ export default function EmbarquesPage() {
       };
 
       try {
-        embarqueData.observaciones = formData.observaciones || null;
+        // Persist ONLY the raw observaciones field from the form.
+        // Do NOT merge recolectas/entregas or add any 'puntos' to this column.
+        // This keeps the `observaciones` column in the `embarques` table equal
+        // to the user's input in the observaciones textbox.
+        embarqueData.observaciones = formData.observaciones
+          ? String(formData.observaciones)
+          : null;
       } catch (error) {
         console.warn("Campo observaciones no disponible en el esquema actual");
       }
@@ -823,6 +889,54 @@ export default function EmbarquesPage() {
         try { agregarAuditLog("CREAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
       }
 
+      // After insert/update, synchronize embarque_puntos table with the formData arrays
+      try {
+        // Try to derive the embarque id from the earlier responses: updateData (when editing) or insertData (when creating)
+        // Note: updateData / insertData variables are declared above in their respective branches; try to read them safely.
+        let embarqueId: string | null = null;
+        try {
+          // @ts-ignore - try to read updateData if present
+          if (typeof (updateData as any) !== 'undefined' && Array.isArray((updateData as any)) && (updateData as any)[0]?.id) embarqueId = (updateData as any)[0].id;
+        } catch {}
+        try {
+          // @ts-ignore - try to read insertData if present
+          if (!embarqueId && typeof (insertData as any) !== 'undefined' && Array.isArray((insertData as any)) && (insertData as any)[0]?.id) embarqueId = (insertData as any)[0].id;
+        } catch {}
+
+        // Fallback: query by folio (should be unique)
+        if (!embarqueId) {
+          try {
+            const { data: row } = await supabase.from('embarques').select('id').eq('folio', folio).limit(1).single();
+            embarqueId = row?.id || null;
+          } catch (e) {
+            embarqueId = null;
+          }
+        }
+
+        if (embarqueId) {
+          // Delete existing points for this embarque (simple sync strategy)
+          await supabase.from('embarque_puntos').delete().eq('embarque_id', embarqueId);
+
+          const toInsert: any[] = [];
+          (formData.recolectas || []).forEach((r: any, i: number) => {
+            if ((r?.direccion || '').toString().trim() !== '') {
+              toInsert.push({ embarque_id: embarqueId, tipo: 'recolecta', orden: i + 1, direccion: r.direccion || null, fecha: r.fecha || null, hora: r.hora || null });
+            }
+          });
+          (formData.entregas || []).forEach((e: any, i: number) => {
+            if ((e?.direccion || '').toString().trim() !== '') {
+              toInsert.push({ embarque_id: embarqueId, tipo: 'entrega', orden: i + 1, direccion: e.direccion || null, fecha: e.fecha || null, hora: e.hora || null });
+            }
+          });
+
+          if (toInsert.length > 0) {
+            const { error: insErr } = await supabase.from('embarque_puntos').insert(toInsert);
+            if (insErr) console.warn('No se pudieron insertar embarque_puntos:', insErr);
+          }
+        }
+      } catch (e) {
+        console.warn('Error sincronizando embarque_puntos:', e);
+      }
       if (embarqueEditando) {
         toast({ title: "Embarque actualizado", description: `Folio: ${folio}` });
       } else {
@@ -936,6 +1050,34 @@ export default function EmbarquesPage() {
       setEmbarqueFotos(fotos); // Set photos in state
     } else {
       setEmbarqueFotos([]); // Clear if no embarque ID
+    }
+
+    // Load persisted puntos (recolectas/entregas) if the new table exists
+    if (embarque.id) {
+      try {
+        const { data: puntosData, error: puntosError } = await supabase
+          .from("embarque_puntos")
+          .select("*")
+          .eq("embarque_id", embarque.id)
+          .order("orden", { ascending: true });
+
+        if (!puntosError && puntosData) {
+          const recolectas = (puntosData as any[])
+            .filter((p) => p.tipo === "recolecta")
+            .map((p) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora }));
+          const entregas = (puntosData as any[])
+            .filter((p) => p.tipo === "entrega")
+            .map((p) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora }));
+
+          // Merge into the detalle so the modal and print/export flows use the persisted points
+          setEmbarqueDetalle((prev) => ({ ...(prev as any), recolectas, entregas }));
+        } else if (puntosError) {
+          // If the table doesn't exist or query fails, log but don't block the modal
+          console.warn("No se pudieron obtener puntos del embarque:", puntosError);
+        }
+      } catch (e) {
+        console.warn("Error consultando embarque_puntos:", e);
+      }
     }
   };
 
@@ -1178,8 +1320,129 @@ export default function EmbarquesPage() {
   return (serviceNames as Record<string, string>)[serviceId] || serviceId;
   };
 
+  // Render readable observaciones: support plain string or JSON that may include comentarios/observaciones fields
+  // Returns either a plain string for raw text observations, or an object { comentarios?, puntos? }
+  const renderObservacionesContent = (obs: any) => {
+    if (!obs && obs !== "") return null;
+    const raw = String(obs ?? "");
+    try {
+      // If the raw contains free text followed by a JSON object, extract prefix and parse suffix
+      const firstBrace = raw.indexOf("{");
+      if (firstBrace > 0) {
+        const prefix = raw.slice(0, firstBrace).trim();
+        const suffix = raw.slice(firstBrace);
+        try {
+          const parsedSuffix = JSON.parse(suffix);
+          const textoFromParsed = parsedSuffix?.comentarios || parsedSuffix?.comentario || parsedSuffix?.observaciones || parsedSuffix?.nota || parsedSuffix?.notes;
+          const puntosFromParsed = parsedSuffix?.puntos;
+          const result: any = {};
+          if (prefix) result.comentarios = prefix;
+          if (textoFromParsed && !result.comentarios) result.comentarios = textoFromParsed;
+          if (puntosFromParsed) result.puntos = puntosFromParsed;
+          // include other parsed fields if present
+          Object.keys(parsedSuffix || {}).forEach((k) => {
+            if (k !== "puntos" && k !== "comentarios" && !(k in result)) result[k] = (parsedSuffix as any)[k];
+          });
+          return result;
+        } catch (e) {
+          // Fall through to try full-parse below
+        }
+      }
+
+      // Try parse entire raw as JSON
+      const parsed = JSON.parse(raw);
+      // If parsing yields a string, it may be a double-encoded JSON ("{...}")
+      if (typeof parsed === "string") {
+        const inner = parsed;
+        try {
+          const parsedInner = JSON.parse(inner);
+          if (parsedInner && typeof parsedInner === "object") {
+            const texto2 = parsedInner?.comentarios || parsedInner?.comentario || parsedInner?.observaciones || parsedInner?.nota || parsedInner?.notes;
+            const puntos2 = parsedInner?.puntos;
+            if (texto2 && puntos2) return { comentarios: texto2, puntos: puntos2 };
+            if (texto2) return texto2;
+            if (puntos2) return { puntos: puntos2 };
+            const otherKeysInner = Object.keys(parsedInner || {}).filter((k) => k !== "puntos");
+            if (otherKeysInner.length > 0) {
+              const summaryInner: any = {};
+              otherKeysInner.forEach((k) => (summaryInner[k] = (parsedInner as any)[k]));
+              return summaryInner;
+            }
+            return parsedInner;
+          }
+        } catch (e) {
+          // not double-encoded, fall through to return the string
+        }
+        return parsed;
+      }
+      const texto = parsed?.comentarios || parsed?.comentario || parsed?.observaciones || parsed?.nota || parsed?.notes;
+      const puntos = parsed?.puntos;
+      if (texto && puntos) return { comentarios: texto, puntos };
+      if (texto) return texto;
+      if (puntos) return { puntos };
+      const otherKeys = Object.keys(parsed || {}).filter((k) => k !== "puntos");
+      if (otherKeys.length > 0) {
+        const summary: any = {};
+        otherKeys.forEach((k) => (summary[k] = (parsed as any)[k]));
+        return summary;
+      }
+      return parsed;
+    } catch (e) {
+      // Not JSON — show raw text
+      return raw;
+    }
+  };
+
+  // Extract only the user-entered comentario text from observaciones.
+  // Prefer explicit fields (comentarios, comentario, observaciones, nota, notes).
+  // If the stored value is plain text, return it. If it's JSON, unwrap and return the comentarios field when present.
+  const extractObservacionesComentario = (obs: any) => {
+    if (obs === null || obs === undefined || obs === "") return null;
+    const raw = String(obs ?? "");
+    // Try parse JSON / double-encoded JSON to find a comentarios-like field
+    try {
+      let parsed: any;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (e) {
+        // If not JSON, return raw text
+        return raw;
+      }
+
+      if (typeof parsed === "string") {
+        // double-encoded JSON -> try parse inner
+        try {
+          const inner = JSON.parse(parsed);
+          if (inner && typeof inner === "object") parsed = inner;
+        } catch (e) {
+          // inner not JSON, return the string
+          return parsed;
+        }
+      }
+
+      if (parsed && typeof parsed === "object") {
+        return (
+          parsed.comentarios ||
+          parsed.comentario ||
+          parsed.observaciones ||
+          parsed.nota ||
+          parsed.notes ||
+          null
+        );
+      }
+
+      // Fallback: return raw
+      return raw;
+    } catch (e) {
+      return raw;
+    }
+  };
+
   const imprimirFormulario = () => {
-    const printContent = `
+  const firstReco = (formData.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || (formData.recolectas || [])[0];
+  const lastEntrega = (formData.entregas || []).slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || (formData.entregas || [])[0];
+
+  const printContent = `
       <html>
         <head>
           <title>Formulario de Embarque - ${
@@ -1235,15 +1498,15 @@ export default function EmbarquesPage() {
           <div class="section">
             <h3>DIRECCIONES</h3>
             <div class="field full-width">
-              <span class="label">Dirección de Recolecta:</span><br>
+              <span class="label">Direcciones de Recolecta:</span><br>
               <span class="value" style="width: 100%; min-height: 24px; display: block;">${
-                formData.direccion_recolecta
+                (formData.recolectas || []).map((r: any, i: number) => `(${i === 0 ? 'original' : i}) ${r.direccion || ''}`).join(' \n')
               }</span>
             </div>
             <div class="field full-width">
-              <span class="label">Dirección de Entrega:</span><br>
+              <span class="label">Direcciones de Entrega:</span><br>
               <span class="value" style="width: 100%; min-height: 24px; display: block;">${
-                formData.direccion_entrega
+                (formData.entregas || []).map((r: any, i: number, arr: any) => `(${i === arr.length - 1 ? 'final' : i}) ${r.direccion || ''}`).join(' \n')
               }</span>
             </div>
           </div>
@@ -1253,22 +1516,22 @@ export default function EmbarquesPage() {
             <div class="grid">
               <div class="field">
                 <span class="label">Fecha Recolecta:</span> <span class="value">${
-                  formData.fecha_recolecta
+                  firstReco?.fecha || ''
                 }</span>
               </div>
               <div class="field">
                 <span class="label">Hora Recolecta:</span> <span class="value">${
-                  formData.hora_recolecta
+                  firstReco?.hora || ''
                 }</span>
               </div>
               <div class="field">
                 <span class="label">Fecha Entrega:</span> <span class="value">${
-                  formData.fecha_entrega
+                  lastEntrega?.fecha || ''
                 }</span>
               </div>
               <div class="field">
                 <span class="label">Hora Entrega:</span> <span class="value">${
-                  formData.hora_entrega
+                  lastEntrega?.hora || ''
                 }</span>
               </div>
             </div>
@@ -1800,7 +2063,7 @@ export default function EmbarquesPage() {
       "Actualizado",
       "Patente Agente Aduanal",
       "Aduana Cruce",
-      "Dueño Mercancía",
+  "Cliente del Embarque",
       "Contacto Nombre",
       "Contacto Puesto",
       "Contacto Teléfono",
@@ -1927,7 +2190,7 @@ export default function EmbarquesPage() {
       "Actualizado",
       "Patente Agente Aduanal",
       "Aduana Cruce",
-      "Dueño Mercancía",
+  "Cliente del Embarque",
       "Contacto Nombre",
       "Contacto Puesto",
       "Contacto Teléfono",
@@ -2218,7 +2481,7 @@ export default function EmbarquesPage() {
         </div>
         {/* Modal de Archivos (Embarques Archivados) */}
         <Dialog open={showArchivosModal} onOpenChange={setShowArchivosModal}>
-          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+    <DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Consulta de Embarques Archivados</DialogTitle>
               <DialogDescription>
@@ -2802,6 +3065,29 @@ export default function EmbarquesPage() {
                           : "Ver Detalles"}
                       </Button>
 
+                      {/* Botón Publicacion: generar liga pública para este embarque */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          if (!embarque.id) {
+                            toast({ title: "ID no disponible", description: "No se pudo obtener el ID del embarque.", variant: "destructive" });
+                            return;
+                          }
+                          // Open modal so user can pick an expiration before generating
+                          setPublicGeneratedLink("");
+                          setPublicLinkExpiresAt(null);
+                          setPublicExpirationInput(null);
+                          setPublicForEmbarqueId(embarque.id || null);
+                          setShowPublicLinkModal(true);
+                        }}
+                        disabled={saving}
+                        title="Generar publicación pública"
+                      >
+                        <Link className="h-4 w-4 mr-1" />
+                        Publicacion
+                      </Button>
+
                       {embarque.estado === "creado" && (
                         <Button
                           variant="default"
@@ -3006,7 +3292,7 @@ export default function EmbarquesPage() {
                       )}
                       {embarque.dueno_mercancia && (
                         <div className="text-sm">
-                          <span className="font-medium">Dueño:</span>{" "}
+                          <span className="font-medium">Cliente del Embarque:</span>{" "}
                           {embarque.dueno_mercancia}
                         </div>
                       )}
@@ -3157,12 +3443,22 @@ export default function EmbarquesPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                  <div className="flex justify-between items-center">
-                    <CardTitle className="text-lg">
-                      Información Básica
-                    </CardTitle>
-                    {/* Botón de prellenado eliminado por requerimiento */}
-                  </div>
+                    <div className="flex justify-between items-center">
+                      <CardTitle className="text-lg">Información Básica</CardTitle>
+                      {/* Autocompletar solo cuando se crea un embarque (no al editar) */}
+                      {!embarqueEditando && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleFillAllFields}
+                          disabled={saving}
+                          title="Autocompletar campos con datos de ejemplo"
+                        >
+                          Autocompletar
+                        </Button>
+                      )}
+                      {/* Generar liga pública: (oculto por ahora) */}
+                    </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Tabs defaultValue="basica" className="w-full">
@@ -3414,123 +3710,156 @@ export default function EmbarquesPage() {
 
                     <TabsContent value="direcciones" className="space-y-4 mt-6">
                       <div className="space-y-4">
-                        <h4 className="font-medium text-gray-900">
-                          Información de Recolecta
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2 md:col-span-2">
-                            <Label htmlFor="direccion_recolecta">
-                              Dirección de Recolecta *
-                            </Label>
-                            <Textarea
-                              id="direccion_recolecta"
-                              value={formData.direccion_recolecta}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  direccion_recolecta: e.target.value,
-                                })
-                              }
-                              placeholder="Dirección completa de recolecta"
-                              rows={3}
-                              className="resize-none"
-                            />
-                          </div>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="fecha_recolecta">
-                                Fecha de Recolecta
-                              </Label>
-                              <Input
-                                id="fecha_recolecta"
-                                type="date"
-                                value={formData.fecha_recolecta}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    fecha_recolecta: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="hora_recolecta">
-                                Hora de Recolecta
-                              </Label>
-                              <Input
-                                id="hora_recolecta"
-                                type="time"
-                                value={formData.hora_recolecta}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    hora_recolecta: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium text-gray-900">Información de Recolecta</h4>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              className="rounded-none w-8 h-8 flex items-center justify-center"
+                              onClick={() => {
+                                // Remove last recolecta (but keep at least one)
+                                const next = (formData.recolectas || []).slice(0, -1);
+                                setFormData({ ...formData, recolectas: next.length ? next : [{ direccion: "", fecha: "", hora: "" }] });
+                              }}
+                            >
+                              -
+                            </Button>
+                            <Button
+                              className="w-8 h-8 flex items-center justify-center bg-green-600 hover:bg-green-700 text-white"
+                              onClick={() => {
+                                setFormData({ ...formData, recolectas: [...(formData.recolectas || []), { direccion: "", fecha: "", hora: "" }] });
+                              }}
+                            >
+                              +
+                            </Button>
                           </div>
                         </div>
+                        {(formData.recolectas || []).map((r: any, idx: number) => (
+                          <div key={`reco-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-start bg-green-50 border-l-4 border-green-400 p-2 rounded-md">
+                            <div className="space-y-1 md:col-span-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-semibold rounded-full bg-green-600 text-white">{idx + 1}</span>
+                                  <Label>
+                                    {idx === 0 ? "Recolecta original" : `Recolecta ${idx}`}
+                                  </Label>
+                                </div>
+                                {/* removed incluir checkbox per requirements */}
+                              </div>
+                              <Textarea
+                                value={r.direccion}
+                                onChange={(e) => {
+                                  const next = [...(formData.recolectas || [])];
+                                  next[idx] = { ...next[idx], direccion: e.target.value };
+                                  setFormData({ ...formData, recolectas: next });
+                                }}
+                                placeholder="Dirección completa de recolecta"
+                                rows={1}
+                                className={"flex h-10 min-h-0 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm leading-tight box-border appearance-none resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"}
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-1">
+                              <Label>Fecha</Label>
+                              <Input
+                                type="date"
+                                value={r.fecha}
+                                onChange={(e) => {
+                                  const next = [...(formData.recolectas || [])];
+                                  next[idx] = { ...next[idx], fecha: e.target.value };
+                                  setFormData({ ...formData, recolectas: next });
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-1">
+                              <Label>Hora</Label>
+                              <Input
+                                type="time"
+                                value={r.hora}
+                                onChange={(e) => {
+                                  const next = [...(formData.recolectas || [])];
+                                  next[idx] = { ...next[idx], hora: e.target.value };
+                                  setFormData({ ...formData, recolectas: next });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
 
                       <div className="space-y-4 border-t pt-4">
-                        <h4 className="font-medium text-gray-900">
-                          Información de Entrega
-                        </h4>
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="space-y-2 md:col-span-2">
-                            <Label htmlFor="direccion_entrega">
-                              Dirección de Entrega *
-                            </Label>
-                            <Textarea
-                              id="direccion_entrega"
-                              value={formData.direccion_entrega}
-                              onChange={(e) =>
-                                setFormData({
-                                  ...formData,
-                                  direccion_entrega: e.target.value,
-                                })
-                              }
-                              placeholder="Dirección completa de entrega"
-                              rows={3}
-                              className="resize-none"
-                            />
-                          </div>
-                          <div className="space-y-4">
-                            <div className="space-y-2">
-                              <Label htmlFor="fecha_entrega">
-                                Fecha de Entrega
-                              </Label>
-                              <Input
-                                id="fecha_entrega"
-                                type="date"
-                                value={formData.fecha_entrega}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    fecha_entrega: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
-                            <div className="space-y-2">
-                              <Label htmlFor="hora_entrega">
-                                Hora de Entrega
-                              </Label>
-                              <Input
-                                id="hora_entrega"
-                                type="time"
-                                value={formData.hora_entrega}
-                                onChange={(e) =>
-                                  setFormData({
-                                    ...formData,
-                                    hora_entrega: e.target.value,
-                                  })
-                                }
-                              />
-                            </div>
+                        <div className="flex items-center justify-between">
+                          <h4 className="font-medium text-gray-900">Información de Entrega</h4>
+                          <div className="flex items-center gap-2">
+                            <Button
+                              variant="ghost"
+                              className="rounded-none w-8 h-8 flex items-center justify-center"
+                              onClick={() => {
+                                const next = (formData.entregas || []).slice(0, -1);
+                                setFormData({ ...formData, entregas: next.length ? next : [{ direccion: "", fecha: "", hora: "" }] });
+                              }}
+                            >
+                              -
+                            </Button>
+                            <Button
+                              className="w-8 h-8 flex items-center justify-center bg-green-600 hover:bg-green-700 text-white"
+                              onClick={() => {
+                                setFormData({ ...formData, entregas: [...(formData.entregas || []), { direccion: "", fecha: "", hora: "" }] });
+                              }}
+                            >
+                              +
+                            </Button>
                           </div>
                         </div>
+                        {(formData.entregas || []).map((r: any, idx: number) => (
+                          <div key={`ent-${idx}`} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-start bg-sky-50 border-l-4 border-sky-400 p-2 rounded-md">
+                            <div className="space-y-1 md:col-span-2">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <span className="inline-flex items-center justify-center w-6 h-6 text-xs font-semibold rounded-full bg-sky-600 text-white">{idx + 1}</span>
+                                  <Label>
+                                    {idx === (formData.entregas || []).length - 1 ? "Entrega final" : `Entrega ${idx}`}
+                                  </Label>
+                                </div>
+                                {/* removed incluir checkbox per requirements */}
+                              </div>
+                              <Textarea
+                                value={r.direccion}
+                                onChange={(e) => {
+                                  const next = [...(formData.entregas || [])];
+                                  next[idx] = { ...next[idx], direccion: e.target.value };
+                                  setFormData({ ...formData, entregas: next });
+                                }}
+                                placeholder="Dirección completa de entrega"
+                                rows={1}
+                                className={"flex h-10 min-h-0 w-full rounded-md border border-input bg-background px-3 py-2 text-base md:text-sm leading-tight box-border appearance-none resize-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"}
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-1">
+                              <Label>Fecha</Label>
+                              <Input
+                                type="date"
+                                value={r.fecha}
+                                onChange={(e) => {
+                                  const next = [...(formData.entregas || [])];
+                                  next[idx] = { ...next[idx], fecha: e.target.value };
+                                  setFormData({ ...formData, entregas: next });
+                                }}
+                              />
+                            </div>
+                            <div className="space-y-2 md:col-span-1">
+                              <Label>Hora</Label>
+                              <Input
+                                type="time"
+                                value={r.hora}
+                                onChange={(e) => {
+                                  const next = [...(formData.entregas || [])];
+                                  next[idx] = { ...next[idx], hora: e.target.value };
+                                  setFormData({ ...formData, entregas: next });
+                                }}
+                              />
+                            </div>
+                          </div>
+                        ))}
                       </div>
                     </TabsContent>
 
@@ -3668,7 +3997,7 @@ export default function EmbarquesPage() {
                           </div>
                           <div className="space-y-2">
                             <Label htmlFor="dueno_mercancia">
-                              Dueño de la Mercancía
+                              Cliente del Embarque
                             </Label>
                             <Input
                               id="dueno_mercancia"
@@ -3679,7 +4008,7 @@ export default function EmbarquesPage() {
                                   dueno_mercancia: e.target.value,
                                 })
                               }
-                              placeholder="Nombre del dueño"
+                              placeholder="Nombre del cliente del embarque"
                             />
                           </div>
                         </div>
@@ -3945,9 +4274,13 @@ export default function EmbarquesPage() {
                         <Label className="text-sm font-medium text-gray-700">
                           Observaciones
                         </Label>
-                        <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
-                          {embarqueDetalle.observaciones}
-                        </p>
+                        <div className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
+                          {(() => {
+                            const comentario = extractObservacionesComentario(embarqueDetalle.observaciones);
+                            if (!comentario) return <span>Sin observaciones</span>;
+                            return <pre className="whitespace-pre-wrap text-sm">{String(comentario)}</pre>;
+                          })()}
+                        </div>
                       </div>
                     )}
                   </TabsContent>
@@ -3963,33 +4296,51 @@ export default function EmbarquesPage() {
                             <Label className="text-sm font-medium text-gray-700">
                               Dirección de Recolecta
                             </Label>
-                            <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
-                              {embarqueDetalle.direccion_recolecta ||
-                                "Sin especificar"}
-                            </p>
+                            {((embarqueDetalle as any)?.recolectas && (embarqueDetalle as any).recolectas.length > 0 && (embarqueDetalle as any).recolectas.some((r: any) => (r.direccion || "").trim() !== "")) ? (
+                              <div className="space-y-2 mt-1">
+                                {(embarqueDetalle as any).recolectas.map((r: any, i: number) => (
+                                  <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
+                                    <div className="font-medium text-xs text-gray-700">
+                                      {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                    </div>
+                                    <div className="whitespace-pre-wrap mt-1">{r.direccion || "Sin especificar"}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
+                                {embarqueDetalle.direccion_recolecta || "Sin especificar"}
+                              </p>
+                            )}
                           </div>
                           <div className="flex items-start gap-4">
                             <div className="flex-1">
                               <Label className="text-sm font-medium text-gray-700">
                                 Fecha de Recolecta
                               </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {embarqueDetalle.fecha_recolecta
-                                  ? formatDateMatamoros(
-                                      normalizeDate(
-                                        embarqueDetalle.fecha_recolecta
-                                      ) || embarqueDetalle.fecha_recolecta
-                                    )
-                                  : "Sin especificar"}
-                              </p>
+                              {(() => {
+                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
+                                const fecha = reco?.fecha || (embarqueDetalle as any).fecha_recolecta;
+                                return (
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                    {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                  </p>
+                                );
+                              })()}
                             </div>
                             <div className="w-40 shrink-0">
                               <Label className="text-sm font-medium text-gray-700">
                                 Hora de Recolecta
                               </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {embarqueDetalle.hora_recolecta || "Sin especificar"}
-                              </p>
+                              {(() => {
+                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
+                                const hora = reco?.hora || (embarqueDetalle as any).hora_recolecta;
+                                return (
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                    {hora || "Sin especificar"}
+                                  </p>
+                                );
+                              })()}
                             </div>
                           </div>
                         </div>
@@ -4004,10 +4355,22 @@ export default function EmbarquesPage() {
                             <Label className="text-sm font-medium text-gray-700">
                               Dirección de Entrega
                             </Label>
-                            <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
-                              {embarqueDetalle.direccion_entrega ||
-                                "Sin especificar"}
-                            </p>
+                            {((embarqueDetalle as any)?.entregas && (embarqueDetalle as any).entregas.length > 0 && (embarqueDetalle as any).entregas.some((r: any) => (r.direccion || "").trim() !== "")) ? (
+                              <div className="space-y-2 mt-1">
+                                {(embarqueDetalle as any).entregas.map((r: any, i: number) => (
+                                  <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
+                                    <div className="font-medium text-xs text-gray-700">
+                                      {i === ((embarqueDetalle as any).entregas.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                    </div>
+                                    <div className="whitespace-pre-wrap mt-1">{r.direccion || "Sin especificar"}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
+                                {embarqueDetalle.direccion_entrega || "Sin especificar"}
+                              </p>
+                            )}
                           </div>
                           <div className="space-y-4">
                             <div className="flex items-start gap-4">
@@ -4015,23 +4378,31 @@ export default function EmbarquesPage() {
                                 <Label className="text-sm font-medium text-gray-700">
                                   Fecha de Entrega
                                 </Label>
-                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                  {embarqueDetalle.fecha_entrega
-                                    ? formatDateMatamoros(
-                                        normalizeDate(
-                                          embarqueDetalle.fecha_entrega
-                                        ) || embarqueDetalle.fecha_entrega
-                                      )
-                                    : "Sin especificar"}
-                                </p>
+                                {(() => {
+                                  const ents = (embarqueDetalle as any)?.entregas || [];
+                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
+                                  const fecha = lastEnt?.fecha || (embarqueDetalle as any).fecha_entrega;
+                                  return (
+                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                      {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                    </p>
+                                  );
+                                })()}
                               </div>
                               <div className="w-40 shrink-0">
                                 <Label className="text-sm font-medium text-gray-700">
                                   Hora de Entrega
                                 </Label>
-                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                  {embarqueDetalle.hora_entrega || "Sin especificar"}
-                                </p>
+                                {(() => {
+                                  const ents = (embarqueDetalle as any)?.entregas || [];
+                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
+                                  const hora = lastEnt?.hora || (embarqueDetalle as any).hora_entrega;
+                                  return (
+                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                      {hora || "Sin especificar"}
+                                    </p>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
@@ -4283,49 +4654,10 @@ export default function EmbarquesPage() {
                     )}
                   </TabsContent>
 
-                  <TabsContent value="archivos" className="space-y-4 mt-6">
+                  <TabsContent value="archivos" className="space-y-2 mt-4">
                     <h4 className="font-medium text-gray-900">Fotos y Ubicaciones</h4>
 
-                    {embarqueFotos.some((f) => typeof (f as any).latitud === "number" && typeof (f as any).longitud === "number") && (
-                      <div className="space-y-3">
-                        <p className="text-sm text-gray-600">
-                          Ubicaciones donde se subieron las fotografías (según confirmación de geolocalización del operador):
-                        </p>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                          {embarqueFotos
-                            .filter((f) => typeof (f as any).latitud === "number" && typeof (f as any).longitud === "number")
-                            .slice(0, 9)
-                            .map((f) => {
-                              const lat = (f as any).latitud as number;
-                              const lng = (f as any).longitud as number;
-                              const mapsEmbed = `https://www.google.com/maps?q=${lat},${lng}&z=16&output=embed`;
-                              const mapsLink = `https://maps.google.com/?q=${lat},${lng}`;
-                              return (
-                                <div key={f.id} className="rounded-lg overflow-hidden border">
-                                  <iframe
-                                    src={mapsEmbed}
-                                    width="100%"
-                                    height="200"
-                                    loading="lazy"
-                                    referrerPolicy="no-referrer-when-downgrade"
-                                  />
-                                  <div className="p-2 text-xs text-gray-600 flex items-center justify-between">
-                                    <span className="truncate">{new Date((f as any).fecha_subida).toLocaleString()}</span>
-                                    <a
-                                      className="text-blue-600 hover:underline ml-2 shrink-0"
-                                      href={mapsLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      Abrir en Maps
-                                    </a>
-                                  </div>
-                                </div>
-                              );
-                            })}
-                        </div>
-                      </div>
-                    )}
+                    {/* Removed redundant top list of locations; individual photos show 'Abrir en Maps' below each image */}
 
                     {embarqueFotos.length > 0 ? (
                       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
@@ -4346,28 +4678,31 @@ export default function EmbarquesPage() {
                                 height={200}
                                 className="w-full h-32 object-cover"
                               />
-                              <div className="p-2 text-xs space-y-0.5">
+                              <div className="p-2 text-xs space-y-1">
                                 <p className="font-medium truncate">{foto.nombre_archivo}</p>
                                 <p className="text-gray-500">Subido por: {foto.subido_por || "Desconocido"}</p>
                                 <p className="text-gray-500">{new Date(foto.fecha_subida).toLocaleDateString()}</p>
-                                {hasGeo && (
-                                  <p>
+                                <div className="pt-1">
+                                  {hasGeo ? (
                                     <a
-                                      className="text-blue-600 hover:underline"
+                                      className="text-blue-600 hover:underline flex items-center gap-1"
                                       href={mapsLink}
                                       target="_blank"
                                       rel="noopener noreferrer"
                                     >
-                                      Ver ubicación
+                                      <MapPin className="h-3 w-3" />
+                                      Abrir en Maps
                                     </a>
-                                  </p>
-                                )}
+                                  ) : (
+                                    <span className="text-gray-400">Sin ubicación</span>
+                                  )}
+                                </div>
                               </div>
                               <a
                                 href={foto.url_blob}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                className="absolute inset-x-0 top-0 h-32 flex items-center justify-center bg-black bg-opacity-50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
                                 aria-label={`Ver imagen ${foto.nombre_archivo}`}
                               >
                                 <ImageIcon className="h-6 w-6" />
@@ -4469,6 +4804,112 @@ export default function EmbarquesPage() {
 
             <DialogFooter>
               <Button onClick={() => setShowLinkModal(false)}>Cerrar</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal para mostrar la liga pública (compartible) */}
+        <Dialog open={showPublicLinkModal} onOpenChange={setShowPublicLinkModal}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Liga pública para compartir</DialogTitle>
+              <DialogDescription>
+                Copia la liga pública y compártela con usuarios externos. La liga expira automáticamente.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <Label htmlFor="public-link">Enlace público</Label>
+              <div className="flex space-x-2">
+                <Input id="public-link" value={publicGeneratedLink} readOnly />
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (!publicGeneratedLink) return;
+                    navigator.clipboard.writeText(publicGeneratedLink);
+                    toast({ title: "Liga copiada", description: "La liga pública ha sido copiada al portapapeles." });
+                  }}
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    if (!publicGeneratedLink) return;
+                    // Open in a new browser tab
+                    window.open(publicGeneratedLink, '_blank');
+                  }}
+                >
+                  <ExternalLink className="h-4 w-4" />
+                </Button>
+              </div>
+
+              {/* New: expiration input so user can set custom expiry for the public link */}
+              <div>
+                <Label htmlFor="public-expiration">Fecha de expiración (opcional)</Label>
+                <Input
+                  id="public-expiration"
+                  type="datetime-local"
+                  className="mt-1"
+                  value={publicExpirationInput || ''}
+                  onChange={(e: any) => setPublicExpirationInput(e.target.value || null)}
+                />
+                <p className="text-xs text-gray-500 mt-1">Si no se especifica, se usará el tiempo por defecto del sistema (ej. 72 horas).</p>
+              </div>
+
+              {publicLinkExpiresAt && (
+                <p className="text-xs text-gray-500">Expira: {new Date(publicLinkExpiresAt).toLocaleString()}</p>
+              )}
+            </div>
+
+            <DialogFooter>
+              <div className="flex items-center space-x-2">
+                <Button
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  onClick={async () => {
+                    // Generate the public link for the selected embarque
+                    if (!publicForEmbarqueId) {
+                      toast({ title: 'Error', description: 'No hay embarque seleccionado para generar la liga.', variant: 'destructive' });
+                      return;
+                    }
+
+                    try {
+                      const payload: any = { embarqueId: publicForEmbarqueId };
+                      if (publicExpirationInput) {
+                        const dt = new Date(publicExpirationInput);
+                        if (!isNaN(dt.getTime())) payload.expiresAt = dt.toISOString();
+                      } else {
+                        payload.hours = 72;
+                      }
+
+                      const resp = await fetch('/api/public-link', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                      });
+                      const json = await resp.json();
+                      if (!resp.ok || json.error) {
+                        console.error('Error generando public link:', json);
+                        toast({ title: 'Error', description: json?.error || 'No se pudo generar la liga pública', variant: 'destructive' });
+                        return;
+                      }
+                      const full = `${window.location.origin}${json.url}`;
+                      setPublicGeneratedLink(full);
+                      setPublicLinkExpiresAt(json.expiresAt || null);
+                      // clear the selected embarque id after generating
+                      setPublicForEmbarqueId(null);
+                      toast({ title: 'Liga generada', description: 'La liga pública fue generada correctamente.' });
+                    } catch (e) {
+                      console.error('Exception generando public link:', e);
+                      toast({ title: 'Error', description: 'Excepción generando la liga pública', variant: 'destructive' });
+                    }
+                  }}
+                >
+                  Generar enlace
+                </Button>
+
+                <Button onClick={() => setShowPublicLinkModal(false)}>Cerrar</Button>
+              </div>
             </DialogFooter>
           </DialogContent>
         </Dialog>

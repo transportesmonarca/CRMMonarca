@@ -1,10 +1,7 @@
 "use client"
-
-import { useEffect, useState } from "react"
-import { useParams, useSearchParams } from "next/navigation"
-import { Header } from "@/components/layout/header"
-import { toast } from "@/hooks/use-toast";
-import { Toaster } from "@/components/ui/toaster";
+import React, { useEffect, useState } from "react"
+import { toast } from "@/hooks/use-toast"
+import { Toaster } from "@/components/ui/toaster"
 import {
   AlertDialog,
   AlertDialogContent,
@@ -13,32 +10,89 @@ import {
   AlertDialogDescription,
   AlertDialogFooter,
   AlertDialogAction,
-} from "@/components/ui/alert-dialog";
+} from "@/components/ui/alert-dialog"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
+import { Header } from "@/components/layout/header"
 import { Label } from "@/components/ui/label"
-import { Camera } from "lucide-react"
+// Camera icon removed per UX request
 import { supabase, obtenerFotosEmbarque } from "@/lib/supabase"
+import { formatDateMatamoros } from '@/lib/date-utils'
 
 export default function EmbarquePublicPage() {
-  const params = useParams()
-  const id = (params as any)?.id as string
-
+  const [id, setId] = useState<string | null>(null)
   const [embarque, setEmbarque] = useState<any | null>(null)
   const [fotos, setFotos] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
   const [comment, setComment] = useState('')
   const [commentName, setCommentName] = useState('')
+  const [tipoServicioText, setTipoServicioText] = useState<string | null>(null)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmType, setConfirmType] = useState<"contact"|"thanks"|"custom"|null>(null)
-  const search = useSearchParams()
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+
+  // Seguridad/UX: en la vista pública no permitimos subir archivos.
+  // - Eliminamos del DOM cualquier control marcado con la clase `upload-cta` o el atributo `data-upload`.
+  // - Bloqueamos eventos de drag/drop para evitar que se puedan soltar archivos en esta página.
+  useEffect(() => {
+    try {
+      const removeUploadControls = () => {
+        // common markers used by upload UIs in the app
+        const selectors = [
+          '.upload-cta', '[data-upload]', '.dropzone', '.drop-zone', '.dropZone', "input[type=\"file\"]"
+        ].join(',')
+        document.querySelectorAll(selectors).forEach((el) => el.remove())
+      }
+      removeUploadControls()
+
+      const prevent = (e: any) => { e.preventDefault(); e.stopPropagation(); }
+      window.addEventListener('dragover', prevent, { passive: false })
+      window.addEventListener('drop', prevent, { passive: false })
+
+      return () => {
+        window.removeEventListener('dragover', prevent as EventListener)
+        window.removeEventListener('drop', prevent as EventListener)
+      }
+    } catch (e) {
+      // no-op
+    }
+  }, [])
+
+  const getTokenFromLocation = () => {
+    try {
+      if (typeof window === 'undefined') return null
+      const sp = new URLSearchParams(window.location.search)
+      return sp.get('token')
+    } catch (e) { return null }
+  }
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (id) return
+    try {
+      const parts = window.location.pathname.split('/').filter(Boolean)
+      const idx = parts.indexOf('embarque-public')
+      if (idx >= 0 && parts.length > idx + 1) setId(parts[idx + 1])
+    } catch (e) { /* ignore */ }
+  }, [id])
+
+  const handleDownloadPDF = () => {
+    if (!embarque) { toast({ title: 'No hay información', variant: 'destructive' }); return }
+    try {
+      const printable = document.getElementById('embarque-printable')
+      const html = printable ? printable.innerHTML : document.body.innerHTML
+      const win = window.open('', '_blank')
+      if (!win) { toast({ title: 'No se pudo abrir ventana', variant: 'destructive' }); return }
+      win.document.write(`\n<html><head><title>Embarque ${embarque?.folio || ''}</title><meta name="viewport" content="width=device-width,initial-scale=1" /></head><body><div>${html}</div></body></html>`)
+      win.document.close()
+      setTimeout(() => { try { win.print(); win.close() } catch (e) { /* ignore */ } }, 600)
+    } catch (e) { console.error('Error generando PDF', e); toast({ title: 'Error al generar PDF', variant: 'destructive' }) }
+  }
 
   useEffect(() => {
     const cargar = async () => {
-      const token = search?.get('token')
+      const token = getTokenFromLocation()
       if (!id) { setLoading(false); setErrorMsg('ID de embarque faltante'); return }
 
-      // If no token provided, allow localhost dev fallback to load embarque directly
       if (!token) {
         if (typeof window !== 'undefined' && window.location.hostname.includes('localhost')) {
           try {
@@ -48,9 +102,18 @@ export default function EmbarquePublicPage() {
               .select(`*, cliente:clientes(nombre), operador:operadores(nombre, apellidos), camion:camiones(numero_economico,placas,marca), remolque:remolques(numero_economico,placas,marca)`)
               .eq('id', id)
               .single()
-            setEmbarque(data || null)
-            const fotosGuardadas = await obtenerFotosEmbarque(id)
-            setFotos(fotosGuardadas || [])
+              // Attach embarque_puntos as recolectas/entregas when present
+              let emb = data || null
+              if (emb) {
+                const { data: puntos } = await supabase.from('embarque_puntos').select('*').eq('embarque_id', id).order('orden', { ascending: true })
+                const recolectas = (puntos || []).filter((p: any) => p.tipo === 'recolecta').map((p: any) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora, orden: p.orden }))
+                const entregas = (puntos || []).filter((p: any) => p.tipo === 'entrega').map((p: any) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora, orden: p.orden }))
+                emb.recolectas = recolectas
+                emb.entregas = entregas
+              }
+              setEmbarque(emb)
+              const fotosGuardadas = await obtenerFotosEmbarque(id)
+              setFotos(fotosGuardadas || [])
             setErrorMsg(null)
             setLoading(false)
             return
@@ -61,48 +124,72 @@ export default function EmbarquePublicPage() {
             return
           }
         }
-
         setErrorMsg('Enlace inválido: falta token en la URL.')
         setLoading(false)
         return
       }
+
       setLoading(true)
-      try {
+          try {
         const res = await fetch(`/api/public-link/${token}`)
         const json = await res.json()
         if (json?.error) {
-          console.error('public link error', json.error)
           if (json.error === 'expired') setErrorMsg('El enlace público ha expirado.')
           else if (json.error === 'invalid_token') setErrorMsg('Enlace inválido o no encontrado.')
           else setErrorMsg('Error validando el enlace público.')
           setEmbarque(null)
           setFotos([])
         } else {
-          setEmbarque(json.embarque || null)
+          // Attach recolectas/entregas returned by the API into the embarque object
+          const emb = json.embarque || null
+          if (emb) {
+            emb.recolectas = json.recolectas || []
+            emb.entregas = json.entregas || []
+          }
+          setEmbarque(emb)
           setFotos(json.fotos || [])
           setErrorMsg(null)
         }
       } catch (e) {
         console.error('Error cargando embarque público:', e)
-        setEmbarque(null)
-        setFotos([])
-      } finally {
-        setLoading(false)
-      }
+        setEmbarque(null); setFotos([])
+      } finally { setLoading(false) }
     }
     cargar()
   }, [id])
 
-  // Helper para enviar comentario (uso por los botones rápidos)
+  useEffect(() => {
+    const fetchTipo = async () => {
+      try {
+        if (!embarque || !embarque.tipo_servicio_id) { setTipoServicioText(null); return }
+        if (embarque.tipo_servicio && typeof embarque.tipo_servicio === 'string') { setTipoServicioText(embarque.tipo_servicio); return }
+        const { data, error } = await supabase.from('tipos_servicio').select('nombre').eq('id', embarque.tipo_servicio_id).single()
+        if (!error && data && (data as any).nombre) setTipoServicioText((data as any).nombre)
+        else setTipoServicioText(String(embarque.tipo_servicio_id))
+      } catch (e) { console.error('Error buscando tipo de servicio', e); if (embarque) setTipoServicioText(String(embarque.tipo_servicio_id)) }
+    }
+    fetchTipo()
+  }, [embarque])
+
+  const formatDateTime = (v?: string | null) => {
+    if (!v) return ''
+    try {
+      const d = new Date(v)
+      if (isNaN(d.getTime())) return formatDateMatamoros(v)
+      return `${formatDateMatamoros(v)} ${d.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
+    } catch (e) {
+      return String(v)
+    }
+  }
+
   const sendQuickComment = async (name: string, message: string) => {
     try {
-      const token = search?.get('token')
+      const token = getTokenFromLocation()
       if (!token) { toast({ title: 'Enlace inválido', variant: 'destructive' }); return { ok: false } }
       const res = await fetch(`/api/public-link/${token}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name, message }) })
       const j = await res.json()
       if (j?.ok) {
-        setComment(''); setCommentName('');
-        // determinar tipo de confirmación para el modal
+        setComment(''); setCommentName('')
         if (message === 'Por favor contáctenme') setConfirmType('contact')
         else if (message === 'Muchas gracias' || message === 'Enterado') setConfirmType('thanks')
         else setConfirmType('custom')
@@ -115,23 +202,16 @@ export default function EmbarquePublicPage() {
     } catch (e) { toast({ title: 'Error enviando comentario', variant: 'destructive' }); return { ok: false } }
   }
 
-  // Descargar todas las imágenes (intenta descargar cada archivo individualmente)
   const downloadAllImages = () => {
     if (!fotos || fotos.length === 0) return
     fotos.forEach((f: any) => {
       try {
         const a = document.createElement('a')
         a.href = f.url_blob
-        // use provided filename or fallback to last segment of URL
         const filename = f.nombre_archivo || f.url_blob?.split('/')?.pop() || 'imagen'
         a.download = filename
-        // Some browsers won't honor download for cross-origin blobs, but this will attempt
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-      } catch (e) {
-        console.error('Error descargando imagen', e)
-      }
+        document.body.appendChild(a); a.click(); document.body.removeChild(a)
+      } catch (e) { console.error('Error descargando imagen', e) }
     })
   }
 
@@ -141,6 +221,7 @@ export default function EmbarquePublicPage() {
       <div className="pt-24 p-6">Cargando embarque público...</div>
     </div>
   )
+
   if (!embarque) return (
     <div>
       <Header onMenuClick={() => {}} showControls={false} />
@@ -157,131 +238,206 @@ export default function EmbarquePublicPage() {
       <Header onMenuClick={() => {}} showControls={false} />
       <main className="pt-24 p-6 max-w-5xl mx-auto">
         <Toaster />
+
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center space-x-2"><Camera className="h-5 w-5" /><span>Información del Embarque</span></CardTitle>
-            <CardDescription>Vista pública para el dueño de la mercancía</CardDescription>
+          <CardHeader className="pb-8">
+            <div className="flex items-center justify-between w-full">
+              <div className="w-1/3" />
+            <div className="flex flex-col items-center w-1/3">
+              <CardTitle className="flex flex-col items-center">
+                <img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto" />
+                <div className="mt-3 text-xl md:text-2xl font-semibold text-gray-900 capitalize truncate">transportes internacionales monarca</div>
+                <span className="mt-2 text-lg font-semibold">Información del Embarque</span>
+              </CardTitle>
+              <CardDescription className="mt-1">Vista pública para permisionarios</CardDescription>
+            </div>
+              <div className="w-1/3 text-right">
+                <div className="text-sm text-gray-600">Fecha creación</div>
+                <div className="text-sm text-gray-700">{(embarque?.fecha_creacion || embarque?.created_at) ? formatDateTime(embarque?.fecha_creacion || embarque?.created_at) : '—'}</div>
+              </div>
+            </div>
+            <div>
+              <div className="mt-10 text-center text-2xl font-semibold text-gray-900">{embarque?.cliente?.nombre || '—'}</div>
+            </div>
           </CardHeader>
           <CardContent>
-            {/* Nombre de la empresa centrado dentro del Card (no como título) */}
-            {embarque?.cliente?.nombre && (
-              <div className="w-full text-center mb-4">
-                <h3 className="text-2xl font-semibold text-gray-800">{embarque.cliente.nombre}</h3>
+            <div id="embarque-printable">
+              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 px-6 sm:px-8">
+                <div className="md:col-span-1">
+                  <Label className="text-base font-semibold text-gray-900">Folio</Label>
+                  <p className="text-base font-bold text-gray-900">{embarque.folio || '—'}</p>
+                </div>
+                <div className="md:col-span-4 flex flex-col items-end">
+                  <Label className="text-base font-semibold text-gray-900">Tipo de Servicio</Label>
+                  <p className="text-lg text-right">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
+                </div>
+                {/* Liga compartida por Monarca (si existe) */}
+                {embarque?.reporte_cliente_url && (
+                  <div className="md:col-span-5 mt-2">
+                    <Label className="text-base font-semibold text-gray-900">Liga de referencia</Label>
+                    <div className="mt-1">
+                      <a href={embarque.reporte_cliente_url} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all">{embarque.reporte_cliente_url}</a>
+                    </div>
+                  </div>
+                )}
+                <div className="md:col-span-5 lg:col-span-5">
+                  <Label className="text-base font-semibold text-gray-900">Contenido</Label>
+                  <p className="text-lg">{embarque.contenido || '—'}</p>
+                </div>
               </div>
-            )}
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Operador</Label>
-                <p className="text-sm">{embarque.operador ? `${embarque.operador.nombre} ${embarque.operador.apellidos}` : '—'}</p>
+
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-4 px-6 sm:px-8">
+                {/* Column 1: Lugar Recolecta, Destino, Peso (peso under destino) */}
+                <div className="md:col-span-5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-base font-semibold text-gray-900">Lugar Recolecta</Label>
+                    <Label className="text-base font-semibold text-gray-900">Fecha / Hora Recolecta</Label>
+                  </div>
+                  {Array.isArray(embarque.recolectas) && embarque.recolectas.length > 0 ? (
+                    <div className="space-y-2 mt-1">
+                      {embarque.recolectas.map((r: any, i: number) => (
+                        <div key={i} className="w-full text-gray-900 bg-gray-50 p-3 rounded">
+                          <div className="font-medium text-sm text-gray-700">{i === 0 ? 'Original' : `Recolecta ${i + 1}`}</div>
+                          <div className="mt-1 flex justify-between items-start gap-4">
+                            <div className="whitespace-pre-wrap text-lg">{r?.direccion || 'Sin especificar'}</div>
+                            <div className="text-lg text-gray-600 text-right min-w-[140px] font-semibold">
+                              {(r?.fecha || r?.hora) ? (
+                                <span>{r?.fecha ? new Date(r.fecha).toLocaleDateString() : ''} {r?.hora || ''}</span>
+                              ) : (
+                                <span className="text-gray-400 text-lg">Sin información</span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-base">{embarque.origen || '—'}</p>
+                  )}
+
+                  <div className="mt-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-base font-semibold text-gray-900">Entrega</Label>
+                      <Label className="text-base font-semibold text-gray-900">Fecha / Hora Entrega</Label>
+                    </div>
+                    {Array.isArray(embarque.entregas) && embarque.entregas.length > 0 ? (
+                      <div className="space-y-2 mt-1">
+                        {embarque.entregas.map((e: any, i: number) => (
+                          <div key={i} className="w-full text-gray-900 bg-gray-50 p-3 rounded">
+                            <div className="font-medium text-sm text-gray-700">{i === (embarque.entregas.length - 1) ? 'Final' : `Entrega ${i + 1}`}</div>
+                            <div className="mt-1 flex justify-between items-start gap-4">
+                              <div className="whitespace-pre-wrap text-lg">{e?.direccion || 'Sin especificar'}</div>
+                              <div className="text-lg text-gray-600 text-right min-w-[140px] font-semibold">
+                                {(e?.fecha || e?.hora) ? (
+                                  <span>{e?.fecha ? new Date(e.fecha).toLocaleDateString() : ''} {e?.hora || ''}</span>
+                                ) : (
+                                  <span className="text-gray-400 text-lg">Sin información</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-base">{embarque.destino || '—'}</p>
+                    )}
+                  </div>
+
+                  <div className="mt-3 flex flex-col sm:flex-row items-center sm:justify-between justify-center gap-8 sm:gap-0">
+                    <div className="text-center sm:text-left">
+                      <Label className="text-base font-semibold text-gray-900">Peso</Label>
+                      <p className="text-lg">{embarque.peso ? `${String(embarque.peso)} Kg` : '—'}</p>
+                    </div>
+                    <div className="text-center sm:text-left">
+                      <Label className="text-base font-semibold text-gray-900">Remolque</Label>
+                      <p className="text-lg text-right max-w-[280px] truncate">{(embarque.remolque && (embarque.remolque.numero_economico || embarque.remolque.numero)) || '—'}</p>
+                    </div>
+                  </div>
+                </div>
+
+                {/* No right column — recolecta column spans full width */}
+                <div className="hidden" />
+
               </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Origen</Label>
-                <p className="text-sm">{embarque.origen || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Destino</Label>
-                <p className="text-sm">{embarque.destino || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">No. Tractocamión</Label>
-                <p className="text-sm">{embarque.camion?.numero_economico || (embarque as any).camion_numero_economico || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Marca del Tractocamión</Label>
-                <p className="text-sm">{embarque.camion?.marca || (embarque as any).camion_marca || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">No. Remolque</Label>
-                <p className="text-sm">{embarque.remolque?.numero_economico || (embarque as any).remolque_numero_economico || embarque.remolque?.placas || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Marca del Remolque</Label>
-                <p className="text-sm">{embarque.remolque?.marca || (embarque as any).remolque_marca || '—'}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Recolecta</Label>
-                <p className="text-sm">{embarque.fecha_recolecta ? new Date(embarque.fecha_recolecta).toLocaleDateString() : '—'} {embarque.hora_recolecta || ''}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Entrega</Label>
-                <p className="text-sm">{embarque.fecha_entrega ? new Date(embarque.fecha_entrega).toLocaleDateString() : '—'} {embarque.hora_entrega || ''}</p>
-              </div>
+
             </div>
           </CardContent>
         </Card>
 
+        <div className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-lg font-semibold">Observaciones</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="text-lg text-gray-700 bg-gray-50 p-2 rounded" aria-live="polite">
+                {embarque.observaciones ? (
+                  <pre className="whitespace-pre-wrap text-lg m-0">{String(embarque.observaciones)}</pre>
+                ) : (
+                  <span className="text-gray-400 text-lg">—</span>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+
           <div className="mt-6">
-          <div className="flex items-center justify-between mb-3">
-            <h3 className="text-lg font-semibold">Fotografías del Embarque</h3>
-            {fotos.length > 0 && (
-              <button onClick={downloadAllImages} className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-700">
-                Descargar imágenes
-              </button>
-            )}
-          </div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-semibold">Fotografías del Embarque</h3>
+              <div className="flex items-center gap-2">
+                <button onClick={handleDownloadPDF} className="text-sm bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-1 rounded">Descargar PDF</button>
+                {fotos.length > 0 && (
+                  <button onClick={downloadAllImages} className="text-sm bg-gray-100 hover:bg-gray-200 px-3 py-1 rounded text-gray-700">Descargar imágenes</button>
+                )}
+              </div>
+            </div>
+
             {fotos.length === 0 ? (
-            <p className="text-sm text-gray-500">Aún no hay fotografías disponibles.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {fotos.map((f) => (
-                <div key={f.id} className="bg-white rounded shadow p-2">
-                  <img src={f.url_blob} alt={f.nombre_archivo} className="w-full h-48 object-cover rounded" />
-                  <div className="flex items-center justify-between mt-2">
-                    <p className="text-xs text-gray-600">{f.nombre_archivo}</p>
-                    <div className="flex items-center gap-2">
-                      {f.latitud && f.longitud ? (
-                        <a
-                          href={`https://www.google.com/maps?q=${f.latitud},${f.longitud}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="text-xs text-blue-600 flex items-center gap-1"
-                          title={`Ver ubicación: ${f.latitud}, ${f.longitud}`}
-                        >
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 6-9 13-9 13S3 16 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
-                          <span className="hidden sm:inline">Ubicación</span>
+              <p className="text-sm text-gray-500">Aún no hay fotografías disponibles.</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {fotos.map((f) => (
+                  <div key={f.id} className="bg-white rounded shadow p-2">
+                    <img src={f.url_blob} alt={f.nombre_archivo} className="w-full h-48 object-cover rounded" />
+                    <div className="flex items-center justify-between mt-2">
+                      <p className="text-xs text-gray-600">{f.nombre_archivo}</p>
+                      <div className="flex items-center gap-2">
+                        {f.latitud && f.longitud ? (
+                          <a href={`https://www.google.com/maps?q=${f.latitud},${f.longitud}`} target="_blank" rel="noreferrer" className="text-xs text-blue-600 flex items-center gap-1" title={`Ver ubicación: ${f.latitud}, ${f.longitud}`}>
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 10c0 6-9 13-9 13S3 16 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>
+                            <span className="hidden sm:inline">Ubicación</span>
+                          </a>
+                        ) : (
+                          <span className="text-xs text-gray-400">Sin ubicación</span>
+                        )}
+                        <a href={f.url_blob} download={f.nombre_archivo || ''} className="text-xs text-gray-700 hover:text-gray-900 ml-2" title="Descargar imagen">
+                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M7 10l5-5m0 0l5 5m-5-5v12" /></svg>
                         </a>
-                      ) : (
-                        <span className="text-xs text-gray-400">Sin ubicación</span>
-                      )}
-                      {/* botón de descarga individual */}
-                      <a href={f.url_blob} download={f.nombre_archivo || ''} className="text-xs text-gray-700 hover:text-gray-900 ml-2" title="Descargar imagen">
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2M7 10l5-5m0 0l5 5m-5-5v12" />
-                        </svg>
-                      </a>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </div>
+            )}
 
-          {/* Sección de acciones rápidas: botones entre las fotos y el bloque de comentarios */}
-          {/* Quick action removed: replaced by a single persistent red contact button at the bottom of the page */}
+          </div>
 
-          {/* Comentarios removidos por requerimiento de UX */}
-          {/* Confirmación modal */}
           <AlertDialog open={confirmOpen} onOpenChange={(v)=>setConfirmOpen(v)}>
             <AlertDialogContent className="max-w-sm">
-                <AlertDialogHeader>
-                  <div className="flex justify-center mb-2">
-                    <img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto" />
-                  </div>
-                  <AlertDialogTitle>
-                    {confirmType === 'contact' ? 'Comentario recibido' : (confirmType === 'thanks' ? 'Gracias' : 'Comentario enviado')}
-                  </AlertDialogTitle>
-                  <AlertDialogDescription>
-                    {confirmType === 'contact' ? 'Gracias por tu respuesta. En breve nos comunicaremos contigo.' : (confirmType === 'thanks' ? '¡Estamos contentos de ayudarte!' : 'Gracias por tu mensaje. El operador recibirá tu comentario.')}
-                  </AlertDialogDescription>
-                </AlertDialogHeader>
-                <AlertDialogFooter>
-                  <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={()=>{ setConfirmOpen(false); setConfirmType(null); }}>Cerrar</AlertDialogAction>
-                </AlertDialogFooter>
-              </AlertDialogContent>
+              <AlertDialogHeader>
+                <div className="flex justify-center mb-2"><img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto"/></div>
+                <AlertDialogTitle>{confirmType === 'contact' ? 'Comentario recibido' : (confirmType === 'thanks' ? 'Gracias' : 'Comentario enviado')}</AlertDialogTitle>
+                <AlertDialogDescription>{confirmType === 'contact' ? 'Gracias por tu respuesta. En breve nos comunicaremos contigo.' : (confirmType === 'thanks' ? '¡Estamos contentos de ayudarte!' : 'Gracias por tu mensaje. El operador recibirá tu comentario.')}</AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogAction className="bg-red-600 hover:bg-red-700 text-white" onClick={()=>{ setConfirmOpen(false); setConfirmType(null); }}>Cerrar</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
           </AlertDialog>
+
         </div>
       </main>
-  {/* Botones flotantes removidos por requerimiento de UX */}
+      {/* Botones flotantes removidos por requerimiento de UX */}
     </div>
   )
 }
+ 

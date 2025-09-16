@@ -1,9 +1,12 @@
 -- Script para corregir la tabla tipos_servicio y usar precio_base como columna principal
 -- Este script asegura que la tabla tenga la estructura correcta
 
--- 1. Verificar y crear la tabla tipos_servicio si no existe
+-- Nota: en algunas instancias, id ya es UUID. Para compatibilidad:
+-- - Creamos la tabla con id UUID si no existe.
+-- - En inserts usamos gen_random_uuid() y hacemos upsert por slug.
 CREATE TABLE IF NOT EXISTS tipos_servicio (
-    id VARCHAR(100) PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    slug TEXT UNIQUE,
     nombre VARCHAR(255) NOT NULL,
     descripcion TEXT,
     categoria VARCHAR(100) DEFAULT 'General',
@@ -18,46 +21,62 @@ CREATE TABLE IF NOT EXISTS tipos_servicio (
 -- 2. Agregar la columna pago_operador si no existe (para pagos a operadores)
 DO $$
 BEGIN
+    -- Asegurar columna pago_operador
     IF NOT EXISTS (
         SELECT 1 FROM information_schema.columns 
         WHERE table_name = 'tipos_servicio' AND column_name = 'pago_operador'
     ) THEN
         ALTER TABLE tipos_servicio ADD COLUMN pago_operador DECIMAL(10,2) DEFAULT 0;
     END IF;
+    -- Asegurar columna slug (para upserts idempotentes)
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'tipos_servicio' AND column_name = 'slug'
+    ) THEN
+        ALTER TABLE tipos_servicio ADD COLUMN slug TEXT;
+    END IF;
+    -- Asegurar índice/unique en slug
+    BEGIN
+        CREATE UNIQUE INDEX IF NOT EXISTS tipos_servicio_slug_key ON tipos_servicio(slug);
+    EXCEPTION WHEN duplicate_table THEN
+        -- ignore
+        NULL;
+    END;
 END $$;
 
 -- 3. Insertar o actualizar todos los tipos de servicio usando precio_base
-INSERT INTO tipos_servicio (id, nombre, descripcion, categoria, subcategoria, precio_base, pago_operador, orden_visualizacion) VALUES
+-- Upsert por slug; id se genera con gen_random_uuid()
+INSERT INTO tipos_servicio (id, slug, nombre, descripcion, categoria, subcategoria, precio_base, pago_operador, orden_visualizacion) VALUES
 -- Servicios de Aduana - Exportación 240
-('exportacion-cargada-caja-seca-240', 'EXPORTACIÓN CARGADA - CAJA SECA 240', 'Servicio de exportación con contenedor de caja seca cargada - Zona 240', 'Servicios de Aduana', 'Exportación 240', 1800.00, 1800.00, 1),
-('exportacion-cargada-larmex-240', 'EXPORTACIÓN CARGADA - CAJA SECA (LARMEX) 240', 'Servicio especializado LARMEX para exportación con caja seca - Zona 240', 'Servicios de Aduana', 'Exportación 240', 2000.00, 2000.00, 2),
-('exportacion-cargada-thermo-agricultura-240', 'EXPORTACIÓN CARGADA - THERMO (AGRICULTURA) 240', 'Transporte refrigerado especializado para productos agrícolas - Zona 240', 'Servicios de Aduana', 'Exportación 240', 2300.00, 2300.00, 3),
-('exportacion-cargada-plataforma-240', 'EXPORTACIÓN CARGADA - PLATAFORMA 240', 'Plataforma especializada para carga de exportación - Zona 240', 'Servicios de Aduana', 'Exportación 240', 1900.00, 1900.00, 4),
+ (gen_random_uuid(), 'exportacion-cargada-caja-seca-240', 'EXPORTACIÓN CARGADA - CAJA SECA 240', 'Servicio de exportación con contenedor de caja seca cargada - Zona 240', 'Servicios de Aduana', 'Exportación 240', 1800.00, 1800.00, 1),
+ (gen_random_uuid(), 'exportacion-cargada-larmex-240', 'EXPORTACIÓN CARGADA - CAJA SECA (LARMEX) 240', 'Servicio especializado LARMEX para exportación con caja seca - Zona 240', 'Servicios de Aduana', 'Exportación 240', 2000.00, 2000.00, 2),
+ (gen_random_uuid(), 'exportacion-cargada-thermo-agricultura-240', 'EXPORTACIÓN CARGADA - THERMO (AGRICULTURA) 240', 'Transporte refrigerado especializado para productos agrícolas - Zona 240', 'Servicios de Aduana', 'Exportación 240', 2300.00, 2300.00, 3),
+ (gen_random_uuid(), 'exportacion-cargada-plataforma-240', 'EXPORTACIÓN CARGADA - PLATAFORMA 240', 'Plataforma especializada para carga de exportación - Zona 240', 'Servicios de Aduana', 'Exportación 240', 1900.00, 1900.00, 4),
 
 -- Servicios de Aduana - Importación 240
-('importacion-cargada-caja-seca-240', 'IMPORTACIÓN CARGADA - CAJA SECA 240', 'Servicio de importación con contenedor de caja seca cargada - Zona 240', 'Servicios de Aduana', 'Importación 240', 1700.00, 1700.00, 5),
-('importacion-cargada-plataforma-240', 'IMPORTACIÓN CARGADA - PLATAFORMA 240', 'Plataforma de importación con carga - Zona 240', 'Servicios de Aduana', 'Importación 240', 1850.00, 1850.00, 6),
-('importacion-vacia-caja-seca-thermo-240', 'IMPORTACIÓN VACÍA - CAJA SECA/THERMO 240', 'Retorno de contenedores vacíos de caja seca o thermo - Zona 240', 'Servicios de Aduana', 'Importación 240', 1200.00, 1200.00, 7),
-('importacion-cargada-plataforma-amarre-240', 'IMPORTACIÓN CARGADA - PLATAFORMA CON AMARRE 240', 'Plataforma especializada con sistema de amarre para importación - Zona 240', 'Servicios de Aduana', 'Importación 240', 2100.00, 2100.00, 8),
-('importacion-en-tractor-240', 'IMPORTACIÓN - EN TRACTOR 240', 'Servicio de importación solo con tractocamión - Zona 240', 'Servicios de Aduana', 'Importación 240', 1000.00, 1000.00, 9),
+ (gen_random_uuid(), 'importacion-cargada-caja-seca-240', 'IMPORTACIÓN CARGADA - CAJA SECA 240', 'Servicio de importación con contenedor de caja seca cargada - Zona 240', 'Servicios de Aduana', 'Importación 240', 1700.00, 1700.00, 5),
+ (gen_random_uuid(), 'importacion-cargada-plataforma-240', 'IMPORTACIÓN CARGADA - PLATAFORMA 240', 'Plataforma de importación con carga - Zona 240', 'Servicios de Aduana', 'Importación 240', 1850.00, 1850.00, 6),
+ (gen_random_uuid(), 'importacion-vacia-caja-seca-thermo-240', 'IMPORTACIÓN VACÍA - CAJA SECA/THERMO 240', 'Retorno de contenedores vacíos de caja seca o thermo - Zona 240', 'Servicios de Aduana', 'Importación 240', 1200.00, 1200.00, 7),
+ (gen_random_uuid(), 'importacion-cargada-plataforma-amarre-240', 'IMPORTACIÓN CARGADA - PLATAFORMA CON AMARRE 240', 'Plataforma especializada con sistema de amarre para importación - Zona 240', 'Servicios de Aduana', 'Importación 240', 2100.00, 2100.00, 8),
+ (gen_random_uuid(), 'importacion-en-tractor-240', 'IMPORTACIÓN - EN TRACTOR 240', 'Servicio de importación solo con tractocamión - Zona 240', 'Servicios de Aduana', 'Importación 240', 1000.00, 1000.00, 9),
 
 -- Servicios de Aduana - Zona 800
-('exportacion-cargada-caja-seca-800', 'EXPORTACIÓN CARGADA - CAJA SECA 800', 'Exportación con caja seca cargada - Zona 800', 'Servicios de Aduana', 'Zona 800', 2200.00, 2200.00, 10),
-('exportacion-vacia-caja-seca-800', 'EXPORTACIÓN VACÍA - CAJA SECA 800', 'Retorno de contenedor vacío de caja seca - Zona 800', 'Servicios de Aduana', 'Zona 800', 1500.00, 1500.00, 11),
-('exportacion-en-tractor-800', 'EXPORTACIÓN - EN TRACTOR 800', 'Servicio de exportación solo con tractocamión - Zona 800', 'Servicios de Aduana', 'Zona 800', 1200.00, 1200.00, 12),
-('exportacion-cargada-plataforma-800', 'EXPORTACIÓN CARGADA - PLATAFORMA 800', 'Plataforma cargada para exportación - Zona 800', 'Servicios de Aduana', 'Zona 800', 2400.00, 2400.00, 13),
-('importacion-cargada-caja-seca-800', 'IMPORTACIÓN CARGADA - CAJA SECA 800', 'Importación con caja seca cargada - Zona 800', 'Servicios de Aduana', 'Zona 800', 2000.00, 2000.00, 14),
-('importacion-vacia-plataforma-800', 'IMPORTACIÓN VACÍA - PLATAFORMA 800', 'Plataforma vacía para importación - Zona 800', 'Servicios de Aduana', 'Zona 800', 1400.00, 1400.00, 15),
+ (gen_random_uuid(), 'exportacion-cargada-caja-seca-800', 'EXPORTACIÓN CARGADA - CAJA SECA 800', 'Exportación con caja seca cargada - Zona 800', 'Servicios de Aduana', 'Zona 800', 2200.00, 2200.00, 10),
+ (gen_random_uuid(), 'exportacion-vacia-caja-seca-800', 'EXPORTACIÓN VACÍA - CAJA SECA 800', 'Retorno de contenedor vacío de caja seca - Zona 800', 'Servicios de Aduana', 'Zona 800', 1500.00, 1500.00, 11),
+ (gen_random_uuid(), 'exportacion-en-tractor-800', 'EXPORTACIÓN - EN TRACTOR 800', 'Servicio de exportación solo con tractocamión - Zona 800', 'Servicios de Aduana', 'Zona 800', 1200.00, 1200.00, 12),
+ (gen_random_uuid(), 'exportacion-cargada-plataforma-800', 'EXPORTACIÓN CARGADA - PLATAFORMA 800', 'Plataforma cargada para exportación - Zona 800', 'Servicios de Aduana', 'Zona 800', 2400.00, 2400.00, 13),
+ (gen_random_uuid(), 'importacion-cargada-caja-seca-800', 'IMPORTACIÓN CARGADA - CAJA SECA 800', 'Importación con caja seca cargada - Zona 800', 'Servicios de Aduana', 'Zona 800', 2000.00, 2000.00, 14),
+ (gen_random_uuid(), 'importacion-vacia-plataforma-800', 'IMPORTACIÓN VACÍA - PLATAFORMA 800', 'Plataforma vacía para importación - Zona 800', 'Servicios de Aduana', 'Zona 800', 1400.00, 1400.00, 15),
 
 -- Servicios Adicionales
-('pagos-extras', 'PAGOS EXTRAS', 'Servicios adicionales con costo extra según requerimientos especiales', 'Servicios Adicionales', 'Extras', 300.00, 300.00, 16),
-('horas-rojo-amarillo', 'HORAS ROJO/AMARILLO', 'Servicios prestados en horarios especiales (rojo/amarillo)', 'Servicios Adicionales', 'Horarios Especiales', 500.00, 500.00, 17),
-('cargas-descargas', 'CARGAS/DESCARGAS', 'Servicios de manipulación, carga y descarga de mercancías', 'Servicios Adicionales', 'Manipulación', 400.00, 400.00, 18),
-('movimientos-en-falso', 'MOVIMIENTOS EN FALSO', 'Movimientos iniciados pero no completados por causas ajenas', 'Servicios Adicionales', 'Especiales', 250.00, 250.00, 19),
-('movimientos-locales', 'MOVIMIENTOS LOCALES', 'Traslados y movimientos dentro de la ciudad o zona local', 'Servicios Adicionales', 'Locales', 200.00, 200.00, 20),
-('otro', 'OTRO', 'Servicio personalizado según necesidades específicas del cliente', 'Servicios Adicionales', 'Personalizado', 0.00, 0.00, 21)
+ (gen_random_uuid(), 'pagos-extras', 'PAGOS EXTRAS', 'Servicios adicionales con costo extra según requerimientos especiales', 'Servicios Adicionales', 'Extras', 300.00, 300.00, 16),
+ (gen_random_uuid(), 'horas-rojo-amarillo', 'HORAS ROJO/AMARILLO', 'Servicios prestados en horarios especiales (rojo/amarillo)', 'Servicios Adicionales', 'Horarios Especiales', 500.00, 500.00, 17),
+ (gen_random_uuid(), 'cargas-descargas', 'CARGAS/DESCARGAS', 'Servicios de manipulación, carga y descarga de mercancías', 'Servicios Adicionales', 'Manipulación', 400.00, 400.00, 18),
+ (gen_random_uuid(), 'movimientos-en-falso', 'MOVIMIENTOS EN FALSO', 'Movimientos iniciados pero no completados por causas ajenas', 'Servicios Adicionales', 'Especiales', 250.00, 250.00, 19),
+ (gen_random_uuid(), 'movimientos-locales', 'MOVIMIENTOS LOCALES', 'Traslados y movimientos dentro de la ciudad o zona local', 'Servicios Adicionales', 'Locales', 200.00, 200.00, 20),
+ (gen_random_uuid(), 'otro', 'OTRO', 'Servicio personalizado según necesidades específicas del cliente', 'Servicios Adicionales', 'Personalizado', 0.00, 0.00, 21)
 
-ON CONFLICT (id) DO UPDATE SET
+ON CONFLICT (slug) DO UPDATE SET
     nombre = EXCLUDED.nombre,
     descripcion = EXCLUDED.descripcion,
     categoria = EXCLUDED.categoria,

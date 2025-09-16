@@ -16,6 +16,12 @@
 			"type": "shell",
 			"command": "echo \"Reminder: Apply the updated scripts/setup.sql to Supabase to add columnas latitud/longitud/comentario a fotos_embarques. You can run this in Supabase SQL editor or via psql.\"",
 			"group": "build"
+		},
+		{
+			"label": "Apply setup.sql to Supabase (instructions)",
+			"type": "shell",
+			"command": "echo \"Reminder: Apply the updated scripts/setup.sql to Supabase to add columnas latitud/longitud/comentario a fotos_embarques. You can run this in Supabase SQL editor or via psql.\"",
+			"group": "build"
 		}
 	]
 }

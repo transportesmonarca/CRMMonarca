@@ -318,7 +318,9 @@ ALTER TABLE embarques
   ADD COLUMN IF NOT EXISTS referencia_pago_4 TEXT,
   ADD COLUMN IF NOT EXISTS remolque_manual BOOLEAN,
   ADD COLUMN IF NOT EXISTS remolque_numero_economico TEXT,
-  ADD COLUMN IF NOT EXISTS remolque_placa TEXT;
+  ADD COLUMN IF NOT EXISTS remolque_placa TEXT,
+  -- Liga para el cliente en la vista de reporte (opcional)
+  ADD COLUMN IF NOT EXISTS reporte_cliente_url TEXT;
 
 -- Índices dependientes de columnas agregadas arriba
 CREATE INDEX IF NOT EXISTS idx_embarques_estado_facturacion ON embarques(estado_facturacion);
