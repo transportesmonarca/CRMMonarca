@@ -116,9 +116,18 @@ export default function ConfiguracionPage() {
     // Limpieza manual de Blob
     const [blobRunning, setBlobRunning] = useState(false)
     const [blobResult, setBlobResult] = useState<string | null>(null)
-    const [blobConfirmOpen, setBlobConfirmOpen] = useState(false)
     const [blobStart, setBlobStart] = useState<string>("")
     const [blobEnd, setBlobEnd] = useState<string>("")
+    // Doble confirmación y contraseña para limpieza de Blob
+    const [blobDialog1Open, setBlobDialog1Open] = useState(false)
+    const [blobDialog2Open, setBlobDialog2Open] = useState(false)
+    const [blobPwd1, setBlobPwd1] = useState("")
+    const [blobPwd2, setBlobPwd2] = useState("")
+    const [blobErr, setBlobErr] = useState<string | null>(null)
+    // Descarga ZIP de fotos (General)
+    const [zipStart, setZipStart] = useState<string>("")
+    const [zipEnd, setZipEnd] = useState<string>("")
+    const [zipDownloading, setZipDownloading] = useState(false)
 
     // Cargar umbrales de alerta desde Supabase
     const cargarAlertThresholds = async () => {
@@ -501,8 +510,8 @@ export default function ConfiguracionPage() {
                         <TabsTrigger value="general">General</TabsTrigger>
                         <TabsTrigger value="branding">Branding</TabsTrigger>
                         <TabsTrigger value="backup">Backup</TabsTrigger>
-                        <TabsTrigger value="seguridad">Seguridad</TabsTrigger>
-                        <TabsTrigger value="alertas">Alertas de Vencimiento</TabsTrigger>
+                        <TabsTrigger value="seguridad">Usuarios</TabsTrigger>
+                        <TabsTrigger value="alertas">Alertas</TabsTrigger>
                         <TabsTrigger value="auditlog">Audit Log</TabsTrigger>
                         <TabsTrigger value="limpieza">Limpieza</TabsTrigger>
                     </TabsList>
@@ -674,42 +683,7 @@ export default function ConfiguracionPage() {
                                         />
                                         <p className="text-xs text-gray-500">El sistema eliminará únicamente Embarques anteriores al periodo configurado. Clientes, usuarios, operadores y unidades nunca se eliminan por retención.</p>
                                     </div>
-                                    <div className="space-y-2">
-                                        <Label>Uso de almacenamiento Blob (%)</Label>
-                                        <div>
-                                            {/* Progress Bar container */}
-                                            <div className="w-full bg-gray-200 rounded h-4 overflow-hidden">
-                                                {(() => {
-                                                    const pct = Number(configuracion.blobStorageUsagePercent ?? 0);
-                                                    const color = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-400' : 'bg-green-500';
-                                                    return (
-                                                        <div className={`${color} h-4`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
-                                                    )
-                                                })()}
-                                            </div>
-                                            <div className="mt-2 flex items-center justify-between">
-                                                <div className="text-sm text-gray-700">{configuracion.blobStorageUsagePercent ?? 0}% usado</div>
-                                                <div className="text-xs">
-                                                    {Number(configuracion.blobStorageUsagePercent ?? 0) > 90 ? (
-                                                        <span className="text-red-600 font-medium">Alerta: almacenamiento casi lleno</span>
-                                                    ) : Number(configuracion?.blobStorageUsagePercent ?? 0) > 70 ? (
-                                                        <span className="text-yellow-700 font-medium">Advertencia: límite cercano</span>
-                                                    ) : (
-                                                        <span className="text-green-700 font-medium">Espacio suficiente</span>
-                                                    )}
-                                                </div>
-                                            </div>
-                                            <div className="mt-2 flex gap-2">
-                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 75 })}>Marcar 75%</Button>
-                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 85 })}>Marcar 85%</Button>
-                                                <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 95 })}>Marcar 95%</Button>
-                                                <Button size="sm" variant="ghost" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 0 })}>Reset</Button>
-                                            </div>
-                                            <p className="text-xs text-gray-500 mt-1">Valor informativo. Para limpieza real, usa la sección de limpieza de Blob.</p>
-                                            {/* Hidden numeric input for manual edits if needed */}
-                                            <input type="number" value={configuracion.blobStorageUsagePercent ?? 0} onChange={(e) => setConfiguracion({ ...configuracion, blobStorageUsagePercent: Math.max(0, Math.min(100, Number(e.target.value))) })} className="hidden" />
-                                        </div>
-                                    </div>
+                                    
                                     <div className="space-y-2">
                                         <Label className="block">Respaldo automático</Label>
                                         <div className="flex items-center gap-2">
@@ -721,6 +695,7 @@ export default function ConfiguracionPage() {
                                             <span className="text-sm text-gray-700">Habilitar respaldos periódicos</span>
                                         </div>
                                     </div>
+                                    
                                 </div>
                                 <div className="flex flex-wrap gap-2 justify-between items-center">
                                     <div className="text-xs text-gray-600">
@@ -739,6 +714,117 @@ export default function ConfiguracionPage() {
                     </TabsContent>
 
                     <TabsContent value="backup" className="space-y-4">
+                        {/* Respaldo en Excel (todas las tablas) */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Download className="h-5 w-5" />
+                                    <span>Respaldo en Excel</span>
+                                </CardTitle>
+                                <CardDescription>Descarga un archivo Excel con varias hojas: Operadores, Embarques, Clientes y Créditos de Clientes (estado actual)</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-2">
+                                <div className="flex flex-wrap gap-2 items-center">
+                                    <Button
+                                        className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                        onClick={async () => {
+                                            try {
+                                                const res = await fetch('/api/export-all-xlsx', { method: 'GET' })
+                                                if (!res.ok) {
+                                                    let msg = 'No se pudo generar el respaldo en Excel'
+                                                    try { const j = await res.json(); if (j?.error) msg = j.error } catch {}
+                                                    throw new Error(msg)
+                                                }
+                                                const blob = await res.blob()
+                                                const url = URL.createObjectURL(blob)
+                                                const a = document.createElement('a')
+                                                a.href = url
+                                                a.download = `respaldo_excel_${new Date().toISOString().slice(0,10)}.xlsx`
+                                                document.body.appendChild(a)
+                                                a.click()
+                                                a.remove()
+                                                URL.revokeObjectURL(url)
+                                            } catch (e: any) {
+                                                alert(e?.message || 'Error generando Excel')
+                                            }
+                                        }}
+                                    >
+                                        Descargar respaldo Excel
+                                    </Button>
+                                    <p className="text-xs text-gray-500">Incluye todas las tablas clave en hojas separadas para respaldo rápido.</p>
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        {/* Descarga de Fotografías (mover aquí entre Respaldo Excel y Backup/Export) */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Download className="h-5 w-5" />
+                                    <span>Descarga de Fotografías</span>
+                                </CardTitle>
+                                <CardDescription>Descarga masiva de imágenes por rango de fechas</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {/* Descargar fotografías (ZIP) */}
+                                <div className="space-y-2">
+                                    <Label className="block">Descargar fotografías (ZIP) — opcional rango de fechas</Label>
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                        <div className="space-y-1">
+                                            <Label>Rango de fechas</Label>
+                                            <div className="grid grid-cols-2 gap-2">
+                                                <Input type="date" value={zipStart} onChange={(e) => setZipStart(e.target.value)} />
+                                                <Input type="date" value={zipEnd} onChange={(e) => setZipEnd(e.target.value)} />
+                                            </div>
+                                            <p className="text-xs text-gray-500">Si está vacío, se descargarán todas las fotos.</p>
+                                        </div>
+                                        <div className="space-y-1 md:col-span-2">
+                                            <Label>Acción</Label>
+                                            <div className="flex flex-wrap gap-2">
+                                                <Button
+                                                    className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                    disabled={zipDownloading}
+                                                    onClick={async () => {
+                                                        try {
+                                                            setZipDownloading(true)
+                                                            const res = await fetch('/api/blob/download-photos', {
+                                                                method: 'POST',
+                                                                headers: { 'Content-Type': 'application/json' },
+                                                                body: JSON.stringify({
+                                                                    startIso: zipStart ? new Date(`${zipStart}T00:00:00Z`).toISOString() : undefined,
+                                                                    endIso: zipEnd ? new Date(`${zipEnd}T00:00:00Z`).toISOString() : undefined,
+                                                                })
+                                                            })
+                                                            if (!res.ok) {
+                                                                let msg = 'Error al generar ZIP'
+                                                                try { const j = await res.json(); if (j?.error) msg = j.error } catch {}
+                                                                throw new Error(msg)
+                                                            }
+                                                            const blob = await res.blob()
+                                                            const url = URL.createObjectURL(blob)
+                                                            const a = document.createElement('a')
+                                                            a.href = url
+                                                            a.download = `fotos-blob-${new Date().toISOString().slice(0,10)}.zip`
+                                                            document.body.appendChild(a)
+                                                            a.click()
+                                                            a.remove()
+                                                            URL.revokeObjectURL(url)
+                                                        } catch (e: any) {
+                                                            alert(e?.message || 'Error desconocido descargando ZIP')
+                                                        } finally {
+                                                            setZipDownloading(false)
+                                                        }
+                                                    }}
+                                                >
+                                                    {zipDownloading ? 'Preparando ZIP…' : 'Descargar ZIP de fotos'}
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </CardContent>
+                        </Card>
+
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center space-x-2">
@@ -818,6 +904,53 @@ export default function ConfiguracionPage() {
                                             </div>
                                         </>
                                     )}
+                                </div>
+                            </CardContent>
+                        </Card>
+
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Download className="h-5 w-5" />
+                                    <span>Almacenamiento Blob</span>
+                                </CardTitle>
+                                <CardDescription>Uso del almacenamiento</CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-6">
+                                {/* Uso de almacenamiento Blob (%) */}
+                                <div className="space-y-2">
+                                    <Label>Uso de almacenamiento Blob (%)</Label>
+                                    <div>
+                                        <div className="w-full bg-gray-200 rounded h-4 overflow-hidden">
+                                            {(() => {
+                                                const pct = Number(configuracion.blobStorageUsagePercent ?? 0);
+                                                const color = pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-400' : 'bg-green-500';
+                                                return (
+                                                    <div className={`${color} h-4`} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} />
+                                                )
+                                            })()}
+                                        </div>
+                                        <div className="mt-2 flex items-center justify-between">
+                                            <div className="text-sm text-gray-700">{configuracion.blobStorageUsagePercent ?? 0}% usado</div>
+                                            <div className="text-xs">
+                                                {Number(configuracion.blobStorageUsagePercent ?? 0) > 90 ? (
+                                                    <span className="text-red-600 font-medium">Alerta: almacenamiento casi lleno</span>
+                                                ) : Number(configuracion?.blobStorageUsagePercent ?? 0) > 70 ? (
+                                                    <span className="text-yellow-700 font-medium">Advertencia: límite cercano</span>
+                                                ) : (
+                                                    <span className="text-green-700 font-medium">Espacio suficiente</span>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <div className="mt-2 flex gap-2">
+                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 75 })}>Marcar 75%</Button>
+                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 85 })}>Marcar 85%</Button>
+                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 95 })}>Marcar 95%</Button>
+                                            <Button size="sm" variant="ghost" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 0 })}>Reset</Button>
+                                        </div>
+                    <p className="text-xs text-gray-500 mt-1">Valor informativo. Para limpieza real, usa la pestaña Limpieza.</p>
+                    <input type="number" value={configuracion.blobStorageUsagePercent ?? 0} onChange={(e) => setConfiguracion({ ...configuracion, blobStorageUsagePercent: Math.max(0, Math.min(100, Number(e.target.value))) })} className="hidden" />
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>
@@ -1185,41 +1318,7 @@ export default function ConfiguracionPage() {
                     </TabsContent>
 
                     <TabsContent value="limpieza" className="space-y-4">
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="flex items-center space-x-2">
-                                    <Trash2 className="h-5 w-5 text-red-600" />
-                                    <span>Limpieza total de datos</span>
-                                </CardTitle>
-                                <CardDescription>
-                                    Elimina TODOS los registros de Embarques, Audit Logs, Clientes, Remolques, Operadores y Camiones. Esta acción es irreversible.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="p-3 border border-red-300 bg-red-50 text-red-900 rounded text-sm">
-                                    <div className="font-semibold">Advertencia</div>
-                                    <div>Esta operación dejará la aplicación limpia pero funcional. No podrá deshacerse.</div>
-                                </div>
-                                {limpiezaMsg && (
-                                    <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm">{limpiezaMsg}</div>
-                                )}
-                                {limpiezaErr && (
-                                    <div className="p-2 rounded border border-red-300 bg-red-50 text-red-800 text-sm">{limpiezaErr}</div>
-                                )}
-                                <Button
-                                    className="bg-red-600 hover:bg-red-700 text-white border-red-700"
-                                    onClick={() => {
-                                        setLimpiezaErr(null); setLimpiezaMsg(null);
-                                        if (!currentUser || currentUser.role !== 'admin') { setLimpiezaErr('Solo el administrador puede ejecutar la limpieza.'); return }
-                                        setLimpiezaPwd1(""); setLimpiezaPwd2(""); setLimpiezaDialog1Open(true)
-                                    }}
-                                >
-                                    Ejecutar limpieza total (Irreversible)
-                                </Button>
-                            </CardContent>
-                        </Card>
-
-                        {/* Limpieza automática de Audit Logs */}
+                        {/* 1) Limpieza automática de Audit Logs */}
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center space-x-2">
@@ -1277,7 +1376,7 @@ export default function ConfiguracionPage() {
                             </CardContent>
                         </Card>
 
-                        {/* Limpieza manual de archivos en Blob */}
+                        {/* 2) Limpieza manual de archivos en Blob */}
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center space-x-2">
@@ -1292,8 +1391,8 @@ export default function ConfiguracionPage() {
                                 {blobResult && (
                                     <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm whitespace-pre-wrap">{blobResult}</div>
                                 )}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
-                                    <div className="space-y-1">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start md:items-end">
+                                    <div className="space-y-1 md:self-end">
                                         <Label>Rango de fechas (opcional)</Label>
                                         <div className="grid grid-cols-2 gap-2">
                                             <Input type="date" value={blobStart} onChange={(e) => setBlobStart(e.target.value)} />
@@ -1306,14 +1405,140 @@ export default function ConfiguracionPage() {
                                         <Button
                                             className="w-full bg-red-600 hover:bg-red-700 text-white border-red-700"
                                             disabled={blobRunning}
-                                            onClick={() => { setBlobResult(null); setBlobConfirmOpen(true) }}
+                                                onClick={() => {
+                                                    setBlobResult(null);
+                                                    setBlobErr(null);
+                                                    if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede ejecutar esta acción.'); return }
+                                                    setBlobPwd1("");
+                                                    setBlobPwd2("");
+                                                    setBlobDialog1Open(true)
+                                                }}
                                         >
-                                            {blobRunning ? 'Ejecutando…' : 'Borrar archivos de Blob'}
+                                            {blobRunning ? 'Ejecutando…' : 'Borrar archivos'}
                                         </Button>
                                     </div>
                                 </div>
                             </CardContent>
                         </Card>
+
+                        {/* 3) Limpieza total de datos (general) */}
+                        <Card>
+                            <CardHeader>
+                                <CardTitle className="flex items-center space-x-2">
+                                    <Trash2 className="h-5 w-5 text-red-600" />
+                                    <span>Limpieza total de datos</span>
+                                </CardTitle>
+                                <CardDescription>
+                                    Elimina TODOS los registros de Embarques, Audit Logs, Clientes, Remolques, Operadores y Camiones. Esta acción es irreversible.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                <div className="p-3 border border-red-300 bg-red-50 text-red-900 rounded text-sm">
+                                    <div className="font-semibold">Advertencia</div>
+                                    <div>Esta operación dejará la aplicación limpia pero funcional. No podrá deshacerse.</div>
+                                </div>
+                                {limpiezaMsg && (
+                                    <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm">{limpiezaMsg}</div>
+                                )}
+                                {limpiezaErr && (
+                                    <div className="p-2 rounded border border-red-300 bg-red-50 text-red-800 text-sm">{limpiezaErr}</div>
+                                )}
+                                <Button
+                                    className="bg-red-600 hover:bg-red-700 text-white border-red-700"
+                                    onClick={() => {
+                                        setLimpiezaErr(null); setLimpiezaMsg(null);
+                                        if (!currentUser || currentUser.role !== 'admin') { setLimpiezaErr('Solo el administrador puede ejecutar la limpieza.'); return }
+                                        setLimpiezaPwd1(""); setLimpiezaPwd2(""); setLimpiezaDialog1Open(true)
+                                    }}
+                                >
+                                    Ejecutar limpieza total (Irreversible)
+                                </Button>
+                            </CardContent>
+                        </Card>
+                        {/* Limpieza de Blob — Confirmación 1/2 con contraseña */}
+                        <Dialog open={blobDialog1Open} onOpenChange={setBlobDialog1Open}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle className="text-red-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" />Confirmar identidad de administrador (1/2)</DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-3 text-sm">
+                                    <div className="p-2 border border-red-200 bg-red-50 text-red-800 rounded text-xs">Esta acción borrará archivos en Blob. Verifica tu identidad para continuar.</div>
+                                    <Label>Contraseña administrador</Label>
+                                    <Input type="password" value={blobPwd1} onChange={e => setBlobPwd1(e.target.value)} placeholder="••••••••" />
+                                    {blobErr && <div className="text-red-700 bg-red-50 border border-red-200 rounded p-2">{blobErr}</div>}
+                                </div>
+                                <DialogFooter>
+                                    <Button variant="outline" onClick={() => setBlobDialog1Open(false)}>Cancelar</Button>
+                                    <Button className="bg-red-600 hover:bg-red-700 text-white border-red-700" onClick={async () => {
+                                        setBlobErr(null)
+                                        if (!blobPwd1) { setBlobErr('Ingresa tu contraseña.'); return }
+                                        const ok = await verifyCurrentUserPassword(blobPwd1)
+                                        if (!ok) { setBlobErr('Contraseña incorrecta.'); return }
+                                        setBlobDialog1Open(false)
+                                        setBlobPwd2("")
+                                        setBlobDialog2Open(true)
+                                    }}>Continuar</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+
+                        {/* Limpieza de Blob — Confirmación 2/2 con contraseña */}
+                        <Dialog open={blobDialog2Open} onOpenChange={setBlobDialog2Open}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle className="text-red-700 flex items-center gap-2"><AlertTriangle className="h-4 w-4" />Confirmar nuevamente (2/2)</DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-3 text-sm">
+                                    <div className="p-2 border border-red-200 bg-red-50 text-red-800 rounded text-xs">Por seguridad, ingresa nuevamente tu contraseña de administrador.</div>
+                                    <Label>Contraseña administrador</Label>
+                                    <Input type="password" value={blobPwd2} onChange={e => setBlobPwd2(e.target.value)} placeholder="••••••••" />
+                                    {blobErr && <div className="text-red-700 bg-red-50 border border-red-200 rounded p-2">{blobErr}</div>}
+                                </div>
+                                <DialogFooter>
+                                    <Button variant="outline" onClick={() => setBlobDialog2Open(false)}>Cancelar</Button>
+                                    <Button className="bg-red-600 hover:bg-red-700 text-white border-red-700" disabled={blobRunning} onClick={async () => {
+                                        setBlobErr(null)
+                                        if (!blobPwd2) { setBlobErr('Ingresa tu contraseña.'); return }
+                                        const ok = await verifyCurrentUserPassword(blobPwd2)
+                                        if (!ok) { setBlobErr('Contraseña incorrecta.'); return }
+                                        // Ejecutar limpieza
+                                        setBlobRunning(true)
+                                        setBlobResult(null)
+                                        try {
+                                            // Health check
+                                            const hc = await fetch('/api/upload')
+                                            const info = hc.ok ? await hc.json() : null
+                                            if (!info?.tokenPresent) { throw new Error('El servidor no tiene BLOB_READ_WRITE_TOKEN configurado.') }
+                                            const res = await fetch('/api/blob-cleanup', {
+                                                method: 'POST',
+                                                headers: { 'Content-Type': 'application/json' },
+                                                body: JSON.stringify({
+                                                    dryRun: false,
+                                                    adminPassword: blobPwd2,
+                                                    startIso: blobStart ? new Date(`${blobStart}T00:00:00Z`).toISOString() : undefined,
+                                                    endIso: blobEnd ? new Date(`${blobEnd}T00:00:00Z`).toISOString() : undefined,
+                                                })
+                                            })
+                                            const json = await res.json()
+                                            if (!res.ok || json?.error) throw new Error(json?.error || 'Error al limpiar')
+                                            const lines = [
+                                                `Resultado: ${json.ok ? 'OK' : 'FALLO'}`,
+                                                `Escaneados: ${json.scanned}`,
+                                                `Borrados: ${json.deleted}`,
+                                                ...(Array.isArray(json.details) ? json.details.map((d: any) => `• ${d.prefix} — escaneados ${d.scanned}, borrados ${d.deleted}`) : []),
+                                            ]
+                                            setBlobResult(lines.join('\n'))
+                                            setBlobDialog2Open(false)
+                                            try { await agregarAuditLog('ELIMINAR', 'Configuración', 'Borrado de Blob ejecutado') } catch { }
+                                        } catch (e: any) {
+                                            setBlobResult(`Error: ${e.message || e}`)
+                                        } finally {
+                                            setBlobRunning(false)
+                                        }
+                                    }}>{blobRunning ? 'Ejecutando…' : 'Confirmar y borrar'}</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
                         {/* Dialogo 1: Contraseña admin (1/2) */}
                         <Dialog open={limpiezaDialog1Open} onOpenChange={setLimpiezaDialog1Open}>
                             <DialogContent>
@@ -1421,61 +1646,6 @@ export default function ConfiguracionPage() {
                             </DialogContent>
                         </Dialog>
 
-                        {/* Confirmación limpieza de Blob */}
-                        <Dialog open={blobConfirmOpen} onOpenChange={setBlobConfirmOpen}>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle className="text-red-700">Confirmar limpieza de Blob</DialogTitle>
-                                </DialogHeader>
-                                <div className="text-sm space-y-2">
-                                    <p>Se procederá a borrar archivos bajo los prefijos: operadores/ y embarques/.</p>
-                                    <div className="p-2 border border-red-200 bg-red-50 text-red-800 rounded text-xs">Esta acción no se puede deshacer.</div>
-                                </div>
-                                <DialogFooter>
-                                    <Button variant="outline" onClick={() => setBlobConfirmOpen(false)}>Cancelar</Button>
-                                    <Button
-                                        className="bg-red-600 hover:bg-red-700 text-white border-red-700"
-                                        disabled={blobRunning}
-                                        onClick={async () => {
-                                            setBlobRunning(true)
-                                            setBlobResult(null)
-                                            try {
-                                                // Health check
-                                                const hc = await fetch('/api/upload')
-                                                const info = hc.ok ? await hc.json() : null
-                                                if (!info?.tokenPresent) { throw new Error('El servidor no tiene BLOB_READ_WRITE_TOKEN configurado.') }
-                                                const res = await fetch('/api/blob-cleanup', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({
-                                                        dryRun: false,
-                                                        startIso: blobStart ? new Date(`${blobStart}T00:00:00Z`).toISOString() : undefined,
-                                                        endIso: blobEnd ? new Date(`${blobEnd}T00:00:00Z`).toISOString() : undefined,
-                                                    })
-                                                })
-                                                const json = await res.json()
-                                                if (!res.ok || json?.error) throw new Error(json?.error || 'Error al limpiar')
-                                                const lines = [
-                                                    `Resultado: ${json.ok ? 'OK' : 'FALLO'}`,
-                                                    `Escaneados: ${json.scanned}`,
-                                                    `Borrados: ${json.deleted}`,
-                                                    ...(Array.isArray(json.details) ? json.details.map((d: any) => `• ${d.prefix} — escaneados ${d.scanned}, borrados ${d.deleted}`) : []),
-                                                ]
-                                                setBlobResult(lines.join('\n'))
-                                                setBlobConfirmOpen(false)
-                                                try { await agregarAuditLog('ELIMINAR', 'Configuración', 'Borrado de Blob ejecutado') } catch { }
-                                            } catch (e: any) {
-                                                setBlobResult(`Error: ${e.message || e}`)
-                                            } finally {
-                                                setBlobRunning(false)
-                                            }
-                                        }}
-                                    >
-                                        Borrar
-                                    </Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
                     </TabsContent>
                 </Tabs>
             </div>

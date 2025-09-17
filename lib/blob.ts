@@ -24,9 +24,9 @@ export async function subirFotoEmbarque(
 
     if (!response.ok) {
       // Detect server-provided quota/full signal
-      let errorText = await response.text()
+      const raw = await response.text()
       try {
-        const errorData = JSON.parse(errorText)
+        const errorData = JSON.parse(raw)
         if (errorData?.code === "BLOB_QUOTA_EXCEEDED" || response.status === 507) {
           throw new Error(
             errorData?.error ||
@@ -36,7 +36,11 @@ export async function subirFotoEmbarque(
         throw new Error(errorData?.error || "Error al subir archivo")
       } catch {
         // Fallback if response isn't JSON
-        throw new Error(errorText || "Error al subir archivo")
+        const msg = raw && raw.trim().length > 0 ? raw : undefined
+        if (response.status === 507 || /quota|storage|insufficient/i.test(msg || "")) {
+          throw new Error("El almacenamiento de imágenes está lleno. Avise al administrador para liberar espacio o ampliar el plan.")
+        }
+        throw new Error(msg || "Error al subir archivo")
       }
     }
 
@@ -47,6 +51,10 @@ export async function subirFotoEmbarque(
     }
   } catch (error) {
     console.error("Error al subir foto:", error)
+    // Conservar el mensaje específico si está disponible
+    if (error instanceof Error && error.message) {
+      throw error
+    }
     throw new Error("Error al subir la foto")
   }
 }

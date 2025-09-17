@@ -5,6 +5,7 @@ import type React from "react"
 import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Camera, Upload, X, Check, User, Truck, Package, FileText } from "lucide-react"
 import { supabase } from "@/lib/supabase"
@@ -22,6 +23,7 @@ export default function SubirFotosPage() {
   const [subiendo, setSubiendo] = useState(false)
   const [completado, setCompletado] = useState(false)
   const [embarqueId, setEmbarqueId] = useState("")
+  const [errorMsg, setErrorMsg] = useState("")
 
   useEffect(() => {
     // Leer parámetros de la URL
@@ -95,7 +97,7 @@ export default function SubirFotosPage() {
   }
 
   const subirFotos = async () => {
-    if (fotos.length === 0) {
+  if (fotos.length === 0) {
       alert("Por favor selecciona al menos una foto")
       return
     }
@@ -107,7 +109,7 @@ export default function SubirFotosPage() {
 
     setSubiendo(true)
 
-    try {
+  try {
       const fotosSubidas = []
 
       // Subir cada foto a Vercel Blob
@@ -138,6 +140,13 @@ export default function SubirFotosPage() {
           fotosSubidas.push(data)
         } catch (error) {
           console.error("Error al subir foto:", foto.nombre, error)
+          const msg = error instanceof Error ? error.message : String(error)
+          // Mostrar alerta clara si es por cuota llena
+          if (/almacenamiento.*lleno|quota|507/i.test(msg)) {
+            setErrorMsg("El almacenamiento de imágenes está lleno y no se pueden subir más archivos. Contacta al administrador para liberar espacio o ampliar el plan.")
+          } else {
+            setErrorMsg(msg)
+          }
         }
       }
 
@@ -151,11 +160,12 @@ export default function SubirFotosPage() {
           )
         } catch {}
       } else {
-        alert("No se pudieron subir las fotos. Intenta nuevamente.")
+        setErrorMsg((prev) => prev || "No se pudieron subir las fotos. Intenta nuevamente.")
       }
     } catch (error) {
       console.error("Error general:", error)
-      alert("Error al subir las fotos. Intenta nuevamente.")
+      const msg = error instanceof Error ? error.message : String(error)
+      setErrorMsg(msg || "Error al subir las fotos. Intenta nuevamente.")
     } finally {
       setSubiendo(false)
     }
@@ -194,6 +204,14 @@ export default function SubirFotosPage() {
   return (
     <div className="min-h-screen bg-gray-50 p-4">
       <div className="max-w-md mx-auto space-y-4">
+        {errorMsg && (
+          <Alert variant="destructive">
+            <AlertTitle>Almacenamiento lleno</AlertTitle>
+            <AlertDescription>
+              {errorMsg}
+            </AlertDescription>
+          </Alert>
+        )}
         {/* Header */}
         <Card>
           <CardHeader className="text-center pb-4">

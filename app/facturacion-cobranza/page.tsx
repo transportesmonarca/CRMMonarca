@@ -32,7 +32,6 @@ import {
   FileText,
   Edit,
   AlertTriangle,
-  Settings,
   ChevronLeft,
   ChevronRight,
   Save,
@@ -962,6 +961,26 @@ export default function FacturacionCobranzaPage() {
             nombre: operadorNombreParaAnalisis,
           };
         }
+        // Calcular un pago por defecto para el operador a partir de:
+        // 1) pago persistido en embarques.pago_operador (o alias pagoOperador)
+        // 2) si está marcado flete en falso, usar el monto del tipo de servicio 'Flete en Falso'
+        // 3) en otro caso, usar el precio_base del tipo del embarque
+        const pagoPersistidoCont = (embarque as any)?.pago_operador ?? (embarque as any)?.pagoOperador;
+        let precioPorTipoRaw_Cont: any;
+        if (pagoPersistidoCont != null) {
+          precioPorTipoRaw_Cont = pagoPersistidoCont;
+        } else if ((embarque as any)?.flete_falso || (base as any)?.flete_en_falso) {
+          const tipoFleteFalso = (tiposServicio || []).find((t: any) => (t?.slug === 'flete-en-falso') || (String(t?.nombre || '').toLowerCase() === 'flete en falso'));
+          precioPorTipoRaw_Cont = tipoFleteFalso?.precio_base ?? 0;
+        } else {
+          precioPorTipoRaw_Cont = tipoServicio?.precio_base ?? 0;
+        }
+        // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
+        if (esCancelado(embarque)) {
+          precioPorTipoRaw_Cont = 0;
+        }
+        const precioPorTipo_Cont = typeof precioPorTipoRaw_Cont === 'number' ? precioPorTipoRaw_Cont : Number(precioPorTipoRaw_Cont) || 0;
+
         // Considerar contingencia solo si hubo cambio de operador; flete_en_falso por sí solo no es contingencia
         const huboCambioOperador = !!(base.operadorOriginalId || base.operadorReemplazoId);
         const esContingencia = huboCambioOperador && (
@@ -981,7 +1000,8 @@ export default function FacturacionCobranzaPage() {
                 ...embarque.operadorAsignado,
                 nombre: nombreOriginal,
               },
-              pagoOperador: 0,
+              // Usar el pago por defecto calculado para el operador original cuando no exista división capturada
+              pagoOperador: precioPorTipo_Cont,
               rolContingencia: "original",
             });
           }
@@ -993,6 +1013,7 @@ export default function FacturacionCobranzaPage() {
                 ...embarque.operadorAsignado,
                 nombre: base.operadorReemplazoNombre,
               },
+              // Por defecto, el reemplazo inicia con 0 hasta que se asigne manualmente su parte
               pagoOperador: 0,
               rolContingencia: "reemplazo",
             });
@@ -1102,11 +1123,15 @@ export default function FacturacionCobranzaPage() {
           const totalPagos = embarques.reduce((sum: number, e: any) => {
             if (e.modificadoPorEmergencia) {
               const m = operadoresContingencia[e.id] || {};
-              const monto =
-                e.rolContingencia === "original"
-                  ? m.original || 0
-                  : m.reemplazo || 0;
-              return sum + (monto || 0);
+              let monto: number;
+              if (e.rolContingencia === "original") {
+                // Fallback al pago del embarque si no existe división capturada
+                const fallback = (typeof e.pagoOperador === 'number' ? e.pagoOperador : Number(e.pagoOperador) || 0);
+                monto = (m.original != null ? m.original : fallback) || 0;
+              } else {
+                monto = (m.reemplazo != null ? m.reemplazo : 0) || 0;
+              }
+              return sum + monto;
             }
             return sum + (e.pagoOperador || 0);
           }, 0);
@@ -1135,20 +1160,20 @@ export default function FacturacionCobranzaPage() {
         }
       );
   const resumenGeneral = {
-        totalPagos: (embarquesParaAnalisis as any[]).reduce(
-          (sum: number, e: any) => {
-            if (e.modificadoPorEmergencia) {
-              const m = operadoresContingencia[e.id] || {};
-              const monto =
-                e.rolContingencia === "original"
-                  ? m.original || 0
-                  : m.reemplazo || 0;
-              return sum + (monto || 0);
+        totalPagos: (embarquesParaAnalisis as any[]).reduce((sum: number, e: any) => {
+          if (e.modificadoPorEmergencia) {
+            const m = operadoresContingencia[e.id] || {};
+            let monto: number;
+            if (e.rolContingencia === "original") {
+              const fallback = (typeof e.pagoOperador === 'number' ? e.pagoOperador : Number(e.pagoOperador) || 0);
+              monto = (m.original != null ? m.original : fallback) || 0;
+            } else {
+              monto = (m.reemplazo != null ? m.reemplazo : 0) || 0;
             }
-            return sum + (e.pagoOperador || 0);
-          },
-          0
-        ),
+            return sum + monto;
+          }
+          return sum + (e.pagoOperador || 0);
+        }, 0),
         totalEmbarques: embarquesParaAnalisis.length,
         operadores: analisisPorOperador.length,
         // contar embarques únicos en contingencia
@@ -1206,9 +1231,9 @@ export default function FacturacionCobranzaPage() {
         : "";
       const pago = e.modificadoPorEmergencia
         ? (e.rolContingencia === "original"
-            ? (operadoresContingencia as any)[e.id]?.original || 0
-            : (operadoresContingencia as any)[e.id]?.reemplazo || 0)
-        : e.pagoOperador || 0;
+            ? (((operadoresContingencia as any)[e.id]?.original) ?? (e.pagoOperador ?? 0))
+            : (((operadoresContingencia as any)[e.id]?.reemplazo) || 0))
+        : (e.pagoOperador || 0);
       const pagoFmt = `$${Number(pago).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
       const contingenciaTxt = (() => {
         if (!e.modificadoPorEmergencia) return "No";
@@ -1684,6 +1709,9 @@ export default function FacturacionCobranzaPage() {
   const [filtroFecha, setFiltroFecha] = useState("");
   const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  // Paginación lista principal
+  const [listaPage, setListaPage] = useState(1);
+  const [listaPageSize, setListaPageSize] = useState(12);
   const [showEditDialog, setShowEditDialog] = useState(false);
   const [embarqueEditando, setEmbarqueEditando] =
     useState<EmbarqueAsignado | null>(null);
@@ -1735,14 +1763,26 @@ export default function FacturacionCobranzaPage() {
 
   const [showTiposServicioModal, setShowTiposServicioModal] = useState(false);
   const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([]);
-  // Modal para configurar precio flete en falso
-  const [showFleteFalsoConfig, setShowFleteFalsoConfig] = useState(false);
-  const [precioFleteEnFalso, setPrecioFleteEnFalso] = useState<number | null>(null);
   // Modal para crear nuevo tipo de servicio
   const [showCrearTipoModal, setShowCrearTipoModal] = useState(false);
   const [showTiposInfo, setShowTiposInfo] = useState(false);
   const [itemsPerPageTipos, setItemsPerPageTipos] = useState(5);
   const [currentPageTipos, setCurrentPageTipos] = useState(1);
+  // Editar tipo de servicio
+  const [showEditarTipoModal, setShowEditarTipoModal] = useState(false);
+  const [tipoEditando, setTipoEditando] = useState<TipoServicio | null>(null);
+  // Usos de tipos de servicio (¿qué embarques lo usan?)
+  const [showUsosModal, setShowUsosModal] = useState(false);
+  const [usosTipo, setUsosTipo] = useState<TipoServicio | null>(null);
+  const [usosLoading, setUsosLoading] = useState(false);
+  const [usosEmbarques, setUsosEmbarques] = useState<Array<{ id: string; folio: string; estado?: string | null; estado_facturacion?: string | null }>>([]);
+  const [editarTipo, setEditarTipo] = useState({
+    nombre: "",
+    descripcion: "",
+    categoria: "",
+    subcategoria: "",
+  });
+  const [guardandoEdicionTipo, setGuardandoEdicionTipo] = useState(false);
   const totalPagesTipos = useMemo(
     () => Math.max(1, Math.ceil((tiposServicio?.length || 0) / itemsPerPageTipos)),
     [tiposServicio, itemsPerPageTipos]
@@ -2299,67 +2339,7 @@ export default function FacturacionCobranzaPage() {
     };
   }, []);
 
-  // Cargar precio flete en falso desde tiposServicio (si existe)
-  useEffect(() => {
-    try {
-      const f = (tiposServicio || []).find((t: any) => {
-        const slug = (t?.slug || "").toString().toLowerCase();
-        const nombre = (t?.nombre || "").toString().toLowerCase();
-        return slug === 'flete-en-falso' || nombre === 'flete en falso';
-      });
-      if (f) setPrecioFleteEnFalso(Number(f.precio_base) || 0);
-      else setPrecioFleteEnFalso(null);
-    } catch (e) {
-      setPrecioFleteEnFalso(null);
-    }
-  }, [tiposServicio]);
-
-  const guardarPrecioFleteEnFalso = async () => {
-    try {
-      const precio = Number(precioFleteEnFalso || 0);
-      // Buscar si ya existe
-      const existing = (tiposServicio || []).find((t: any) => {
-        const slug = (t?.slug || "").toString().toLowerCase();
-        const nombre = (t?.nombre || "").toString().toLowerCase();
-        return slug === 'flete-en-falso' || nombre === 'flete en falso';
-      });
-      if (existing && existing.id) {
-        const { error } = await supabase
-          .from('tipos_servicio')
-          .update({ precio_base: precio, updated_at: new Date().toISOString() })
-          .eq('id', existing.id);
-        if (error) {
-          toast({ title: 'Error guardando', description: String(error.message || error), variant: 'destructive' });
-          return;
-        }
-        // actualizar estado local
-        setTiposServicio((prev) => prev.map((t) => (t.id === existing.id ? { ...t, precio_base: precio } : t)));
-        toast({ title: 'Precio actualizado', description: `Precio flete en falso guardado: $${precio.toLocaleString('es-MX')}`, variant: 'success' });
-      } else {
-        // crear nuevo tipo con slug
-        const nuevo = {
-          nombre: 'flete en falso',
-          slug: 'flete-en-falso',
-          precio_base: precio,
-          descripcion: 'Tipo usado para flete en falso - monto aplicado al pago del operador',
-          activo: true,
-          fecha_creacion: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        } as any;
-        const { data, error } = await supabase.from('tipos_servicio').insert(nuevo).select('*').single();
-        if (error) {
-          toast({ title: 'Error creando tipo', description: String(error.message || error), variant: 'destructive' });
-          return;
-        }
-        setTiposServicio((prev) => [...prev, data]);
-        toast({ title: 'Tipo creado', description: `Flete en falso creado: $${precio.toLocaleString('es-MX')}`, variant: 'success' });
-      }
-      setShowFleteFalsoConfig(false);
-    } catch (err) {
-      console.error('Error guardando precio flete en falso', err);
-      toast({ title: 'Error', description: 'No se pudo guardar el precio', variant: 'destructive' });
-    }
-  };
+  // Nota: El precio de "Flete en Falso" ahora se edita directamente en la tabla de Tipos de Servicio.
 
   const operadoresUnicos = Array.from(
     new Set(
@@ -2428,6 +2408,23 @@ export default function FacturacionCobranzaPage() {
       coincideFechaHasta
     );
   });
+
+  // Ordenar y paginar (mismo patrón que Crear Embarques / Asignar Operadores)
+  const embarquesOrdenados = [...embarquesFiltrados].sort((a, b) => {
+    const da = new Date((a.fechaAsignacion as any) || a.fecha_creacion || a.updated_at || 0).getTime();
+    const db = new Date((b.fechaAsignacion as any) || b.fecha_creacion || b.updated_at || 0).getTime();
+    return db - da;
+  });
+  const totalListaPages = Math.max(1, Math.ceil(embarquesOrdenados.length / Math.max(1, listaPageSize)));
+  useEffect(() => {
+    if (listaPage > totalListaPages) setListaPage(totalListaPages);
+  }, [totalListaPages]);
+  useEffect(() => {
+    setListaPage(1);
+  }, [searchTerm, filtroOperador, filtroFecha, filtroFechaHasta, listaPageSize]);
+  const listaStart = (listaPage - 1) * listaPageSize;
+  const listaEnd = listaStart + listaPageSize;
+  const embarquesPaginados = embarquesOrdenados.slice(listaStart, listaEnd);
 
   const saveCreditLimit = async (
     clienteId: string,
@@ -2576,16 +2573,14 @@ export default function FacturacionCobranzaPage() {
   function DetallesTipoRow({
     tipo,
     onSave,
-    forceReadOnly,
   }: {
     tipo: TipoServicio;
     onSave: (monto: number) => void;
-    forceReadOnly?: boolean;
   }) {
     const [locked, setLocked] = useState(true);
     const [value, setValue] = useState<number>(tipo.precio_base || 0);
     const [saving, setSaving] = useState(false);
-    const readOnly = !!forceReadOnly;
+    const readOnly = false;
 
     useEffect(() => {
       // si el tipo cambia externamente, sincronizar el input
@@ -2619,8 +2614,7 @@ export default function FacturacionCobranzaPage() {
           size="icon"
           variant="outline"
           onClick={() => { if (!readOnly) setLocked((l) => !l); }}
-          title={readOnly ? 'Edítalo desde "Precio Flete en Falso"' : (locked ? 'Desbloquear para editar' : 'Bloquear')}
-          disabled={readOnly}
+          title={locked ? 'Desbloquear para editar' : 'Bloquear'}
         >
           {locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
         </Button>
@@ -2723,12 +2717,112 @@ export default function FacturacionCobranzaPage() {
   };
 
   const eliminarTipoServicio = async (tipo: TipoServicio) => {
-    // Open confirmation dialog and store context; actual checks and actions
-    // will run when the user confirms in the dialog.
+    // Confirmación de eliminación definitiva: se permite si NO hay embarques activos (no archivados)
+    // Si sólo hay embarques archivados/cancelados, intentaremos eliminar el tipo.
+    // Nota: Si la base de datos impide eliminar por integridad referencial, se mostrará un error.
     setTipoPending(tipo);
-    setConfirmAction(null);
-    setConfirmDialogMessage(`¿Eliminar el tipo de servicio "${tipo.nombre}"? Esta acción no se puede deshacer.`);
+    setConfirmAction('delete');
+    setConfirmDialogMessage(
+      `¿Eliminar el tipo de servicio "${tipo.nombre}"?\n` +
+      `Se eliminará definitivamente si únicamente está referenciado por embarques archivados/cancelados. ` +
+      `Si existe algún embarque activo (no archivado), la eliminación se cancelará. Los embarques archivados no se modificarán.`
+    );
     setConfirmDialogOpen(true);
+  };
+
+  // Cargar embarques que usan este tipo (activos para facturación: estado_facturacion != archivado o null)
+  const cargarUsosTipo = async (tipo: TipoServicio) => {
+    setUsosTipo(tipo);
+    setShowUsosModal(true);
+    setUsosLoading(true);
+    setUsosEmbarques([]);
+    try {
+      // Cargamos embarques por tipo y filtramos en cliente los "activos" segun reglas
+      const { data, error } = await supabase
+        .from('embarques')
+        .select('id, folio, estado, estado_facturacion')
+        .eq('tipo_servicio_id', tipo.id)
+        .order('fecha_creacion', { ascending: false })
+        .limit(200);
+      if (error) {
+        console.error('Error cargando usos de tipo:', error);
+        toast({ title: 'No se pudieron cargar los embarques en uso', description: String((error as any)?.message || ''), variant: 'destructive' });
+        return;
+      }
+      const activos = (data || []).filter((r: any) => {
+        const ef = r?.estado_facturacion ?? null;
+        const estado = (r?.estado || '').toLowerCase();
+        const esActivoPorEF = ef === 'pendiente_facturacion' || ef === 'facturado' || ef === 'pagado';
+        const esActivoPorNull = (ef === null || ef === undefined) && estado !== 'cancelado';
+        return esActivoPorEF || esActivoPorNull;
+      });
+      setUsosEmbarques(activos.map((r: any) => ({
+        id: String(r.id),
+        folio: String(r.folio || ''),
+        estado: r.estado ?? null,
+        estado_facturacion: r.estado_facturacion ?? null,
+      })));
+    } catch (e) {
+      console.error('Excepción cargando usos de tipo:', e);
+      toast({ title: 'Error inesperado', description: String((e as any)?.message || ''), variant: 'destructive' });
+    } finally {
+      setUsosLoading(false);
+    }
+  };
+
+  const abrirEditarTipo = (tipo: TipoServicio) => {
+    setTipoEditando(tipo);
+    setEditarTipo({
+      nombre: tipo.nombre || "",
+      descripcion: (tipo as any).descripcion || "",
+      categoria: (tipo as any).categoria || "",
+      subcategoria: (tipo as any).subcategoria || "",
+    });
+    setShowEditarTipoModal(true);
+  };
+
+  const guardarEdicionTipo = async () => {
+    if (!tipoEditando) return;
+    if (!editarTipo.nombre.trim()) {
+      toast({ title: 'Ingresa un nombre para el tipo de servicio', variant: 'destructive' });
+      return;
+    }
+    setGuardandoEdicionTipo(true);
+    try {
+      const payload: any = {
+        nombre: editarTipo.nombre.trim(),
+        descripcion: editarTipo.descripcion.trim() || null,
+        categoria: (editarTipo.categoria || 'General').trim(),
+        subcategoria: editarTipo.subcategoria.trim() || null,
+        updated_at: new Date().toISOString(),
+      };
+      const { error } = await supabase
+        .from('tipos_servicio')
+        .update(payload)
+        .eq('id', tipoEditando.id);
+      if (error) {
+        console.error('Error actualizando tipo de servicio:', error);
+        toast({ title: 'No se pudo actualizar el tipo de servicio', description: String((error as any)?.message || ''), variant: 'destructive' });
+        return;
+      }
+      // Update local list
+      setTiposServicio((prev) => prev.map((t) => t.id === tipoEditando.id ? {
+        ...t,
+        nombre: payload.nombre,
+        descripcion: payload.descripcion ?? undefined,
+        categoria: payload.categoria,
+        subcategoria: payload.subcategoria ?? undefined,
+        updated_at: payload.updated_at,
+      } : t));
+      setShowEditarTipoModal(false);
+      setTipoEditando(null);
+      toast({ title: 'Tipo de servicio actualizado', description: payload.nombre, variant: 'success' });
+    } catch (e) {
+      console.error('Excepción actualizando tipo de servicio:', e);
+      toast({ title: 'Ocurrió un error', description: String((e as any)?.message || ''), variant: 'destructive' });
+    } finally {
+      setGuardandoEdicionTipo(false);
+    }
   };
 
   const performDeactivate = async (tipo: TipoServicio) => {
@@ -2744,10 +2838,11 @@ export default function FacturacionCobranzaPage() {
         return;
       }
       if (mounted.current) {
-        setTiposServicio((prev) => prev.map((t) => (t.id === tipo.id ? { ...t, activo: false } : t)));
+        // Remover de la lista para ocultarlo inmediatamente en el modal
+        setTiposServicio((prev) => prev.filter((t) => t.id !== tipo.id));
       }
-      // Deactivación: dejar blanco (default)
-      toast({ title: 'Tipo de servicio desactivado', variant: 'default' });
+      // Notificar como eliminación lógica
+      toast({ title: 'Tipo de servicio eliminado', description: 'Se desactivó y ocultó. Embarques existentes no se modifican.', variant: 'destructive' });
     } catch (e) {
       console.error("Error inesperado desactivando tipo:", e);
       toast({ title: 'Error inesperado', description: String((e as any)?.message || ''), variant: 'destructive' });
@@ -2757,23 +2852,37 @@ export default function FacturacionCobranzaPage() {
 
   const performDelete = async (tipo: TipoServicio) => {
     try {
-      // Verificar uso en embarques activos (no archivados). Considera null como activo.
-      const { count: countActivos, error: countError } = await supabase
-        .from("embarques")
-        .select("id", { count: "exact", head: true })
-        .eq("tipo_servicio_id", tipo.id)
-        .or("estado_facturacion.is.null,estado_facturacion.neq.archivado");
-
-      if (countError) {
-        console.error("Error verificando uso de tipo de servicio:", countError);
-        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((countError as any)?.message || ''), variant: 'destructive' });
-  toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((countError as any)?.message || ''), variant: 'default' });
+      // Verificar uso en embarques activos (no archivados):
+      // A) estado_facturacion en (pendiente_facturacion, facturado, pagado)
+      const { count: countA, error: errA } = await supabase
+        .from('embarques')
+        .select('id', { count: 'exact', head: true })
+        .eq('tipo_servicio_id', tipo.id)
+        .in('estado_facturacion', ['pendiente_facturacion', 'facturado', 'pagado']);
+      if (errA) {
+        console.error('Error verificando uso (A):', errA);
+        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((errA as any)?.message || ''), variant: 'destructive' });
         return;
       }
+      // B) estado_facturacion es null y estado != cancelado
+      const { count: countB, error: errB } = await supabase
+        .from('embarques')
+        .select('id', { count: 'exact', head: true })
+        .eq('tipo_servicio_id', tipo.id)
+        .is('estado_facturacion', null)
+        .neq('estado', 'cancelado');
+      if (errB) {
+        console.error('Error verificando uso (B):', errB);
+        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((errB as any)?.message || ''), variant: 'destructive' });
+        return;
+      }
+      const countActivos = (countA || 0) + (countB || 0);
 
       if ((countActivos || 0) > 0) {
-        toast({ title: 'No se puede eliminar', description: `Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`, variant: 'destructive' });
-  toast({ title: 'No se puede eliminar', description: `Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`, variant: 'destructive' });
+        const msg = `Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`;
+        toast({ title: 'No se puede eliminar', description: msg, variant: 'destructive' });
+        // Abrir el modal de usos para que el usuario vea cuáles son
+        try { await cargarUsosTipo(tipo as any); } catch {}
         return;
       }
 
@@ -2786,25 +2895,18 @@ export default function FacturacionCobranzaPage() {
         console.error("Error verificando referencias históricas:", countAllError);
       }
 
-      if ((countTotal || 0) > 0) {
-        // If there are historical references we recommend deactivation
-        // Instead of deleting, show dialog offering deactivation.
-        setConfirmAction('deactivate');
-        setConfirmDialogMessage(
-          `Este tipo de servicio está referenciado por ${countTotal} embarque(s) histórico(s).\n` +
-            "Para mantener la integridad de datos, se recomienda desactivarlo en lugar de eliminarlo.\n" +
-            "¿Deseas desactivarlo para ocultarlo de nuevas selecciones?"
-        );
-        setConfirmDialogOpen(true);
-        return;
-      }
-
-      // No references: proceed to delete
+  // No hay embarques activos, proceder a eliminar (aunque existan archivados)
       const { error: delError } = await supabase.from("tipos_servicio").delete().eq("id", tipo.id);
       if (delError) {
         console.error("Error eliminando tipo de servicio:", delError);
+        const code = (delError as any)?.code;
+        if (code === '23503') {
+          // Violación de llave foránea: hay referencias históricas que impiden borrar físicamente.
+          toast({ title: 'No se pudo eliminar por referencias históricas', description: 'Se desactivará y ocultará para mantener la integridad de datos.', variant: 'destructive' });
+          await performDeactivate(tipo);
+          return;
+        }
         toast({ title: 'Error al eliminar el tipo de servicio', description: 'Puede estar protegido por integridad de datos.', variant: 'destructive' });
-  toast({ title: 'Error al eliminar el tipo de servicio', description: 'Puede estar protegido por integridad de datos.', variant: 'destructive' });
         return;
       }
 
@@ -4451,7 +4553,7 @@ export default function FacturacionCobranzaPage() {
         console.error("Excepción batch pagos:", e);
       }
 
-      const embarquesFormateados: EmbarqueAsignado[] = (data || []).map((embarque: any) => {
+  const embarquesFormateados: EmbarqueAsignado[] = (data || []).map((embarque: any) => {
         const formattedEmbarque: EmbarqueAsignado = {
           ...embarque,
           clienteNombre: embarque.cliente?.nombre || "Cliente no especificado",
@@ -4497,7 +4599,8 @@ export default function FacturacionCobranzaPage() {
             formattedEmbarque.montoOriginalContingencia = pagos.monto_original || 0;
             formattedEmbarque.montoReemplazoContingencia = pagos.monto_reemplazo || 0;
           } else {
-            // Por defecto, asignar todo al original y 0 al reemplazo
+            // Por defecto (sin división capturada): usar el pago del embarque para el operador Original
+            // Esto permite que se visualice el monto del operador aunque no se haya dividido manualmente.
             formattedEmbarque.montoOriginalContingencia = formattedEmbarque.pagoOperador;
             formattedEmbarque.montoReemplazoContingencia = 0;
           }
@@ -6622,66 +6725,39 @@ export default function FacturacionCobranzaPage() {
           </Card>
         </div>
 
-        <div className="flex items-center justify-between gap-4">
-          <div className="flex-1 max-w-md">
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex-1 max-w-xl md:max-w-2xl">
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
               <Input
                 placeholder="Buscar por folio, cliente, load, operador..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => { setSearchTerm(e.target.value); setListaPage(1); }}
                 className="pl-8"
               />
             </div>
           </div>
-          <div className="flex flex-wrap gap-2 justify-end">
-            <Button onClick={generarReporteExcel} variant="outline">
-              <Download className="h-4 w-4 mr-2" />
-              Reportes
-            </Button>
-            <Button
-              onClick={() => setShowAnalisisOperadoresModal(true)}
-              variant="outline"
-            >
-              <Users className="h-4 w-4 mr-2 text-green-700" />
-              Operadores
-            </Button>
-            <Button
-              onClick={() => setShowClientesModal(true)}
-              variant="outline"
-            >
-              <Users className="h-4 w-4 mr-2" />
-              Crédito Clientes
-            </Button>
-            <Button
-              onClick={() => setShowControlClientesModal(true)}
-              variant="outline"
-            >
-              <Users className="h-4 w-4 mr-2" />
-              Control Clientes
-            </Button>
-            {/* <Button
-              onClick={() => setShowPagosOperadoresModal(true)}
-              variant="outline"
-            >
-              <DollarSign className="h-4 w-4 mr-2 text-blue-700" />
-              Pagos Operadores
-            </Button> */}
-            <Button
-              onClick={() => setShowTiposServicioModal(true)}
-              variant="outline"
-            >
-              <Package className="h-4 w-4 mr-2" />
-              Servicios
-            </Button>
-            {/* Precio Flete en Falso button moved into Tipos de Servicio modal */}
-            <Button
-              onClick={() => setShowArchivadosModal(true)}
-              variant="outline"
-            >
-              <Package className="h-4 w-4 mr-2 text-purple-600" />
-              Archivados
-            </Button>
+          {/* Pagination moved up to sit beside search */}
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-gray-700">Página {listaPage} de {totalListaPages}</span>
+            <div className="flex items-center gap-1">
+              <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.max(1, p - 1))} disabled={listaPage <= 1}>Anterior</Button>
+              <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.min(totalListaPages, p + 1))} disabled={listaPage >= totalListaPages}>Siguiente</Button>
+            </div>
+            <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-700">Por página:</span>
+              <Select value={String(listaPageSize)} onValueChange={(v) => { const n = Number.parseInt(v, 10); setListaPageSize(n); setListaPage(1); }}>
+                <SelectTrigger className="w-[140px]"><SelectValue placeholder="Por página" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6 por página</SelectItem>
+                  <SelectItem value="12">12 por página</SelectItem>
+                  <SelectItem value="18">18 por página</SelectItem>
+                  <SelectItem value="24">24 por página</SelectItem>
+                  <SelectItem value="48">48 por página</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
         </div>
         {/* Modal para actualizar precio (instanciado una vez en la página) */}
@@ -6697,10 +6773,63 @@ export default function FacturacionCobranzaPage() {
 
         <Card>
           <CardHeader>
-            <CardTitle>Embarques Asignados</CardTitle>
-            <CardDescription>
-              Lista detallada de todos los embarques con asignación
-            </CardDescription>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div>
+                <CardTitle>Embarques Asignados</CardTitle>
+                <CardDescription>
+                  Lista detallada de todos los embarques con asignación
+                </CardDescription>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button onClick={generarReporteExcel} variant="outline">
+                  <Download className="h-4 w-4 mr-2" />
+                  Reportes
+                </Button>
+                <Button
+                  onClick={() => setShowAnalisisOperadoresModal(true)}
+                  variant="outline"
+                >
+                  <Users className="h-4 w-4 mr-2 text-green-700" />
+                  Operadores
+                </Button>
+                <Button
+                  onClick={() => setShowClientesModal(true)}
+                  variant="outline"
+                >
+                  <Users className="h-4 w-4 mr-2" />
+                  Crédito Clientes
+                </Button>
+                <Button
+                  onClick={() => setShowControlClientesModal(true)}
+                  variant="outline"
+                >
+                  <Users className="h-4 w-4 mr-2" />
+                  Control Clientes
+                </Button>
+                {/* <Button
+                  onClick={() => setShowPagosOperadoresModal(true)}
+                  variant="outline"
+                >
+                  <DollarSign className="h-4 w-4 mr-2 text-blue-700" />
+                  Pagos Operadores
+                </Button> */}
+                <Button
+                  onClick={() => setShowTiposServicioModal(true)}
+                  variant="outline"
+                >
+                  <Package className="h-4 w-4 mr-2" />
+                  Servicios
+                </Button>
+                {/* Precio Flete en Falso button moved into Tipos de Servicio modal */}
+                <Button
+                  onClick={() => setShowArchivadosModal(true)}
+                  variant="outline"
+                >
+                  <Package className="h-4 w-4 mr-2 text-purple-600" />
+                  Archivados
+                </Button>
+              </div>
+            </div>
           </CardHeader>
           <CardContent>
             {loadingEmbarques ? (
@@ -6712,24 +6841,7 @@ export default function FacturacionCobranzaPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {embarquesFiltrados
-                  .sort((a, b) => {
-                    // Ordenar estrictamente por fecha más reciente (desc)
-                    const da = new Date(
-                      (a.fechaAsignacion as any) ||
-                        a.fecha_creacion ||
-                        a.updated_at ||
-                        0
-                    ).getTime();
-                    const db = new Date(
-                      (b.fechaAsignacion as any) ||
-                        b.fecha_creacion ||
-                        b.updated_at ||
-                        0
-                    ).getTime();
-                    return db - da;
-                  })
-                  .map((embarque) => (
+                {embarquesPaginados.map((embarque) => (
                     <div
                       key={embarque.id}
                       className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
@@ -7233,28 +7345,7 @@ export default function FacturacionCobranzaPage() {
           </CardContent>
         </Card>
 
-        {/* Modal: configurar precio flete en falso */}
-        <Dialog open={showFleteFalsoConfig} onOpenChange={setShowFleteFalsoConfig}>
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle>Precio Flete en Falso</DialogTitle>
-              <DialogDescription>Define el monto que se aplicará al pago del operador cuando se marque un embarque como "flete en falso". Este valor se usará para nuevos cambios; no modificará registros históricos.</DialogDescription>
-            </DialogHeader>
-            <div className="mt-4">
-              <Label>Precio (MXN)</Label>
-              <Input
-                type="number"
-                value={precioFleteEnFalso ?? ''}
-                onChange={(e) => setPrecioFleteEnFalso(Number(e.target.value || 0))}
-                placeholder="0"
-              />
-            </div>
-            <DialogFooter>
-              <Button variant="outline" onClick={() => setShowFleteFalsoConfig(false)}>Cancelar</Button>
-              <Button onClick={guardarPrecioFleteEnFalso} className="ml-2 bg-green-600 hover:bg-green-700 text-white">Guardar</Button>
-            </DialogFooter>
-          </DialogContent>
-        </Dialog>
+  {/* Modal eliminado: precio flete en falso ahora se edita desde "Gestión de Tipos de Servicio" */}
 
         {/* Control Clientes */}
         <Dialog open={showControlClientesModal} onOpenChange={setShowControlClientesModal}>
@@ -7845,16 +7936,7 @@ export default function FacturacionCobranzaPage() {
                   >
                     + Agregar Tipo de Servicio
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowFleteFalsoConfig(true)}
-                    className="ml-2"
-                    title="Configurar precio flete en falso"
-                  >
-                    <Settings className="h-4 w-4 mr-2" />
-                    Precio Flete en Falso
-                  </Button>
+                  {/* Botón eliminado: configurar flete en falso */}
                   
                 </div>
               </div>
@@ -7911,7 +7993,7 @@ export default function FacturacionCobranzaPage() {
                         <th className="px-3 py-2 text-left font-semibold text-gray-700">
                           Categoría
                         </th>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700">
+                        <th className="px-3 py-2 text-left font-semibold text-gray-700 w-32">
                           Subcategoría
                         </th>
                         <th className="px-3 py-2 text-right font-semibold text-gray-700">
@@ -7920,8 +8002,8 @@ export default function FacturacionCobranzaPage() {
                         <th className="px-3 py-2 text-center font-semibold text-gray-700">
                           Detalles
                         </th>
-                        <th className="px-3 py-2 text-center font-semibold text-gray-700">
-                          Eliminar
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700 w-28">
+                          Acciones
                         </th>
                       </tr>
                     </thead>
@@ -7937,8 +8019,10 @@ export default function FacturacionCobranzaPage() {
                           <td className="px-3 py-2 text-gray-700">
                             {tipo.categoria || "General"}
                           </td>
-                          <td className="px-3 py-2 text-gray-700">
-                            {tipo.subcategoria || "-"}
+                          <td className="px-3 py-2 text-gray-700 w-32 max-w-[8rem]">
+                            <span className="block truncate" title={tipo.subcategoria || "-"}>
+                              {tipo.subcategoria || "-"}
+                            </span>
                           </td>
                           <td className="px-3 py-2 text-right text-gray-800 font-medium">
                             {/* Pago Operador (MXN) */}
@@ -7951,18 +8035,41 @@ export default function FacturacionCobranzaPage() {
                             <DetallesTipoRow
                               tipo={tipo}
                               onSave={(nuevoMonto) => guardarTipoServicio(tipo.id, nuevoMonto)}
-                              forceReadOnly={(tipo as any)?.slug === 'flete-en-falso' || String(tipo?.nombre || '').toLowerCase() === 'flete en falso'}
                             />
                           </td>
                           <td className="px-3 py-2 text-center">
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                              onClick={() => eliminarTipoServicio(tipo)}
-                            >
-                              Eliminar
-                            </Button>
+                            <div className="flex items-center justify-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                                onClick={() => cargarUsosTipo(tipo)}
+                                title="Ver usos"
+                                aria-label="Ver usos"
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => abrirEditarTipo(tipo)}
+                                title="Editar nombre y datos"
+                                aria-label="Editar"
+                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                              >
+                                <Edit className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                onClick={() => eliminarTipoServicio(tipo)}
+                                title="Eliminar"
+                                aria-label="Eliminar"
+                                className="border-red-300 text-red-600 hover:text-red-700 hover:bg-red-50"
+                              >
+                                <Trash className="h-4 w-4" />
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))}
@@ -8084,6 +8191,113 @@ export default function FacturacionCobranzaPage() {
               >
                 {guardandoNuevoTipo ? "Guardando..." : "Guardar"}
               </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Editar Tipo de Servicio */}
+        <Dialog open={showEditarTipoModal} onOpenChange={(v) => { setShowEditarTipoModal(v); if (!v) setTipoEditando(null); }}>
+          <DialogContent className="max-w-xl">
+            <DialogHeader>
+              <DialogTitle>Editar Tipo de Servicio</DialogTitle>
+              <DialogDescription>
+                Actualiza el nombre y los datos del tipo de servicio.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div>
+                <Label>Nombre</Label>
+                <Input
+                  value={editarTipo.nombre}
+                  onChange={(e) => setEditarTipo((p) => ({ ...p, nombre: e.target.value }))}
+                  placeholder="Ej. EXPORTACIÓN CARGADA - CAJA SECA 240"
+                />
+              </div>
+              <div>
+                <Label>Descripción</Label>
+                <Textarea
+                  value={editarTipo.descripcion}
+                  onChange={(e) => setEditarTipo((p) => ({ ...p, descripcion: e.target.value }))}
+                  placeholder="Describe el servicio"
+                />
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <Label>Categoría</Label>
+                  <Input
+                    value={editarTipo.categoria}
+                    onChange={(e) => setEditarTipo((p) => ({ ...p, categoria: e.target.value }))}
+                    placeholder="Ej. Servicios de Aduana"
+                  />
+                </div>
+                <div>
+                  <Label>Subcategoría</Label>
+                  <Input
+                    value={editarTipo.subcategoria}
+                    onChange={(e) => setEditarTipo((p) => ({ ...p, subcategoria: e.target.value }))}
+                    placeholder="Ej. Exportación 240"
+                  />
+                </div>
+              </div>
+            </div>
+            <DialogFooter className="mt-4">
+              <Button
+                variant="outline"
+                onClick={() => { setShowEditarTipoModal(false); setTipoEditando(null); }}
+                disabled={guardandoEdicionTipo}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={guardarEdicionTipo}
+                disabled={guardandoEdicionTipo}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                {guardandoEdicionTipo ? "Guardando..." : "Guardar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Ver usos de Tipo de Servicio */}
+        <Dialog open={showUsosModal} onOpenChange={setShowUsosModal}>
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Embarques en uso — {usosTipo?.nombre || ''}</DialogTitle>
+              <DialogDescription>
+                Se muestran embarques no archivados en facturación que referencian este tipo.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="min-h-[160px]">
+              {usosLoading ? (
+                <div className="flex items-center justify-center py-8 text-sm text-gray-600">Cargando…</div>
+              ) : usosEmbarques.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">Sin embarques en uso activo.</div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full text-sm border">
+                    <thead>
+                      <tr className="bg-gray-100">
+                        <th className="px-2 py-1 border text-left">Folio</th>
+                        <th className="px-2 py-1 border text-left">Estado Operativo</th>
+                        <th className="px-2 py-1 border text-left">Estado Facturación</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {usosEmbarques.map((e) => (
+                        <tr key={e.id} className="border-b">
+                          <td className="px-2 py-1 border">{e.folio || e.id}</td>
+                          <td className="px-2 py-1 border">{e.estado || '-'}</td>
+                          <td className="px-2 py-1 border">{e.estado_facturacion || '-'}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setShowUsosModal(false)}>Cerrar</Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

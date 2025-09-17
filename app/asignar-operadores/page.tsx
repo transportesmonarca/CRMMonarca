@@ -103,6 +103,9 @@ export default function AsignarOperadoresPage() {
   } | null>(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [filtroEstado, setFiltroEstado] = useState("todos");
+  // Paginación principal (lista de embarques) – mismo método que en Crear Embarques
+  const [listaPage, setListaPage] = useState(1);
+  const [listaPageSize, setListaPageSize] = useState(12);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showModifyModal, setShowModifyModal] = useState(false);
   // Cancelación
@@ -461,8 +464,32 @@ export default function AsignarOperadoresPage() {
     };
   }>({});
 
+  // ...existing code...
+  // Tipo para datos de modificación
+  interface ModificacionData {
+    razon: string;
+    cambiar_operador: boolean;
+    cambiar_camion: boolean;
+    cambiar_remolque: boolean;
+    cambiar_flete: boolean;
+    nuevo_operador_id: string;
+    sueldo_operador_original: string;
+    moneda_sueldo_operador_original: string;
+    sueldo_operador_nuevo: string;
+    moneda_sueldo_operador_nuevo: string;
+    nuevo_camion_id: string;
+    nuevo_remolque_id: string;
+    remolque_numero_economico: string;
+    remolque_placa: string;
+    nuevo_precio_flete: string;
+    nueva_moneda_flete: string;
+    flete_en_falso: boolean;
+    // nuevo campo para dropdown de tipo de servicio
+    selected_tipo_servicio?: string;
+  }
+
   // Estados para modificación
-  const [modificacionData, setModificacionData] = useState({
+  const [modificacionData, setModificacionData] = useState<ModificacionData>({
     razon: "",
     cambiar_operador: false,
     cambiar_camion: false,
@@ -480,6 +507,7 @@ export default function AsignarOperadoresPage() {
     nuevo_precio_flete: "",
     nueva_moneda_flete: "MXN",
     flete_en_falso: false,
+    selected_tipo_servicio: "no-change",
   });
 
   const [activeModifyTab, setActiveModifyTab] = useState("justificacion");
@@ -506,6 +534,20 @@ export default function AsignarOperadoresPage() {
     fecha_viaje: "",
     comentarios_viaje: "",
   });
+
+  // Último registro de km (para mostrar/editar/eliminar)
+  const [ultimoKmRegistro, setUltimoKmRegistro] = useState<null | {
+    id?: string;
+    kilometraje_anterior: number;
+    kilometraje_agregado: number;
+    kilometraje_nuevo: number;
+    tramo_recorrido: string | null;
+    fecha_viaje: string | null;
+    comentarios: string | null;
+    fecha_registro?: string | null;
+  }>(null);
+  const [editingKmRecord, setEditingKmRecord] = useState<boolean>(false);
+  const [showDeleteKmDialog, setShowDeleteKmDialog] = useState<boolean>(false);
 
   const cancelarEmbarque = async () => {
     if (!cancelingEmbarque || !cancelReason.trim()) {
@@ -861,6 +903,70 @@ export default function AsignarOperadoresPage() {
     setShowKilometrajeModal(true);
   };
 
+  // Cargar el último registro de kilometraje del tractocamión para mostrarlo en Detalles → Recursos
+  const cargarUltimoKilometrajeCamion = async (camionId: string) => {
+    try {
+      if (!registrosKilometrajeTableExists) return null;
+      const { data, error } = await supabase
+        .from("registros_kilometraje")
+        .select("id,kilometraje_anterior,kilometraje_agregado,kilometraje_nuevo,tramo_recorrido,fecha_viaje,comentarios,fecha_registro")
+        .eq("camion_id", camionId)
+        .order("fecha_viaje", { ascending: false })
+        .order("fecha_registro", { ascending: false })
+        .limit(1);
+      if (error) {
+        console.warn("No se pudo consultar último registro de kilometraje:", error);
+        return null;
+      }
+      return (data && data.length > 0) ? data[0] : null;
+    } catch (e) {
+      console.warn("Fallo al cargar último kilometraje:", e);
+      return null;
+    }
+  };
+
+  // Iniciar edición del último registro de kilometraje
+  const iniciarEdicionKilometraje = () => {
+    if (!ultimoKmRegistro || !embarqueDetalle?.camion) return;
+    // Prefill en modo "viaje" con los datos del último registro
+    setKilometrajeFormData({
+      modo: "viaje",
+      kilometraje_actual: "",
+      kilometros_viaje: String(ultimoKmRegistro.kilometraje_agregado || ""),
+      tramo_recorrido: ultimoKmRegistro.tramo_recorrido || "",
+      fecha_viaje: ultimoKmRegistro.fecha_viaje || "",
+      comentarios_viaje: ultimoKmRegistro.comentarios || "",
+    });
+    setSelectedCamionKilometraje(embarqueDetalle.camion as any);
+    setEmbarqueParaKilometraje(embarqueDetalle as any);
+    setEditingKmRecord(true);
+    setShowKilometrajeModal(true);
+  };
+
+  // Al abrir el modal de Detalles en la pestaña Recursos, poblar km_* desde la base (si existe tabla)
+  useEffect(() => {
+    const shouldLoad = showDetailsModal && activeTab === "recursos" && !!embarqueDetalle?.camion?.id;
+    if (!shouldLoad) return;
+    let cancelled = false;
+    (async () => {
+      const camionId = (embarqueDetalle as any)?.camion?.id as string | undefined;
+      if (!camionId) return;
+  const ultimo = await cargarUltimoKilometrajeCamion(camionId);
+      if (cancelled || !ultimo) return;
+  setUltimoKmRegistro(ultimo as any);
+      setEmbarqueDetalle(prev => prev ? ({
+        ...prev,
+        km_total_anterior: (ultimo as any).kilometraje_anterior as any,
+        km_agregado_ultimo: (ultimo as any).kilometraje_agregado as any,
+        km_total_nuevo: (ultimo as any).kilometraje_nuevo as any,
+        km_tramo_ultimo: (ultimo as any).tramo_recorrido as any,
+        km_fecha_viaje_ultimo: (ultimo as any).fecha_viaje as any,
+        km_comentarios_ultimo: (ultimo as any).comentarios as any,
+      }) : prev);
+    })();
+    return () => { cancelled = true; };
+  }, [showDetailsModal, activeTab, embarqueDetalle?.camion?.id, registrosKilometrajeTableExists]);
+
   const guardarKilometraje = async () => {
     try {
       if (!selectedCamionKilometraje || !embarqueParaKilometraje) return;
@@ -869,7 +975,9 @@ export default function AsignarOperadoresPage() {
         toast({ title: "Completa los campos", description: "Tramo y fecha son obligatorios.", variant: "destructive" });
         return;
       }
-      const kmAnterior = Number(selectedCamionKilometraje.kilometraje || 0);
+  // Si estamos editando, el kmAnterior debe venir del registro previo; de lo contrario, usar el del camión
+  const kmAnteriorBase = editingKmRecord && ultimoKmRegistro ? Number(ultimoKmRegistro.kilometraje_anterior || 0) : Number(selectedCamionKilometraje.kilometraje || 0);
+  const kmAnterior = kmAnteriorBase;
       let kmActual = 0;
       let kmAgregado = 0;
 
@@ -903,7 +1011,7 @@ export default function AsignarOperadoresPage() {
         return;
       }
 
-      // Insertar registro si la tabla existe
+      // Insertar/Actualizar registro si la tabla existe
       if (registrosKilometrajeTableExists) {
         const payload: any = {
           camion_id: selectedCamionKilometraje.id,
@@ -914,9 +1022,17 @@ export default function AsignarOperadoresPage() {
           fecha_viaje: normalizeDate(fecha_viaje) || null,
           comentarios: kilometrajeFormData.comentarios_viaje || null,
         };
-        const { error: errorReg } = await supabase.from("registros_kilometraje").insert(payload);
-        if (errorReg) {
-          console.warn("No se pudo insertar registro de kilometraje:", errorReg);
+        if (editingKmRecord && ultimoKmRegistro?.id) {
+          const { error: errorUpd } = await supabase
+            .from("registros_kilometraje")
+            .update(payload)
+            .eq("id", ultimoKmRegistro.id);
+          if (errorUpd) console.warn("No se pudo actualizar registro de kilometraje:", errorUpd);
+        } else {
+          const { error: errorReg } = await supabase.from("registros_kilometraje").insert(payload);
+          if (errorReg) {
+            console.warn("No se pudo insertar registro de kilometraje:", errorReg);
+          }
         }
       } else {
         toast({ title: "Registro parcial", description: "Se actualizó el kilometraje del camión. La tabla de registros no existe.", variant: "default" });
@@ -954,6 +1070,8 @@ export default function AsignarOperadoresPage() {
         km_fecha_viaje_ultimo: (kilometrajeFormData.fecha_viaje || null) as any,
         km_comentarios_ultimo: (kilometrajeFormData.comentarios_viaje || null) as any,
       } as any) : prev);
+  setEditingKmRecord(false);
+  setUltimoKmRegistro(null);
   setShowKilometrajeModal(false);
   setKilometrajeFormData({ modo: "viaje", kilometraje_actual: "", kilometros_viaje: "", tramo_recorrido: "", fecha_viaje: "", comentarios_viaje: "" });
       toast({ title: "Kilometraje guardado", description: `Nuevo total: ${kmActual.toLocaleString('es-MX')} km (+${kmAgregado})` });
@@ -1115,11 +1233,14 @@ export default function AsignarOperadoresPage() {
       return;
     }
 
+    // Permitir guardar cuando únicamente se marca/desmarca "Flete en Falso" con justificación
+    const hayCambioSoloFleteEnFalso = (modificacionData.flete_en_falso !== !!embarqueAModificar.flete_falso);
     if (
       !modificacionData.cambiar_operador &&
       !modificacionData.cambiar_camion &&
       !modificacionData.cambiar_remolque &&
-      !modificacionData.cambiar_flete
+      !modificacionData.cambiar_flete &&
+      !hayCambioSoloFleteEnFalso
     ) {
       toast({ title: "Por favor selecciona al menos un elemento a modificar", variant: "destructive" });
       return;
@@ -1179,7 +1300,7 @@ export default function AsignarOperadoresPage() {
         }
       }
 
-      if (modificacionData.cambiar_flete) {
+  if (modificacionData.cambiar_flete) {
         if (modificacionData.nuevo_precio_flete) {
           updateData.precio_flete = Number.parseFloat(
             modificacionData.nuevo_precio_flete
@@ -1193,6 +1314,13 @@ export default function AsignarOperadoresPage() {
   updateData.quickpaid_percent = null;
   updateData.quickpaid_descuento = null;
   updateData.precio_quickpaid = null;
+        // Si el usuario seleccionó un tipo de servicio en el dropdown, actualizarlo también
+        if (
+          (modificacionData as any).selected_tipo_servicio &&
+          (modificacionData as any).selected_tipo_servicio !== "no-change"
+        ) {
+          updateData.tipo_servicio_id = (modificacionData as any).selected_tipo_servicio;
+        }
       }
 
       // Asegurar que el indicador flete_falso se persista aunque no se cambie explícitamente el precio de flete
@@ -1208,8 +1336,10 @@ export default function AsignarOperadoresPage() {
             const nombre = (t?.nombre || "").toString().toLowerCase();
             return slug === 'flete-en-falso' || nombre === 'flete en falso';
           });
-          if (fleteTipo && (typeof fleteTipo.precio_base === 'number' || fleteTipo.precio_base)) {
-            const montoFalso = Number(fleteTipo.precio_base) || 0;
+          if (fleteTipo && (typeof (fleteTipo as any).pago_operador === 'number' || typeof (fleteTipo as any).precio_base === 'number' || (fleteTipo as any).precio_base)) {
+            const montoFalso = (typeof (fleteTipo as any).pago_operador === 'number'
+              ? Number((fleteTipo as any).pago_operador)
+              : Number((fleteTipo as any).precio_base)) || 0;
             // Establecer el pago_operador al monto definido para flete en falso
     // Requerimiento: al marcar el checkbox, el pago asignado al operador debe ser el capturado en "Precio Flete en Falso"
     updateData.pago_operador = montoFalso;
@@ -1648,7 +1778,9 @@ export default function AsignarOperadoresPage() {
       remolque_placa: "",
       nuevo_precio_flete: "",
       nueva_moneda_flete: "MXN",
-      flete_en_falso: false,
+  flete_en_falso: false,
+  // nuevo: permitir seleccionar un tipo de servicio desde el tab Flete (priorizando "Flete en Falso")
+  selected_tipo_servicio: "no-change",
     });
     setActiveModifyTab("justificacion");
   };
@@ -1742,6 +1874,21 @@ export default function AsignarOperadoresPage() {
 
     return matchesSearch && matchesFilter && !ocultarPorArchivoAsignacion;
   });
+
+  // Paginación principal (igual que Crear Embarques)
+  const totalListaPages = Math.max(
+    1,
+    Math.ceil(embarquesFiltrados.length / Math.max(1, listaPageSize))
+  );
+  useEffect(() => {
+    if (listaPage > totalListaPages) setListaPage(totalListaPages);
+  }, [totalListaPages]);
+  useEffect(() => {
+    setListaPage(1);
+  }, [searchTerm, filtroEstado, listaPageSize]);
+  const listaStart = (listaPage - 1) * listaPageSize;
+  const listaEnd = listaStart + listaPageSize;
+  const embarquesPaginados = embarquesFiltrados.slice(listaStart, listaEnd);
 
   const imprimirDetalles = () => {
     if (!embarqueDetalle) return;
@@ -2519,41 +2666,96 @@ export default function AsignarOperadoresPage() {
           </Card>
         </div>
 
-        {/* Filtros */}
+        {/* Filtros y paginación superior */}
         <Card>
           <CardContent className="pt-6">
-            <div className="flex flex-col md:flex-row gap-4">
-              <div className="flex items-center space-x-2 flex-1">
-                <Search className="h-4 w-4 text-gray-400" />
-                <Input
-                  placeholder="Buscar por folio, cliente o dirección..."
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <div className="flex-1 max-w-xl md:max-w-2xl">
+                <div className="relative">
+                  <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                  <Input
+                    placeholder="Buscar por folio, cliente o dirección..."
+                    value={searchTerm}
+                    onChange={(e) => {
+                      setSearchTerm(e.target.value);
+                      setListaPage(1);
+                    }}
+                    className="pl-8"
+                  />
+                </div>
               </div>
-              <Select value={filtroEstado} onValueChange={setFiltroEstado}>
-                <SelectTrigger className="w-full md:w-48">
-                  <SelectValue placeholder="Filtrar por estado" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos los estados</SelectItem>
-                  <SelectItem value="listo-para-asignar">
-                    Listo para Asignar
-                  </SelectItem>
-                  <SelectItem value="asignado">Asignado</SelectItem>
-                  <SelectItem value="en-transito">En Tránsito</SelectItem>
-                  <SelectItem value="finalizados">
-                    Embarques Finalizados
-                  </SelectItem>
-                </SelectContent>
-              </Select>
+              <div className="flex items-center gap-2 ml-auto">
+                <span className="text-sm text-gray-700">
+                  Página {listaPage} de {totalListaPages}
+                </span>
+                <div className="flex items-center gap-1">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setListaPage((p) => Math.max(1, p - 1))}
+                    disabled={listaPage <= 1}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setListaPage((p) => Math.min(totalListaPages, p + 1))}
+                    disabled={listaPage >= totalListaPages}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-gray-700">Por página:</span>
+                  <Select
+                    value={String(listaPageSize)}
+                    onValueChange={(v) => {
+                      const newSize = Number.parseInt(v, 10);
+                      setListaPageSize(newSize);
+                      setListaPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[140px]">
+                      <SelectValue placeholder="Por página" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="6">6 por página</SelectItem>
+                      <SelectItem value="12">12 por página</SelectItem>
+                      <SelectItem value="18">18 por página</SelectItem>
+                      <SelectItem value="24">24 por página</SelectItem>
+                      <SelectItem value="48">48 por página</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+                  <Select
+                    value={filtroEstado}
+                    onValueChange={(v) => {
+                      setFiltroEstado(v);
+                      setListaPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="w-[200px]">
+                      <SelectValue placeholder="Filtrar por estado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todos los estados</SelectItem>
+                      <SelectItem value="listo-para-asignar">Listo para Asignar</SelectItem>
+                      <SelectItem value="asignado">Asignado</SelectItem>
+                      <SelectItem value="en-transito">En Tránsito</SelectItem>
+                      <SelectItem value="finalizados">Embarques Finalizados</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
             </div>
           </CardContent>
         </Card>
 
         {/* Lista de embarques */}
         <div className="grid grid-cols-1 gap-4">
-          {embarquesFiltrados.map((embarque) => (
+          {embarquesPaginados.map((embarque) => (
             <Card key={embarque.id}>
               <CardHeader>
                 <div className="flex justify-between items-start">
@@ -2561,7 +2763,7 @@ export default function AsignarOperadoresPage() {
 
                   {/* Modal de Kilometraje */}
                   <Dialog open={showKilometrajeModal} onOpenChange={setShowKilometrajeModal}>
-                    <DialogContent hideOverlay className="sm:max-w-[560px]">
+                    <DialogContent hideOverlay className="sm:max-w-[560px] z-[70]">
                       <DialogHeader>
                         <DialogTitle>Capturar Kilometraje</DialogTitle>
                         <DialogDescription>
@@ -4145,6 +4347,17 @@ export default function AsignarOperadoresPage() {
                               <h4 className="text-sm font-semibold text-gray-800">Kilometraje</h4>
                             </div>
                             <div className="p-4 text-sm text-gray-800 space-y-2">
+                              {/* Acciones de edición/eliminación del último registro */}
+                              {ultimoKmRegistro && (
+                                <div className="flex gap-2 mb-2">
+                                  <Button size="sm" variant="outline" onClick={iniciarEdicionKilometraje}>
+                                    Editar
+                                  </Button>
+                                  <Button size="sm" variant="destructive" onClick={()=>setShowDeleteKmDialog(true)}>
+                                    Eliminar
+                                  </Button>
+                                </div>
+                              )}
                               <div className="text-blue-700">
                                 Kilómetros sumados en este viaje: <span className="font-semibold">+{Number((embarqueDetalle as any).km_agregado_ultimo).toLocaleString('es-MX')}</span> km
                                 {typeof (embarqueDetalle as any)?.km_total_nuevo === 'number' && (
@@ -4181,6 +4394,61 @@ export default function AsignarOperadoresPage() {
                       </div>
                     </div>
                   )}
+
+                  {/* Confirmación de eliminación de último km */}
+                  <Dialog open={showDeleteKmDialog} onOpenChange={setShowDeleteKmDialog}>
+                    <DialogContent hideOverlay className="sm:max-w-[460px] z-[80]">
+                      <DialogTitle>Eliminar registro de kilometraje</DialogTitle>
+                      <div className="text-sm text-gray-700">
+                        ¿Deseas eliminar el último registro de kilometraje? Se restaurará el odómetro del camión al valor anterior de ese registro.
+                      </div>
+                      <DialogFooter>
+                        <Button variant="outline" onClick={()=>setShowDeleteKmDialog(false)}>Cancelar</Button>
+                        <Button variant="destructive" onClick={async()=>{
+                          if (!ultimoKmRegistro || !embarqueDetalle?.camion?.id) { setShowDeleteKmDialog(false); return; }
+                          try {
+                            if (registrosKilometrajeTableExists && ultimoKmRegistro.id) {
+                              const del = await supabase.from('registros_kilometraje').delete().eq('id', ultimoKmRegistro.id);
+                              if (del.error) throw del.error;
+                            }
+                            // Restaurar odómetro del camión
+                            const prevKm = Number(ultimoKmRegistro.kilometraje_anterior || 0);
+                            const upd = await supabase.from('camiones').update({ kilometraje: prevKm }).eq('id', (embarqueDetalle as any).camion.id);
+                            if (upd.error) throw upd.error;
+                            // Audit
+                            try { await agregarAuditLog('ELIMINAR','registros_kilometraje', `Eliminó último registro y restauró odómetro a ${prevKm}`);} catch {}
+                            // Refrescar UI
+                            setUltimoKmRegistro(null);
+                            setEmbarqueDetalle(prev => prev ? ({
+                              ...prev,
+                              km_total_anterior: undefined as any,
+                              km_agregado_ultimo: undefined as any,
+                              km_total_nuevo: prevKm as any,
+                              km_tramo_ultimo: undefined as any,
+                              km_fecha_viaje_ultimo: undefined as any,
+                              km_comentarios_ultimo: undefined as any,
+                              camion: prev.camion ? ({...prev.camion, kilometraje: prevKm} as any) : prev.camion,
+                            }) : prev);
+                            setEmbarques(list => list.map(e => e.id === (embarqueDetalle as any).id ? ({
+                              ...e,
+                              km_total_anterior: undefined as any,
+                              km_agregado_ultimo: undefined as any,
+                              km_total_nuevo: prevKm as any,
+                              km_tramo_ultimo: undefined as any,
+                              km_fecha_viaje_ultimo: undefined as any,
+                              km_comentarios_ultimo: undefined as any,
+                              camion: e.camion ? ({...e.camion, kilometraje: prevKm} as any) : e.camion,
+                            }) : e));
+                            setShowDeleteKmDialog(false);
+                            toast({ title: 'Registro eliminado', description: 'Se restauró el odómetro del camión.' });
+                          } catch (err) {
+                            console.error('Error eliminando registro de km:', err);
+                            toast({ title: 'Error al eliminar', description: String((err as any)?.message || err), variant: 'destructive' });
+                          }
+                        }}>Eliminar</Button>
+                      </DialogFooter>
+                    </DialogContent>
+                  </Dialog>
 
                   {/* Financiero Tab */}
                   {activeTab === "financiero" && (
@@ -4910,6 +5178,46 @@ export default function AsignarOperadoresPage() {
                 {/* Flete Tab */}
                 {activeModifyTab === "flete" && (
                   <div className="space-y-6">
+                    {/* Checkbox: Flete en Falso (independiente del cambio de precio) */}
+                    <div className="border rounded-lg p-6">
+                      <div className="flex items-center space-x-3 mb-2">
+                        <input
+                          type="checkbox"
+                          id="flete_en_falso"
+                          checked={modificacionData.flete_en_falso}
+                          onChange={(e) =>
+                            setModificacionData((prev) => ({
+                              ...prev,
+                              flete_en_falso: e.target.checked,
+                            }))
+                          }
+                          className="w-4 h-4 text-red-600"
+                        />
+                        <Label htmlFor="flete_en_falso" className="text-sm font-semibold text-gray-700">
+                          Flete en Falso
+                        </Label>
+                      </div>
+                      {(() => {
+                        try {
+                          const fleteTipo = (tiposServicio || []).find((t: any) => {
+                            const slug = (t?.slug || "").toString().toLowerCase();
+                            const nombre = (t?.nombre || "").toString().toLowerCase();
+                            return slug === 'flete-en-falso' || nombre === 'flete en falso';
+                          });
+                          const monto = fleteTipo ? Number(fleteTipo.precio_base) || 0 : null;
+                          return (
+                            <p className="text-xs text-gray-600">
+                              {monto != null
+                                ? `Al activar este checkbox, al guardar se actualizará el pago del operador por el monto configurado como "Flete en Falso": $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+                                : 'Define el monto de "Flete en Falso" en Configuración → Tipos de Servicio para aplicarlo automáticamente al pago del operador.'}
+                            </p>
+                          );
+                        } catch {
+                          return null;
+                        }
+                      })()}
+                    </div>
+
                     <div className="border rounded-lg p-6">
                       <div className="flex items-center space-x-3 mb-6">
                         <input
@@ -4991,50 +5299,77 @@ export default function AsignarOperadoresPage() {
                             </div>
                           </div>
 
-                          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                            <div className="flex items-center space-x-3">
-                              <input
-                                type="checkbox"
-                                id="flete_en_falso"
-                                checked={modificacionData.flete_en_falso}
-                                onChange={(e) =>
+                          {/* Nuevo: Dropdown de Tipo de Servicio para contingencias */}
+                          <div className="rounded-lg p-4 border border-gray-200">
+                            <Label className="text-sm font-medium text-gray-700 mb-2 block">
+                              Tipo de Servicio (prioriza "Flete en Falso")
+                            </Label>
+                            <div className="max-w-md">
+                              <Select
+                                value={modificacionData.selected_tipo_servicio || "no-change"}
+            onValueChange={(value) => {
                                   setModificacionData((prev) => ({
                                     ...prev,
-                                    flete_en_falso: e.target.checked,
-                                  }))
-                                }
-                                className="w-4 h-4 text-red-600"
-                              />
-                              <div>
-                                <Label
-                                  htmlFor="flete_en_falso"
-                                  className="text-sm font-semibold text-red-800"
-                                >
-                                  Marcar como Flete en Falso
-                                </Label>
-                                <p className="text-xs text-red-600 mt-1">
-                                  Esta opción indica que el flete no se realizó
-                                  o fue cancelado
-                                </p>
-                                {/* Mostrar monto configurado para flete en falso */}
-                                <p className="text-xs text-gray-700 mt-2">
+                                    selected_tipo_servicio: value,
+                                    flete_en_falso: (() => {
+              const selected = (tiposServicio || []).find((t: any) => (t.id === value) || (String((t as any).slug||'').toLowerCase() === String(value).toLowerCase()));
+              const isFF = selected ? ((String(((selected as any).slug||'')).toLowerCase() === 'flete-en-falso') || (String(((selected as any).nombre||'')).toLowerCase() === 'flete en falso')) : false;
+                                      return isFF;
+                                    })(),
+                                  }));
+                                }}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue placeholder="Selecciona tipo de servicio" />
+                                </SelectTrigger>
+                                <SelectContent>
                                   {(() => {
-                                    try {
-                                      const f = (tiposServicio || []).find((t: any) => {
-                                        const slug = (t?.slug || "").toString().toLowerCase();
-                                        const nombre = (t?.nombre || "").toString().toLowerCase();
-                                        return slug === 'flete-en-falso' || nombre === 'flete en falso';
-                                      });
-                                      const monto = f ? Number(f.precio_base) || 0 : null;
-                                      return monto != null
-                                        ? `Al marcar como flete en falso se actualizará el pago del operador por el monto de: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                                        : 'Al marcar como flete en falso se actualizará el pago del operador por el monto configurado en la sección de Tipos de Servicio (no definido aún).';
-                                    } catch (e) {
-                                      return 'Al marcar como flete en falso se actualizará el pago del operador por el monto configurado en la sección de Tipos de Servicio.';
-                                    }
+                                    const tipos = Array.isArray(tiposServicio) ? [...tiposServicio] : [];
+                                    // Ordenar colocando "Flete en Falso" al inicio si existe
+                                    tipos.sort((a: any, b: any) => {
+                                      const aFF = String(a.slug||'').toLowerCase() === 'flete-en-falso' || String(a.nombre||'').toLowerCase() === 'flete en falso';
+                                      const bFF = String(b.slug||'').toLowerCase() === 'flete-en-falso' || String(b.nombre||'').toLowerCase() === 'flete en falso';
+                                      if (aFF && !bFF) return -1;
+                                      if (!aFF && bFF) return 1;
+                                      return String(a.nombre||'').localeCompare(String(b.nombre||''));
+                                    });
+                                    // Agregar opción de no cambiar
+                                    return (
+                                      <>
+                                        <SelectItem value="no-change">(Sin cambio)</SelectItem>
+                                        {tipos.map((t: any) => (
+                                          <SelectItem key={t.id || t.slug || t.nombre} value={t.id || t.slug}>
+                                            {t.nombre || t.slug}
+                                          </SelectItem>
+                                        ))}
+                                      </>
+                                    );
                                   })()}
-                                </p>
-                              </div>
+                                </SelectContent>
+                              </Select>
+                              {(() => {
+                                try {
+                                  const f = (tiposServicio || []).find((t: any) => {
+                                    const slug = (t?.slug || "").toString().toLowerCase();
+                                    const nombre = (t?.nombre || "").toString().toLowerCase();
+                                    return slug === 'flete-en-falso' || nombre === 'flete en falso';
+                                  });
+                                  const isSelectedFF = (() => {
+                                    const sel = (tiposServicio || []).find((t: any) => (t.id === modificacionData.selected_tipo_servicio) || (String((t as any).slug||'').toLowerCase() === String(modificacionData.selected_tipo_servicio||'').toLowerCase()));
+                                    return sel ? ((String(((sel as any).slug||'')).toLowerCase() === 'flete-en-falso') || (String(((sel as any).nombre||'')).toLowerCase() === 'flete en falso')) : false;
+                                  })();
+                                  const monto = f ? Number(f.precio_base) || 0 : null;
+                                  return isSelectedFF ? (
+                                    <p className="text-xs text-gray-700 mt-2">
+                                      {monto != null
+                                        ? `Al seleccionar Flete en Falso se actualizará el pago del operador por el monto de: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                                        : 'Al seleccionar Flete en Falso se actualizará el pago del operador por el monto configurado en Tipos de Servicio (no definido aún).'}
+                                    </p>
+                                  ) : null;
+                                } catch (e) {
+                                  return null;
+                                }
+                              })()}
                             </div>
                           </div>
                         </div>

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { list, del } from "@vercel/blob";
+import { supabase } from "@/lib/supabase";
 
 export const dynamic = "force-dynamic";
 
@@ -11,9 +12,59 @@ type CleanupBody = {
   endIso?: string;   // exclusive
 };
 
+// util: verify provided admin password against app_users table for the current admin
+async function verifyAdminPassword(password: string): Promise<boolean> {
+  try {
+    // Detect current user from local headers is not possible in a server route without session.
+    // Instead, validate against the single admin row when exists. If multiple admins, allow when any matches.
+    const { data, error } = await supabase
+      .from("app_users")
+      .select("id, username, password_hash, password_salt, is_admin, active")
+      .eq("is_admin", true)
+      .eq("active", true);
+    if (error || !data || data.length === 0) {
+      return false;
+    }
+    // Reuse client-side hash fn via WebCrypto when present; do a simple PBKDF2 compatible hash here.
+    // Since we don't import the helper, implement a minimal PBKDF2 using SubtleCrypto if available.
+  const subtle = (globalThis as any)?.crypto?.subtle;
+  const enc = new TextEncoder();
+    for (const admin of data) {
+      try {
+        let hashHex: string | null = null;
+        if (subtle) {
+      // Decode base64 salt using Buffer to support Node runtime
+      const saltBuf = Buffer.from(String(admin.password_salt || ''), 'base64');
+      const saltBin = new Uint8Array(saltBuf);
+          const key = await subtle.importKey("raw", enc.encode(password), { name: "PBKDF2" }, false, ["deriveBits"]);
+          const bits = await subtle.deriveBits({ name: "PBKDF2", salt: saltBin, iterations: 100_000, hash: "SHA-256" }, key, 256);
+          const bytes = Array.from(new Uint8Array(bits));
+          hashHex = bytes.map((b) => b.toString(16).padStart(2, "0")).join("");
+        }
+        if (!hashHex) {
+          // Fallback: reject if we cannot verify securely on server
+          continue;
+        }
+        if (hashHex === admin.password_hash) return true;
+      } catch {}
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as CleanupBody;
+    const body = (await request.json()) as CleanupBody & { adminPassword?: string };
+    const adminPassword = (body as any)?.adminPassword;
+    if (!adminPassword) {
+      return NextResponse.json({ error: "Se requiere contraseña de administrador." }, { status: 401 });
+    }
+    const okPwd = await verifyAdminPassword(adminPassword);
+    if (!okPwd) {
+      return NextResponse.json({ error: "Contraseña de administrador inválida." }, { status: 403 });
+    }
   const prefixes = (body?.prefixes && Array.isArray(body.prefixes) && body.prefixes.length > 0)
       ? body.prefixes
       : ["operadores/", "embarques/"];
@@ -84,7 +135,7 @@ export async function POST(request: Request) {
       if (limit && deleted >= limit) break;
     }
 
-    return NextResponse.json({
+  return NextResponse.json({
       ok: true,
       dryRun,
       scanned,

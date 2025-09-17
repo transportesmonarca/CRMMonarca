@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 import { DropZone } from "@/components/ui/dropzone"
-import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -61,6 +61,7 @@ export default function SubirFotosEmbarquePage() {
   const [operadorNombre, setOperadorNombre] = useState("")
   const [confirmacionGuardada, setConfirmacionGuardada] = useState(false)
   const [error, setError] = useState("")
+  const [quotaFull, setQuotaFull] = useState(false)
   const [success, setSuccess] = useState("")
 
   const [openSuccessDialog, setOpenSuccessDialog] = useState(false)
@@ -72,6 +73,10 @@ export default function SubirFotosEmbarquePage() {
   const [latitud, setLatitud] = useState<number | null>(null)
   const [longitud, setLongitud] = useState<number | null>(null)
   const [geoStatus, setGeoStatus] = useState<"idle" | "solicitando" | "ok" | "error">("idle")
+
+  // Permitir desactivar el requisito de ubicación si hay problemas (iOS/Safari)
+  const [requerirUbicacion, setRequerirUbicacion] = useState<boolean>(true)
+  const [toggleUbicacionMode, setToggleUbicacionMode] = useState<null | "disable" | "enable">(null)
 
   // Límite de archivos por embarque
   const MAX_FILES = 10
@@ -236,9 +241,9 @@ export default function SubirFotosEmbarquePage() {
       return
     }
 
-    // Requerir ubicación para el operador móvil
-    if (latitud == null || longitud == null) {
-      setError("Activa tu ubicación para continuar. Toca en 'Activar ubicación' y acepta el permiso.")
+    // Requerir ubicación para el operador móvil (solo si está activa la obligación)
+    if (requerirUbicacion && (latitud == null || longitud == null)) {
+      setError("Activa tu ubicación para continuar. Toca en 'Activar ubicación' y acepta el permiso, o desactiva el requisito desde el botón superior derecho.")
       return
     }
 
@@ -254,7 +259,7 @@ export default function SubirFotosEmbarquePage() {
 
       let archivosSubidos = 0
 
-      for (const file of selectedFiles) {
+  for (const file of selectedFiles) {
         // Corte de seguridad si se alcanzó el máximo mientras se sube
         if (fotos.length + archivosSubidos >= MAX_FILES) {
           break
@@ -276,8 +281,8 @@ export default function SubirFotosEmbarquePage() {
             tipo_mime: file.type,
             subido_por: operadorNombre.trim(),
             tamano_bytes: file.size,
-            latitud: latitud ?? undefined,
-            longitud: longitud ?? undefined,
+            latitud: requerirUbicacion ? (latitud ?? undefined) : undefined,
+            longitud: requerirUbicacion ? (longitud ?? undefined) : undefined,
           })
 
           if (fotoGuardada) {
@@ -304,7 +309,11 @@ export default function SubirFotosEmbarquePage() {
           // archivosSubidos++
         } catch (error) {
           console.error(`Error subiendo ${file.name}:`, error)
-          setError(`Error subiendo ${file.name}: ${error instanceof Error ? error.message : "Error desconocido"}`)
+          const msg = error instanceof Error ? error.message : String(error)
+          setError(`Error subiendo ${file.name}: ${msg}`)
+          if (/almacenamiento.*lleno|quota|507/i.test(msg)) {
+            setQuotaFull(true)
+          }
         }
       }
 
@@ -317,7 +326,7 @@ export default function SubirFotosEmbarquePage() {
           }
         }
 
-        setSuccessType("upload")
+  setSuccessType("upload")
         setSuccessMessage(`${archivosSubidos} archivo(s) subido(s) exitosamente.`)
         setOpenSuccessDialog(true)
         setSelectedFiles([])
@@ -331,7 +340,8 @@ export default function SubirFotosEmbarquePage() {
       }
     } catch (error) {
       console.error("Error en subida:", error)
-      setError("Error al subir archivos")
+      const msg = error instanceof Error ? error.message : String(error)
+      setError(msg || "Error al subir archivos")
     } finally {
       setUploading(false)
     }
@@ -430,21 +440,25 @@ export default function SubirFotosEmbarquePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {/* Discrete antenna button to manually request geolocation when needed */}
+            {/* Botón superior derecho: activar ubicación o desactivar requisito */}
             <button
               type="button"
-              onClick={() => solicitarUbicacion(true)}
-              aria-label="Activar ubicación"
-              title="Activar ubicación"
-              className="p-2 rounded-md hover:bg-gray-100"
+              onClick={() => setToggleUbicacionMode(requerirUbicacion ? "disable" : "enable")}
+              aria-label={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
+              title={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
+              className={`p-2 rounded-md hover:bg-gray-100 ${requerirUbicacion ? '' : 'ring-1 ring-yellow-500/60 bg-yellow-50'}`}
             >
-              {/* Small antenna-like icon using simple SVG */}
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-gray-600">
+              {/* Icono antena; resaltar cuando el requisito está desactivado */}
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={requerirUbicacion ? "text-gray-600" : "text-yellow-700"}>
                 <path d="M12 20v-6" />
                 <path d="M5 9a7 7 0 0 1 14 0" />
                 <path d="M8 12a4 4 0 0 1 8 0" />
               </svg>
             </button>
+            {/* Indicador de estado del requisito */}
+            <Badge variant={requerirUbicacion ? "outline" : "secondary"} className={requerirUbicacion ? "text-gray-700" : "bg-yellow-100 text-yellow-800 border-yellow-300"}>
+              {requerirUbicacion ? "Ubicación requerida" : "Ubicación no requerida"}
+            </Badge>
           </div>
         </div>
 
@@ -504,7 +518,10 @@ export default function SubirFotosEmbarquePage() {
         {error && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
+            <div>
+              {quotaFull && <AlertTitle>Almacenamiento lleno</AlertTitle>}
+              <AlertDescription>{error}</AlertDescription>
+            </div>
           </Alert>
         )}
 
@@ -577,7 +594,7 @@ export default function SubirFotosEmbarquePage() {
             {/* Botón de subida */}
             <Button
               onClick={subirArchivos}
-              disabled={uploading || selectedFiles.length === 0 || !operadorNombre.trim()}
+              disabled={uploading || selectedFiles.length === 0 || !operadorNombre.trim() || quotaFull}
               className="w-full bg-green-600 hover:bg-green-700 text-white"
             >
               {uploading ? (
@@ -923,6 +940,40 @@ export default function SubirFotosEmbarquePage() {
               onClick={() => setOpenSuccessDialog(false)}
             >
               Aceptar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Popup para confirmar cambio de requisito de ubicación */}
+      <AlertDialog open={!!toggleUbicacionMode} onOpenChange={(open) => setToggleUbicacionMode(open ? (toggleUbicacionMode ?? null) : null)}>
+        <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {toggleUbicacionMode === "disable" ? "Desactivar requisito de ubicación" : "Requerir ubicación para subir"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {toggleUbicacionMode === "disable"
+                ? "¿Deseas permitir subir archivos sin compartir tu ubicación? Puedes volver a requerirla tocando este botón otra vez."
+                : "Al requerir ubicación, deberás conceder permiso para continuar con la subida de archivos."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => setToggleUbicacionMode(null)}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              className={toggleUbicacionMode === "disable" ? "bg-yellow-600 hover:bg-yellow-700 text-white" : "bg-blue-600 hover:bg-blue-700 text-white"}
+              onClick={() => {
+                if (toggleUbicacionMode === "disable") {
+                  setRequerirUbicacion(false)
+                  setError("")
+                } else if (toggleUbicacionMode === "enable") {
+                  setRequerirUbicacion(true)
+                  solicitarUbicacion(true)
+                }
+                setToggleUbicacionMode(null)
+              }}
+            >
+              {toggleUbicacionMode === "disable" ? "Sí, desactivar" : "Sí, requerir"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
