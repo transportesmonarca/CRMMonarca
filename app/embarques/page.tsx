@@ -161,10 +161,11 @@ export default function EmbarquesPage() {
 
   // Validaciones para "Nuevo Embarque"
   const isClienteSelected = !!formData.cliente_id && formData.cliente_id !== "none";
+  const isTipoServicioSelected = !!formData.tipo_servicio_id && formData.tipo_servicio_id !== "none";
   const isRemolqueValid = formData.remolque_manual
     ? (formData.remolque_numero_economico.trim() !== "" || formData.remolque_placa.trim() !== "")
     : (!!formData.remolque_id && formData.remolque_id !== "none");
-  const isNuevoEmbarqueValid = isClienteSelected && isRemolqueValid;
+  const isNuevoEmbarqueValid = isClienteSelected && isRemolqueValid && isTipoServicioSelected;
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -716,6 +717,15 @@ export default function EmbarquesPage() {
         toast({
           title: "Datos incompletos",
           description: "Selecciona cliente y remolque (o captura remolque manual)",
+          variant: "destructive",
+        });
+        return;
+      }
+      // Nuevo: exigir tipo de servicio seleccionado al crear embarque
+      if (!isTipoServicioSelected) {
+        toast({
+          title: "Tipo de servicio requerido",
+          description: "Selecciona un tipo de servicio antes de crear el embarque",
           variant: "destructive",
         });
         return;

@@ -1329,7 +1329,7 @@ export default function AsignarOperadoresPage() {
 
       // Si se marca Flete en Falso, y existe un tipo de servicio especial con el monto,
       // usar ese monto como pago_operador en el embarque
-  if (modificacionData.flete_en_falso) {
+    if (modificacionData.flete_en_falso) {
         try {
           const fleteTipo = (tiposServicio || []).find((t: any) => {
             const slug = (t?.slug || "").toString().toLowerCase();
@@ -1343,6 +1343,15 @@ export default function AsignarOperadoresPage() {
             // Establecer el pago_operador al monto definido para flete en falso
     // Requerimiento: al marcar el checkbox, el pago asignado al operador debe ser el capturado en "Precio Flete en Falso"
     updateData.pago_operador = montoFalso;
+            // Además, reemplazar el precio almacenado del embarque para que la tarjeta muestre el monto de flete en falso
+            // y para mantener consistencia contable.
+            try {
+              updateData.precio_flete = montoFalso;
+              // Preferir moneda definida en el tipo, si existe, o usar la moneda elegida en la modificación
+              updateData.moneda_flete = (fleteTipo as any)?.moneda_flete || modificacionData.nueva_moneda_flete || updateData.moneda_flete || 'MXN';
+            } catch (e) {
+              // best-effort: si la columna no existe en la BD, la actualización posterior la ignorará en el retry
+            }
             // Notificar al usuario (mejor esfuerzo)
             try {
               toast({ title: 'Aplicado monto flete en falso', description: `$${montoFalso.toLocaleString('es-MX')}` });

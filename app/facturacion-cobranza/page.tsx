@@ -1769,6 +1769,9 @@ export default function FacturacionCobranzaPage() {
   const [showTiposInfo, setShowTiposInfo] = useState(false);
   const [itemsPerPageTipos, setItemsPerPageTipos] = useState(5);
   const [currentPageTipos, setCurrentPageTipos] = useState(1);
+  // Ordenamiento para la tabla de Tipos de Servicio
+  const [tiposSortBy, setTiposSortBy] = useState<'tipo' | 'categoria' | 'pago'>('tipo');
+  const [tiposSortDir, setTiposSortDir] = useState<'asc' | 'desc'>('asc');
   // Editar tipo de servicio
   const [showEditarTipoModal, setShowEditarTipoModal] = useState(false);
   const [tipoEditando, setTipoEditando] = useState<TipoServicio | null>(null);
@@ -1776,7 +1779,7 @@ export default function FacturacionCobranzaPage() {
   const [showUsosModal, setShowUsosModal] = useState(false);
   const [usosTipo, setUsosTipo] = useState<TipoServicio | null>(null);
   const [usosLoading, setUsosLoading] = useState(false);
-  const [usosEmbarques, setUsosEmbarques] = useState<Array<{ id: string; folio: string; estado?: string | null; estado_facturacion?: string | null }>>([]);
+  const [usosEmbarques, setUsosEmbarques] = useState<Array<{ id: string; folio: string; estado?: string | null; estado_facturacion?: string | null; bloquea?: boolean }>>([]);
   const [editarTipo, setEditarTipo] = useState({
     nombre: "",
     descripcion: "",
@@ -1789,8 +1792,34 @@ export default function FacturacionCobranzaPage() {
     [tiposServicio, itemsPerPageTipos]
   );
   const paginatedTipos = useMemo(() => {
+    // Ordenar copia de tiposServicio según estado de orden
+    const todos = Array.isArray(tiposServicio) ? [...tiposServicio] : [];
+    todos.sort((a: any, b: any) => {
+      const dir = tiposSortDir === 'asc' ? 1 : -1;
+      if (tiposSortBy === 'tipo') {
+        const va = String(a.nombre || '').toLowerCase();
+        const vb = String(b.nombre || '').toLowerCase();
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+      }
+      if (tiposSortBy === 'categoria') {
+        const va = String(a.categoria || '').toLowerCase();
+        const vb = String(b.categoria || '').toLowerCase();
+        if (va < vb) return -1 * dir;
+        if (va > vb) return 1 * dir;
+        return 0;
+      }
+      if (tiposSortBy === 'pago') {
+        const va = Number(a.precio_base || 0);
+        const vb = Number(b.precio_base || 0);
+        return (va - vb) * dir;
+      }
+      return 0;
+    });
+
     const start = (currentPageTipos - 1) * itemsPerPageTipos;
-    return (tiposServicio || []).slice(start, start + itemsPerPageTipos);
+    return todos.slice(start, start + itemsPerPageTipos);
   }, [tiposServicio, currentPageTipos, itemsPerPageTipos]);
   useEffect(() => {
     // Si cambia el total de páginas y la actual queda fuera de rango, ajusta
@@ -1798,6 +1827,11 @@ export default function FacturacionCobranzaPage() {
       setCurrentPageTipos(totalPagesTipos);
     }
   }, [totalPagesTipos]);
+
+  // Resetear página cuando cambie orden de tipos
+  useEffect(() => {
+    setCurrentPageTipos(1);
+  }, [tiposSortBy, tiposSortDir, itemsPerPageTipos]);
   const [nuevoTipo, setNuevoTipo] = useState({
     nombre: "",
     descripcion: "",
@@ -2725,8 +2759,8 @@ export default function FacturacionCobranzaPage() {
     setConfirmAction('delete');
     setConfirmDialogMessage(
       `¿Eliminar el tipo de servicio "${tipo.nombre}"?\n` +
-      `Se eliminará definitivamente si únicamente está referenciado por embarques archivados/cancelados. ` +
-      `Si existe algún embarque activo (no archivado), la eliminación se cancelará. Los embarques archivados no se modificarán.`
+      `Se eliminará definitivamente si únicamente está referenciado por embarques archivados o por embarques cancelados. ` +
+      `Si existe algún embarque activo (no archivado y no cancelado), la eliminación se cancelará y se mostrará la lista de embarques en uso.`
     );
     setConfirmDialogOpen(true);
   };
@@ -2750,19 +2784,22 @@ export default function FacturacionCobranzaPage() {
         toast({ title: 'No se pudieron cargar los embarques en uso', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
-      const activos = (data || []).filter((r: any) => {
+      // Mapear todos los embarques que referencian este tipo y marcar si bloquean la eliminación
+      const todos = (data || []).map((r: any) => {
         const ef = r?.estado_facturacion ?? null;
-        const estado = (r?.estado || '').toLowerCase();
+        const estado = (r?.estado || '').toString().toLowerCase();
         const esActivoPorEF = ef === 'pendiente_facturacion' || ef === 'facturado' || ef === 'pagado';
         const esActivoPorNull = (ef === null || ef === undefined) && estado !== 'cancelado';
-        return esActivoPorEF || esActivoPorNull;
+        const bloquea = !!(esActivoPorEF || esActivoPorNull);
+        return {
+          id: String(r.id),
+          folio: String(r.folio || ''),
+          estado: r.estado ?? null,
+          estado_facturacion: r.estado_facturacion ?? null,
+          bloquea,
+        };
       });
-      setUsosEmbarques(activos.map((r: any) => ({
-        id: String(r.id),
-        folio: String(r.folio || ''),
-        estado: r.estado ?? null,
-        estado_facturacion: r.estado_facturacion ?? null,
-      })));
+      setUsosEmbarques(todos);
     } catch (e) {
       console.error('Excepción cargando usos de tipo:', e);
       toast({ title: 'Error inesperado', description: String((e as any)?.message || ''), variant: 'destructive' });
@@ -2853,81 +2890,108 @@ export default function FacturacionCobranzaPage() {
 
   const performDelete = async (tipo: TipoServicio) => {
     try {
-      // Verificar uso en embarques activos (no archivados):
-      // A) estado_facturacion en (pendiente_facturacion, facturado, pagado)
-      const { count: countA, error: errA } = await supabase
+      // Traer embarques que referencian este tipo para evaluarlos cliente-side
+      const { data, error } = await supabase
         .from('embarques')
-        .select('id', { count: 'exact', head: true })
+        .select(
+          `id, folio, estado, estado_facturacion, observaciones, observaciones_facturacion, motivo_cancelacion, fecha_cancelacion, cancelado_por`
+        )
         .eq('tipo_servicio_id', tipo.id)
-        .in('estado_facturacion', ['pendiente_facturacion', 'facturado', 'pagado']);
-      if (errA) {
-        console.error('Error verificando uso (A):', errA);
-        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((errA as any)?.message || ''), variant: 'destructive' });
-        return;
+        .order('fecha_creacion', { ascending: false })
+        .limit(1000);
+      if (error) {
+        // Algunos errores de supabase en el cliente llegan como {} y no contienen message.
+        const errString = typeof error === 'object' ? JSON.stringify(error) : String(error);
+        console.error('Error cargando embarques para verificación:', errString, error);
+        // Intentar fallback: usar conteos previos (server-side RPC o count queries)
+        try {
+          const { count: countA, error: errA } = await supabase
+            .from('embarques')
+            .select('id', { count: 'exact', head: true })
+            .eq('tipo_servicio_id', tipo.id)
+            .in('estado_facturacion', ['pendiente_facturacion', 'facturado', 'pagado']);
+          const { count: countB, error: errB } = await supabase
+            .from('embarques')
+            .select('id', { count: 'exact', head: true })
+            .eq('tipo_servicio_id', tipo.id)
+            .is('estado_facturacion', null)
+            .neq('estado', 'cancelado');
+          if (errA || errB) {
+            console.error('Fallback counts failed', errA || errB);
+            toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: errString, variant: 'destructive' });
+            return;
+          }
+          const totalActivos = (countA || 0) + (countB || 0);
+          if (totalActivos > 0) {
+            toast({ title: 'No se puede eliminar', description: `Este tipo de servicio está en uso por ${totalActivos} embarque(s) activos que impiden la eliminación.`, variant: 'destructive' });
+            try { await cargarUsosTipo(tipo as any); } catch {}
+            return;
+          }
+          // continuar al intento de borrado
+        } catch (fallbackErr) {
+          console.error('Error en fallback de verificación de usos:', fallbackErr);
+          toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((fallbackErr as any)?.message || ''), variant: 'destructive' });
+          return;
+        }
       }
-      // B) estado_facturacion es null y estado != cancelado
-      const { count: countB, error: errB } = await supabase
-        .from('embarques')
-        .select('id', { count: 'exact', head: true })
-        .eq('tipo_servicio_id', tipo.id)
-        .is('estado_facturacion', null)
-        .neq('estado', 'cancelado');
-      if (errB) {
-        console.error('Error verificando uso (B):', errB);
-        toast({ title: 'No se pudo verificar el uso del tipo de servicio', description: String((errB as any)?.message || ''), variant: 'destructive' });
-        return;
-      }
-      const countActivos = (countA || 0) + (countB || 0);
 
-      if ((countActivos || 0) > 0) {
-        const msg = `Este tipo de servicio está en uso por ${countActivos} embarque(s) activos (no archivados).`;
+      // Evaluar qué embarques bloquean: aplicar la misma lógica usada en cargarUsosTipo
+      const candidatos = (data || []) as any[];
+      const bloqueantes = candidatos.filter((r) => {
+        // si el embarque está claramente cancelado según la heurística, NO bloquea
+        if (esCancelado(r)) return false;
+        const ef = r?.estado_facturacion ?? null;
+        const estado = (r?.estado || '').toString().toLowerCase();
+        const esActivoPorEF = ef === 'pendiente_facturacion' || ef === 'facturado' || ef === 'pagado';
+        const esActivoPorNull = (ef === null || ef === undefined) && estado !== 'cancelado';
+        return !!(esActivoPorEF || esActivoPorNull);
+      });
+
+      if ((bloqueantes?.length || 0) > 0) {
+        const msg = `Este tipo de servicio está en uso por ${bloqueantes.length} embarque(s) activos que impiden la eliminación.`;
         toast({ title: 'No se puede eliminar', description: msg, variant: 'destructive' });
-        // Abrir el modal de usos para que el usuario vea cuáles son
         try { await cargarUsosTipo(tipo as any); } catch {}
         return;
       }
 
-      // Contar referencias totales (incluye archivados)
-      const { count: countTotal, error: countAllError } = await supabase
-        .from("embarques")
-        .select("id", { count: "exact", head: true })
-        .eq("tipo_servicio_id", tipo.id);
-      if (countAllError) {
-        console.error("Error verificando referencias históricas:", countAllError);
-      }
-
-  // No hay embarques activos, proceder a eliminar (aunque existan archivados)
-      const { error: delError } = await supabase.from("tipos_servicio").delete().eq("id", tipo.id);
+      // No hay bloqueantes activos (podrían existir solo archivados o cancelados). Intentar eliminar físicamente.
+      // Intentar eliminar y capturar detalles
+      const delRes = await supabase.from('tipos_servicio').delete().eq('id', tipo.id).select();
+      const delError = (delRes as any)?.error || null;
       if (delError) {
-        console.error("Error eliminando tipo de servicio:", delError);
+        const delStr = typeof delError === 'object' ? JSON.stringify(delError) : String(delError);
+        console.error('Error eliminando tipo de servicio:', delStr, delError);
         const code = (delError as any)?.code;
-        if (code === '23503') {
-          // Violación de llave foránea: hay referencias históricas que impiden borrar físicamente.
+        // Si es FK violation o mensaje de llave foránea, desactivar en su lugar
+        if (code === '23503' || (delError as any)?.message?.includes('violates foreign key')) {
           toast({ title: 'No se pudo eliminar por referencias históricas', description: 'Se desactivará y ocultará para mantener la integridad de datos.', variant: 'destructive' });
           await performDeactivate(tipo);
           return;
         }
-        toast({ title: 'Error al eliminar el tipo de servicio', description: 'Puede estar protegido por integridad de datos.', variant: 'destructive' });
+        // Si la respuesta es un objeto vacío ({}), intentar desactivar como fallback seguro
+        if (delStr === '{}' || delStr === '') {
+          console.warn('Respuesta de eliminación ambigua, se realizará desactivación como fallback.');
+          await performDeactivate(tipo);
+          return;
+        }
+        toast({ title: 'Error al eliminar el tipo de servicio', description: 'Puede estar protegido por integridad de datos. (' + (delStr || 'error desconocido') + ')', variant: 'destructive' });
         return;
       }
 
-      if (mounted.current) {
-        setTiposServicio((prev) => prev.filter((t) => t.id !== tipo.id));
-      }
+      if (mounted.current) setTiposServicio((prev) => prev.filter((t) => t.id !== tipo.id));
 
       try {
-        const { agregarAuditLog } = await import("../../lib/audit");
-        agregarAuditLog("ELIMINAR", "Facturación/Cobranza", `Se eliminó el tipo de servicio ${tipo.nombre} (${tipo.id})`);
+        const { agregarAuditLog } = await import('../../lib/audit');
+        agregarAuditLog('ELIMINAR', 'Facturación/Cobranza', `Se eliminó el tipo de servicio ${tipo.nombre} (${tipo.id})`);
       } catch (e) {
-        console.warn("No se pudo registrar auditoría de eliminación de tipo:", e);
+        console.warn('No se pudo registrar auditoría de eliminación de tipo:', e);
       }
 
-  // Eliminación: notificar en rojo
-  toast({ title: 'Tipo de servicio eliminado', variant: 'destructive' });
+      toast({ title: 'Tipo de servicio eliminado', variant: 'destructive' });
     } catch (e) {
-      console.error("Error inesperado al eliminar tipo de servicio:", e);
-      toast({ title: 'Error inesperado al eliminar el tipo de servicio', description: String((e as any)?.message || ''), variant: 'destructive' });
-  toast({ title: 'Error inesperado al eliminar el tipo de servicio', description: String((e as any)?.message || ''), variant: 'destructive' });
+      const estr = typeof e === 'object' ? JSON.stringify(e) : String(e);
+      console.error('Error inesperado al eliminar tipo de servicio:', estr, e);
+      toast({ title: 'Error inesperado al eliminar el tipo de servicio', description: String((e as any)?.message || estr), variant: 'destructive' });
     }
   };
 
@@ -4187,6 +4251,9 @@ export default function FacturacionCobranzaPage() {
     finMesActual.setHours(23, 59, 59, 999);
 
     embarquesOperadorFiltrados.forEach((embarque) => {
+      // Mostrar los embarques cancelados en la tabla detalle, pero NO deben afectar
+      // los cálculos de desglose y contadores.
+      if (esCancelado(embarque)) return;
       const fechaEmbarque = new Date(embarque.fechaAsignacion!);
 
       // Construir entradas por operador. En contingencia, separar Original y Reemplazo como operadores distintos.
@@ -4253,6 +4320,8 @@ export default function FacturacionCobranzaPage() {
 
   const totalPagosFiltrados = useMemo(() => {
     return embarquesOperadorFiltrados.reduce((sum, embarque) => {
+      // Excluir embarques cancelados del total de pagos
+      if (esCancelado(embarque)) return sum;
       const pago = embarque.modificadoPorEmergencia
         ? (operadoresContingencia[embarque.id]?.original || 0) +
           (operadoresContingencia[embarque.id]?.reemplazo || 0)
@@ -7985,20 +8054,41 @@ export default function FacturacionCobranzaPage() {
                   <table className="min-w-full text-sm border-collapse">
                     <thead>
                       <tr className="bg-gray-100 border-b border-gray-200">
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                          Tipo
+                        <th
+                          className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
+                          onClick={() => {
+                            setCurrentPageTipos(1);
+                            if (tiposSortBy === 'tipo') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                            else { setTiposSortBy('tipo'); setTiposSortDir('asc'); }
+                          }}
+                        >
+                          Tipo{tiposSortBy === 'tipo' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                         <th className="px-3 py-2 text-left font-semibold text-gray-700">
                           Descripción
                         </th>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                          Categoría
+                        <th
+                          className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
+                          onClick={() => {
+                            setCurrentPageTipos(1);
+                            if (tiposSortBy === 'categoria') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                            else { setTiposSortBy('categoria'); setTiposSortDir('asc'); }
+                          }}
+                        >
+                          Categoría{tiposSortBy === 'categoria' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                         <th className="px-3 py-2 text-left font-semibold text-gray-700 w-32">
                           Subcategoría
                         </th>
-                        <th className="px-3 py-2 text-right font-semibold text-gray-700">
-                          Pago Operador (MXN)
+                        <th
+                          className="px-3 py-2 text-right font-semibold text-gray-700 cursor-pointer select-none"
+                          onClick={() => {
+                            setCurrentPageTipos(1);
+                            if (tiposSortBy === 'pago') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                            else { setTiposSortBy('pago'); setTiposSortDir('desc'); }
+                          }}
+                        >
+                          Pago Operador (MXN){tiposSortBy === 'pago' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                         <th className="px-3 py-2 text-center font-semibold text-gray-700">
                           Detalles
@@ -8266,22 +8356,24 @@ export default function FacturacionCobranzaPage() {
             <DialogHeader>
               <DialogTitle>Embarques en uso — {usosTipo?.nombre || ''}</DialogTitle>
               <DialogDescription>
-                Se muestran embarques no archivados en facturación que referencian este tipo.
+                Se muestran todos los embarques que referencian este tipo. Los embarques archivados o cancelados no bloquean la eliminación.
               </DialogDescription>
             </DialogHeader>
             <div className="min-h-[160px]">
               {usosLoading ? (
                 <div className="flex items-center justify-center py-8 text-sm text-gray-600">Cargando…</div>
               ) : usosEmbarques.length === 0 ? (
-                <div className="text-center py-8 text-gray-500">Sin embarques en uso activo.</div>
+                <div className="text-center py-8 text-gray-500">Sin embarques que refieran este tipo.</div>
               ) : (
                 <div className="overflow-x-auto">
+                  <div className="px-2 py-1 text-sm text-gray-600">Embarques que bloquean eliminación: <strong>{usosEmbarques.filter((u) => u.bloquea).length}</strong></div>
                   <table className="min-w-full text-sm border">
                     <thead>
                       <tr className="bg-gray-100">
                         <th className="px-2 py-1 border text-left">Folio</th>
                         <th className="px-2 py-1 border text-left">Estado Operativo</th>
                         <th className="px-2 py-1 border text-left">Estado Facturación</th>
+                        <th className="px-2 py-1 border text-left">Bloquea</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -8290,6 +8382,7 @@ export default function FacturacionCobranzaPage() {
                           <td className="px-2 py-1 border">{e.folio || e.id}</td>
                           <td className="px-2 py-1 border">{e.estado || '-'}</td>
                           <td className="px-2 py-1 border">{e.estado_facturacion || '-'}</td>
+                          <td className="px-2 py-1 border">{e.bloquea ? 'Sí' : 'No'}</td>
                         </tr>
                       ))}
                     </tbody>

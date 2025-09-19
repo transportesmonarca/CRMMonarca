@@ -92,12 +92,12 @@ export default function LoginBackgroundManager() {
     const [deletingId, setDeletingId] = useState<string | null>(null)
     const { toast } = useToast()
 
-    const fileInputs: Record<LoginMoment, RefObject<HTMLInputElement>> = {
-        day: useRef<HTMLInputElement>(null),
-        evening: useRef<HTMLInputElement>(null),
-        night: useRef<HTMLInputElement>(null),
+    const fileInputs: Record<LoginMoment, RefObject<HTMLInputElement | null>> = {
+        day: useRef<HTMLInputElement | null>(null),
+        evening: useRef<HTMLInputElement | null>(null),
+        night: useRef<HTMLInputElement | null>(null),
     }
-    const editFileInput = useRef<HTMLInputElement>(null)
+    const editFileInput = useRef<HTMLInputElement | null>(null)
 
     useEffect(() => {
         void fetchBackgrounds()
