@@ -1135,8 +1135,9 @@ export default function FacturacionCobranzaPage() {
             }
             return sum + (e.pagoOperador || 0);
           }, 0);
+          // Contingencia: sólo contar embarques en contingencia que NO estén cancelados
           const embarquesContingencia = embarques.filter((e: any) =>
-            embarquesModificadosIds.includes(e.id)
+            embarquesModificadosIds.includes(e.id) && !esCancelado(e)
           ).length;
           const embarquesCancelados = embarques.filter((e: any) =>
             esCancelado(e)
@@ -1176,11 +1177,11 @@ export default function FacturacionCobranzaPage() {
         }, 0),
         totalEmbarques: embarquesParaAnalisis.length,
         operadores: analisisPorOperador.length,
-        // contar embarques únicos en contingencia
+        // contar embarques únicos en contingencia (excluir los cancelados para evitar doble conteo)
         casosContingencia: Array.from(
           new Set(
             embarquesFiltrados
-              .filter((e) => embarquesModificadosIds.includes(e.id))
+              .filter((e) => embarquesModificadosIds.includes(e.id) && !esCancelado(e))
               .map((e) => e.id)
           )
         ).length,
