@@ -66,6 +66,65 @@ import { getAlertThresholds, calcularNivelAlerta } from "@/lib/alert-thresholds"
 import { agregarAuditLog } from "@/lib/audit";
 import { getCurrentUser } from "@/lib/auth";
 
+const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
+  if (!tipo) return false;
+  if (typeof (tipo as any)?.es_flete_falso === "boolean") {
+    return Boolean((tipo as any).es_flete_falso);
+  }
+  if (typeof (tipo as any)?.flete_en_falso === "boolean") {
+    return Boolean((tipo as any).flete_en_falso);
+  }
+  const slug = String((tipo as any)?.slug || "").toLowerCase();
+  const nombre = String((tipo as any)?.nombre || "").toLowerCase();
+  return slug === "flete-en-falso" || nombre === "flete en falso";
+};
+
+const parseMonto = (valor: any): number | undefined => {
+  if (typeof valor === "number") {
+    return Number.isFinite(valor) ? valor : 0;
+  }
+  if (typeof valor === "string") {
+    const trimmed = valor.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
+  if (!tipo) return 0;
+  if (esTipoServicioFleteFalso(tipo)) {
+    const alterno =
+      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
+    const parsedAlterno = parseMonto(alterno);
+    if (parsedAlterno !== undefined) {
+      return parsedAlterno;
+    }
+  }
+
+  const candidatos = [
+    (tipo as any)?.precio_base,
+    (tipo as any)?.pago_operador,
+    (tipo as any)?.pagoOperador,
+  ];
+
+  for (const candidato of candidatos) {
+    const parsed = parseMonto(candidato);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  return 0;
+};
+
+const encontrarTipoFleteFalso = (
+  tipos?: Array<Partial<TipoServicio>> | null,
+): Partial<TipoServicio> | undefined => {
+  return (tipos || []).find((tipo) => esTipoServicioFleteFalso(tipo));
+};
+
 export default function AsignarOperadoresPage() {
   const searchParams = useSearchParams();
   const v2Param = (searchParams?.get("v2") ?? "").toLowerCase();
@@ -1119,8 +1178,7 @@ export default function AsignarOperadoresPage() {
       try {
         const embarqueObj = embarques.find((e) => e.id === embarqueId);
         const tipoServicio = tiposServicio.find((t) => t.id === embarqueObj?.tipo_servicio_id);
-        const precioOperadorRaw = tipoServicio?.precio_base ?? 0;
-        const precioOperador = typeof precioOperadorRaw === 'number' ? precioOperadorRaw : Number(precioOperadorRaw) || 0;
+        const precioOperador = obtenerMontoTipoServicio(tipoServicio);
         // Añadir al update payload
         // (si la columna no existe en la DB, Supabase retornará un error y el update fallará)
         // Pero preferimos intentar persistir para garantizar inmutabilidad histórica.
@@ -1331,15 +1389,9 @@ export default function AsignarOperadoresPage() {
       // usar ese monto como pago_operador en el embarque
     if (modificacionData.flete_en_falso) {
         try {
-          const fleteTipo = (tiposServicio || []).find((t: any) => {
-            const slug = (t?.slug || "").toString().toLowerCase();
-            const nombre = (t?.nombre || "").toString().toLowerCase();
-            return slug === 'flete-en-falso' || nombre === 'flete en falso';
-          });
-          if (fleteTipo && (typeof (fleteTipo as any).pago_operador === 'number' || typeof (fleteTipo as any).precio_base === 'number' || (fleteTipo as any).precio_base)) {
-            const montoFalso = (typeof (fleteTipo as any).pago_operador === 'number'
-              ? Number((fleteTipo as any).pago_operador)
-              : Number((fleteTipo as any).precio_base)) || 0;
+          const fleteTipo = encontrarTipoFleteFalso(tiposServicio);
+          if (fleteTipo) {
+            const montoFalso = obtenerMontoTipoServicio(fleteTipo);
             // Establecer el pago_operador al monto definido para flete en falso
     // Requerimiento: al marcar el checkbox, el pago asignado al operador debe ser el capturado en "Precio Flete en Falso"
     updateData.pago_operador = montoFalso;
@@ -5208,12 +5260,8 @@ export default function AsignarOperadoresPage() {
                       </div>
                       {(() => {
                         try {
-                          const fleteTipo = (tiposServicio || []).find((t: any) => {
-                            const slug = (t?.slug || "").toString().toLowerCase();
-                            const nombre = (t?.nombre || "").toString().toLowerCase();
-                            return slug === 'flete-en-falso' || nombre === 'flete en falso';
-                          });
-                          const monto = fleteTipo ? Number(fleteTipo.precio_base) || 0 : null;
+                          const fleteTipo = encontrarTipoFleteFalso(tiposServicio);
+                          const monto = fleteTipo ? obtenerMontoTipoServicio(fleteTipo) : null;
                           return (
                             <p className="text-xs text-gray-600">
                               {monto != null
@@ -5322,8 +5370,7 @@ export default function AsignarOperadoresPage() {
                                     selected_tipo_servicio: value,
                                     flete_en_falso: (() => {
               const selected = (tiposServicio || []).find((t: any) => (t.id === value) || (String((t as any).slug||'').toLowerCase() === String(value).toLowerCase()));
-              const isFF = selected ? ((String(((selected as any).slug||'')).toLowerCase() === 'flete-en-falso') || (String(((selected as any).nombre||'')).toLowerCase() === 'flete en falso')) : false;
-                                      return isFF;
+                                      return esTipoServicioFleteFalso(selected);
                                     })(),
                                   }));
                                 }}
@@ -5336,8 +5383,8 @@ export default function AsignarOperadoresPage() {
                                     const tipos = Array.isArray(tiposServicio) ? [...tiposServicio] : [];
                                     // Ordenar colocando "Flete en Falso" al inicio si existe
                                     tipos.sort((a: any, b: any) => {
-                                      const aFF = String(a.slug||'').toLowerCase() === 'flete-en-falso' || String(a.nombre||'').toLowerCase() === 'flete en falso';
-                                      const bFF = String(b.slug||'').toLowerCase() === 'flete-en-falso' || String(b.nombre||'').toLowerCase() === 'flete en falso';
+                                      const aFF = esTipoServicioFleteFalso(a);
+                                      const bFF = esTipoServicioFleteFalso(b);
                                       if (aFF && !bFF) return -1;
                                       if (!aFF && bFF) return 1;
                                       return String(a.nombre||'').localeCompare(String(b.nombre||''));
@@ -5358,16 +5405,12 @@ export default function AsignarOperadoresPage() {
                               </Select>
                               {(() => {
                                 try {
-                                  const f = (tiposServicio || []).find((t: any) => {
-                                    const slug = (t?.slug || "").toString().toLowerCase();
-                                    const nombre = (t?.nombre || "").toString().toLowerCase();
-                                    return slug === 'flete-en-falso' || nombre === 'flete en falso';
-                                  });
+                                  const f = encontrarTipoFleteFalso(tiposServicio);
                                   const isSelectedFF = (() => {
                                     const sel = (tiposServicio || []).find((t: any) => (t.id === modificacionData.selected_tipo_servicio) || (String((t as any).slug||'').toLowerCase() === String(modificacionData.selected_tipo_servicio||'').toLowerCase()));
-                                    return sel ? ((String(((sel as any).slug||'')).toLowerCase() === 'flete-en-falso') || (String(((sel as any).nombre||'')).toLowerCase() === 'flete en falso')) : false;
+                                    return esTipoServicioFleteFalso(sel);
                                   })();
-                                  const monto = f ? Number(f.precio_base) || 0 : null;
+                                  const monto = f ? obtenerMontoTipoServicio(f) : null;
                                   return isSelectedFF ? (
                                     <p className="text-xs text-gray-700 mt-2">
                                       {monto != null

@@ -30,6 +30,54 @@ function formatDateMX(v: any): string {
   }
 }
 
+const esTipoServicioFleteFalso = (tipo: any): boolean => {
+  if (!tipo) return false;
+  if (typeof tipo?.es_flete_falso === "boolean") {
+    return Boolean(tipo.es_flete_falso);
+  }
+  if (typeof tipo?.flete_en_falso === "boolean") {
+    return Boolean(tipo.flete_en_falso);
+  }
+  const slug = String(tipo?.slug || "").toLowerCase();
+  const nombre = String(tipo?.nombre || "").toLowerCase();
+  return slug === "flete-en-falso" || nombre === "flete en falso";
+};
+
+const parseMonto = (valor: any): number | undefined => {
+  if (typeof valor === "number") {
+    return Number.isFinite(valor) ? valor : 0;
+  }
+  if (typeof valor === "string") {
+    const trimmed = valor.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const obtenerMontoTipoServicio = (tipo: any): number => {
+  if (!tipo) return 0;
+  if (esTipoServicioFleteFalso(tipo)) {
+    const alterno =
+      tipo?.pago_operador_flete_falso ?? tipo?.pagoOperadorFleteEnFalso;
+    const parsedAlterno = parseMonto(alterno);
+    if (parsedAlterno !== undefined) {
+      return parsedAlterno;
+    }
+  }
+
+  const candidatos = [tipo?.precio_base, tipo?.pago_operador, tipo?.pagoOperador];
+  for (const candidato of candidatos) {
+    const parsed = parseMonto(candidato);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  return 0;
+};
+
 export async function GET() {
   try {
     const supabase = getSupabaseAdmin();
@@ -51,7 +99,7 @@ export async function GET() {
 
     // Preload reference catalogs
   const [tiposServicio, clientesRaw, operadoresRaw] = await Promise.all([
-      safeSelect<any>("tipos_servicio", "id, nombre, descripcion, categoria, subcategoria, precio_base, pago_operador"),
+      safeSelect<any>("tipos_servicio", "id, nombre, descripcion, categoria, subcategoria, precio_base, pago_operador, es_flete_falso, pago_operador_flete_falso, slug"),
       safeSelect<any>("clientes", "id, nombre, rfc, telefono, email, direccion, estado, divisa_pago, empresa_facturadora, forma_facturacion, razon_social, direccion_fiscal"),
       safeSelect<any>("operadores", "id, nombre, apellidos, telefono, email, fecha_nacimiento, direccion, curp, rfc, nss, licencia, fecha_vencimiento_licencia, numero_apto_medico, fecha_vencimiento_apto_medico, numero_visa, fecha_vencimiento_visa, numero_fast, fecha_vencimiento_fast, contactos_emergencia, telefono_emergencia, observaciones, estado, fecha_registro"),
     ]);
@@ -187,8 +235,21 @@ export async function GET() {
 
     // Sheet: Tipos de Servicio
     try {
-      const headers = ["Tipo","Descripción","Categoría","Subcategoría","Pago Operador (MXN)"];
-      const rows = tiposServicio.map((t) => [t.nombre || "", t.descripcion || "", t.categoria || "General", t.subcategoria || "", (typeof t.pago_operador === 'number' ? t.pago_operador : (typeof t.precio_base === 'number' ? t.precio_base : 0))]);
+      const headers = ["Tipo","Descripción","Categoría","Subcategoría","Pago Operador (MXN)","¿Flete en Falso?","Pago Operador Flete en Falso (MXN)"];
+      const rows = tiposServicio.map((t) => {
+        const flagged = esTipoServicioFleteFalso(t);
+        const pagoActivo = obtenerMontoTipoServicio(t);
+        const pagoAlterno = parseMonto(t?.pago_operador_flete_falso);
+        return [
+          t.nombre || "",
+          t.descripcion || "",
+          t.categoria || "General",
+          t.subcategoria || "",
+          pagoActivo,
+          flagged ? "Sí" : "No",
+          flagged ? (pagoAlterno ?? pagoActivo) : "",
+        ];
+      });
       const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
       XLSX.utils.book_append_sheet(wb, ws, toSheetName("TiposServicio"));
     } catch (e) { console.warn("TiposServicio sheet error", e); }

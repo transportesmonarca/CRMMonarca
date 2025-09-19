@@ -16,6 +16,7 @@ import { toast } from "@/hooks/use-toast";
 import { DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
 import {
   Dialog,
   DialogContent,
@@ -160,6 +161,65 @@ interface EmbarqueAsignado {
   updated_at?: string;
   fecha_creacion?: string;
 }
+
+const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
+  if (!tipo) return false;
+  if (typeof (tipo as any)?.es_flete_falso === "boolean") {
+    return Boolean((tipo as any).es_flete_falso);
+  }
+  if (typeof (tipo as any)?.flete_en_falso === "boolean") {
+    return Boolean((tipo as any).flete_en_falso);
+  }
+  const slug = String((tipo as any)?.slug || "").toLowerCase();
+  const nombre = String((tipo as any)?.nombre || "").toLowerCase();
+  return slug === "flete-en-falso" || nombre === "flete en falso";
+};
+
+const parseMonto = (valor: any): number | undefined => {
+  if (typeof valor === "number") {
+    return Number.isFinite(valor) ? valor : 0;
+  }
+  if (typeof valor === "string") {
+    const trimmed = valor.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
+  if (!tipo) return 0;
+  if (esTipoServicioFleteFalso(tipo)) {
+    const alterno =
+      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
+    const parsedAlterno = parseMonto(alterno);
+    if (parsedAlterno !== undefined) {
+      return parsedAlterno;
+    }
+  }
+
+  const candidatos = [
+    (tipo as any)?.precio_base,
+    (tipo as any)?.pago_operador,
+    (tipo as any)?.pagoOperador,
+  ];
+
+  for (const candidato of candidatos) {
+    const parsed = parseMonto(candidato);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  return 0;
+};
+
+const encontrarTipoFleteFalso = (
+  tipos?: Array<Partial<TipoServicio>> | null,
+): Partial<TipoServicio> | undefined => {
+  return (tipos || []).find((tipo) => esTipoServicioFleteFalso(tipo));
+};
 
 const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
   const [modificaciones, setModificaciones] = useState<any[]>([]);
@@ -970,10 +1030,12 @@ export default function FacturacionCobranzaPage() {
         if (pagoPersistidoCont != null) {
           precioPorTipoRaw_Cont = pagoPersistidoCont;
         } else if ((embarque as any)?.flete_falso || (base as any)?.flete_en_falso) {
-          const tipoFleteFalso = (tiposServicio || []).find((t: any) => (t?.slug === 'flete-en-falso') || (String(t?.nombre || '').toLowerCase() === 'flete en falso'));
-          precioPorTipoRaw_Cont = tipoFleteFalso?.precio_base ?? 0;
+          const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
+          precioPorTipoRaw_Cont = tipoFleteFalso
+            ? obtenerMontoTipoServicio(tipoFleteFalso)
+            : 0;
         } else {
-          precioPorTipoRaw_Cont = tipoServicio?.precio_base ?? 0;
+          precioPorTipoRaw_Cont = obtenerMontoTipoServicio(tipoServicio);
         }
         // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
         if (esCancelado(embarque)) {
@@ -1032,10 +1094,12 @@ export default function FacturacionCobranzaPage() {
   if (pagoPersistido != null) {
     precioPorTipoRaw = pagoPersistido;
   } else if ((embarque as any)?.flete_falso || (base as any)?.flete_en_falso) {
-    const tipoFleteFalso = (tiposServicio || []).find((t: any) => (t?.slug === 'flete-en-falso') || (String(t?.nombre || '').toLowerCase() === 'flete en falso'));
-    precioPorTipoRaw = tipoFleteFalso?.precio_base ?? 0;
+    const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
+    precioPorTipoRaw = tipoFleteFalso
+      ? obtenerMontoTipoServicio(tipoFleteFalso)
+      : 0;
   } else {
-    precioPorTipoRaw = tipoServicio?.precio_base ?? 0;
+    precioPorTipoRaw = obtenerMontoTipoServicio(tipoServicio);
   }
 
   // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
@@ -1785,6 +1849,8 @@ export default function FacturacionCobranzaPage() {
     descripcion: "",
     categoria: "",
     subcategoria: "",
+    es_flete_falso: false,
+    pago_operador_flete_falso: 0,
   });
   const [guardandoEdicionTipo, setGuardandoEdicionTipo] = useState(false);
   const totalPagesTipos = useMemo(
@@ -1811,8 +1877,8 @@ export default function FacturacionCobranzaPage() {
         return 0;
       }
       if (tiposSortBy === 'pago') {
-        const va = Number(a.precio_base || 0);
-        const vb = Number(b.precio_base || 0);
+        const va = obtenerMontoTipoServicio(a);
+        const vb = obtenerMontoTipoServicio(b);
         return (va - vb) * dir;
       }
       return 0;
@@ -1838,6 +1904,8 @@ export default function FacturacionCobranzaPage() {
     categoria: "",
     subcategoria: "",
     precio_base: 0,
+    es_flete_falso: false,
+    pago_operador_flete_falso: 0,
   });
   const [guardandoNuevoTipo, setGuardandoNuevoTipo] = useState(false);
 
@@ -2335,6 +2403,7 @@ export default function FacturacionCobranzaPage() {
             id: "exportacion-cargada-caja-seca-240",
             nombre: "EXPORTACIÓN CARGADA - CAJA SECA 240",
             precio_base: 1800,
+            es_flete_falso: false,
             descripcion:
               "Servicio de exportación con contenedor de caja seca cargada - Zona 240",
             activo: true,
@@ -2345,6 +2414,7 @@ export default function FacturacionCobranzaPage() {
             id: "importacion-cargada-caja-seca-240",
             nombre: "IMPORTACIÓN CARGADA - CAJA SECA 240",
             precio_base: 1700,
+            es_flete_falso: false,
             descripcion:
               "Servicio de importación con contenedor de caja seca cargada - Zona 240",
             activo: true,
@@ -2355,6 +2425,7 @@ export default function FacturacionCobranzaPage() {
             id: "otro",
             nombre: "OTRO",
             precio_base: 0,
+            es_flete_falso: false,
             descripcion:
               "Servicio personalizado según necesidades específicas del cliente",
             activo: true,
@@ -2568,14 +2639,23 @@ export default function FacturacionCobranzaPage() {
     return { exceeded: false, message: "" };
   };
 
-  const guardarTipoServicio = async (tipoId: string, nuevoMonto: number) => {
+  const guardarTipoServicio = async (
+    tipoId: string,
+    nuevoMonto: number,
+    options?: { esFleteFalso?: boolean }
+  ) => {
     try {
+      const payload: any = {
+        updated_at: new Date().toISOString(),
+      };
+      if (options?.esFleteFalso) {
+        payload.pago_operador_flete_falso = nuevoMonto;
+      } else {
+        payload.precio_base = nuevoMonto;
+      }
       const { error } = await supabase
         .from("tipos_servicio")
-        .update({
-          precio_base: nuevoMonto,
-          updated_at: new Date().toISOString(),
-        })
+        .update(payload)
         .eq("id", tipoId);
 
       if (error) {
@@ -2591,7 +2671,9 @@ export default function FacturacionCobranzaPage() {
             tipo.id === tipoId
               ? {
                   ...tipo,
-                  precio_base: nuevoMonto,
+                ...(options?.esFleteFalso
+                  ? { pago_operador_flete_falso: nuevoMonto }
+                  : { precio_base: nuevoMonto }),
                 }
               : tipo
           )
@@ -2610,17 +2692,18 @@ export default function FacturacionCobranzaPage() {
     onSave,
   }: {
     tipo: TipoServicio;
-    onSave: (monto: number) => void;
+      onSave: (monto: number, options?: { esFleteFalso?: boolean }) => void;
   }) {
     const [locked, setLocked] = useState(true);
-    const [value, setValue] = useState<number>(tipo.precio_base || 0);
+    const isFleteFalso = esTipoServicioFleteFalso(tipo);
+    const [value, setValue] = useState<number>(obtenerMontoTipoServicio(tipo));
     const [saving, setSaving] = useState(false);
     const readOnly = false;
 
     useEffect(() => {
       // si el tipo cambia externamente, sincronizar el input
-      setValue(tipo.precio_base || 0);
-    }, [tipo.precio_base]);
+      setValue(obtenerMontoTipoServicio(tipo));
+    }, [tipo]);
 
     const handleSave = async () => {
       const monto = Number(value) || 0;
@@ -2644,6 +2727,11 @@ export default function FacturacionCobranzaPage() {
           onChange={(e) => setValue(Number(e.target.value))}
           className="w-28 text-right"
           disabled={locked || readOnly}
+          title={
+            isFleteFalso
+              ? "Monto a pagar cuando el embarque se marca como flete en falso"
+              : "Monto a pagar al operador para este tipo"
+          }
         />
         <Button
           size="icon"
@@ -2700,6 +2788,10 @@ export default function FacturacionCobranzaPage() {
         categoria: (nuevoTipo.categoria || "General").trim(),
         subcategoria: nuevoTipo.subcategoria.trim() || null,
         precio_base: Number(nuevoTipo.precio_base) || 0,
+        es_flete_falso: nuevoTipo.es_flete_falso,
+        pago_operador_flete_falso: nuevoTipo.es_flete_falso
+          ? Number(nuevoTipo.pago_operador_flete_falso || 0)
+          : null,
         activo: true,
         orden_display: (tiposServicio?.length || 0) + 1,
         updated_at: new Date().toISOString(),
@@ -2708,7 +2800,7 @@ export default function FacturacionCobranzaPage() {
       const { data: created, error } = await supabase
         .from("tipos_servicio")
         .insert(payload)
-        .select("id, slug, nombre, descripcion, categoria, subcategoria, precio_base, activo, orden_visualizacion, orden_display, fecha_creacion, updated_at")
+        .select("id, slug, nombre, descripcion, categoria, subcategoria, precio_base, es_flete_falso, pago_operador_flete_falso, activo, orden_visualizacion, orden_display, fecha_creacion, updated_at")
         .single();
       if (error) {
         console.error("Error creando tipo de servicio:", error);
@@ -2725,6 +2817,9 @@ export default function FacturacionCobranzaPage() {
         categoria: created.categoria,
         subcategoria: created.subcategoria || undefined,
         precio_base: created.precio_base,
+        es_flete_falso: created.es_flete_falso ?? payload.es_flete_falso ?? false,
+        pago_operador_flete_falso:
+          created.pago_operador_flete_falso ?? payload.pago_operador_flete_falso ?? undefined,
         activo: !!created.activo,
         orden_visualizacion: created.orden_visualizacion ?? created.orden_display,
         fecha_creacion: created.fecha_creacion || new Date().toISOString(),
@@ -2739,6 +2834,8 @@ export default function FacturacionCobranzaPage() {
           categoria: "",
           subcategoria: "",
           precio_base: 0,
+          es_flete_falso: false,
+          pago_operador_flete_falso: 0,
         });
         // Notificar creación en verde
         toast({ title: 'Tipo de servicio creado', description: nuevo.nombre, variant: 'success' });
@@ -2815,6 +2912,10 @@ export default function FacturacionCobranzaPage() {
       descripcion: (tipo as any).descripcion || "",
       categoria: (tipo as any).categoria || "",
       subcategoria: (tipo as any).subcategoria || "",
+      es_flete_falso: esTipoServicioFleteFalso(tipo),
+      pago_operador_flete_falso:
+        parseMonto((tipo as any)?.pago_operador_flete_falso) ??
+        (esTipoServicioFleteFalso(tipo) ? obtenerMontoTipoServicio(tipo) : 0),
     });
     setShowEditarTipoModal(true);
   };
@@ -2832,6 +2933,10 @@ export default function FacturacionCobranzaPage() {
         descripcion: editarTipo.descripcion.trim() || null,
         categoria: (editarTipo.categoria || 'General').trim(),
         subcategoria: editarTipo.subcategoria.trim() || null,
+        es_flete_falso: editarTipo.es_flete_falso,
+        pago_operador_flete_falso: editarTipo.es_flete_falso
+          ? Number(editarTipo.pago_operador_flete_falso ?? 0)
+          : null,
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
@@ -3040,16 +3145,25 @@ export default function FacturacionCobranzaPage() {
           "Categoría",
           "Subcategoría",
           "Pago Operador (MXN)",
+          "¿Flete en Falso?",
+          "Pago Base (MXN)",
         ],
       ];
 
-      const rows = (tiposServicio || []).map((t) => [
-        t.nombre || "",
-        t.descripcion || "",
-        t.categoria || "General",
-        t.subcategoria || "",
-        typeof t.precio_base === "number" ? t.precio_base : Number(t.precio_base || 0),
-      ]);
+      const rows = (tiposServicio || []).map((t) => {
+        const flagged = esTipoServicioFleteFalso(t);
+        const pagoActivo = obtenerMontoTipoServicio(t);
+        const pagoBase = parseMonto((t as any)?.precio_base);
+        return [
+          t.nombre || "",
+          t.descripcion || "",
+          t.categoria || "General",
+          t.subcategoria || "",
+          pagoActivo,
+          flagged ? "Sí" : "No",
+          pagoBase ?? "",
+        ];
+      });
 
       const data = [...headerInfo, [], ...headers, ...rows];
       const ws = XLSX.utils.aoa_to_sheet(data);
@@ -3059,7 +3173,9 @@ export default function FacturacionCobranzaPage() {
         { wch: 50 },
         { wch: 22 },
         { wch: 22 },
-        { wch: 20 },
+        { wch: 18 },
+        { wch: 14 },
+        { wch: 18 },
       ];
 
       const wb = XLSX.utils.book_new();
@@ -4636,7 +4752,7 @@ export default function FacturacionCobranzaPage() {
               }
             : { id: "", nombre: "Sin asignar" },
           tipoServicioNombre: embarque.tipo_servicio?.nombre || "Sin especificar",
-          pagoOperador: embarque.tipo_servicio?.precio_base || 0,
+          pagoOperador: obtenerMontoTipoServicio(embarque.tipo_servicio),
           fechaAsignacion: embarque.fecha_creacion,
           modificadoPorEmergencia: embarquesModificadosIds.includes(embarque.id),
         };
@@ -4649,8 +4765,10 @@ export default function FacturacionCobranzaPage() {
         if (pagoPersistido != null) {
           formattedEmbarque.pagoOperador = typeof pagoPersistido === 'number' ? pagoPersistido : (Number(pagoPersistido) || 0);
         } else if ((embarque as any)?.flete_falso) {
-          const tipoFleteFalso = (tiposServicio || []).find((t: any) => (t?.slug === 'flete-en-falso') || (String(t?.nombre || '').toLowerCase() === 'flete en falso'));
-          formattedEmbarque.pagoOperador = Number(tipoFleteFalso?.precio_base ?? 0) || 0;
+          const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
+          formattedEmbarque.pagoOperador = tipoFleteFalso
+            ? obtenerMontoTipoServicio(tipoFleteFalso)
+            : 0;
         }
 
         const mod = latestModsMap[embarque.id];
@@ -8116,16 +8234,44 @@ export default function FacturacionCobranzaPage() {
                             </span>
                           </td>
                           <td className="px-3 py-2 text-right text-gray-800 font-medium">
-                            {/* Pago Operador (MXN) */}
-                            {typeof tipo.precio_base === 'number'
-                              ? `$${tipo.precio_base.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                              : `$${Number(tipo.precio_base || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                            {(() => {
+                              const montoActivo = obtenerMontoTipoServicio(tipo);
+                              const formatted = `$${montoActivo.toLocaleString('es-MX', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}`;
+                              const flagged = esTipoServicioFleteFalso(tipo);
+                              const base = parseMonto((tipo as any)?.precio_base);
+                              return (
+                                <div className="flex flex-col items-end">
+                                  <span>{formatted}</span>
+                                  {flagged && (
+                                    <span className="mt-1 flex items-center gap-2 text-xs text-amber-700">
+                                      <Badge className="bg-amber-100 text-amber-800 border border-amber-200">
+                                        Flete en Falso
+                                      </Badge>
+                                      {base !== undefined && base !== montoActivo ? (
+                                        <span className="text-[11px] text-gray-500">
+                                          Base: $
+                                          {base.toLocaleString('es-MX', {
+                                            minimumFractionDigits: 2,
+                                            maximumFractionDigits: 2,
+                                          })}
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
                           <td className="px-3 py-2">
                             {/* Detalles column: lock + edit + save */}
                             <DetallesTipoRow
                               tipo={tipo}
-                              onSave={(nuevoMonto) => guardarTipoServicio(tipo.id, nuevoMonto)}
+                              onSave={(nuevoMonto, opts) =>
+                                guardarTipoServicio(tipo.id, nuevoMonto, opts)
+                              }
                             />
                           </td>
                           <td className="px-3 py-2 text-center">
@@ -8266,6 +8412,45 @@ export default function FacturacionCobranzaPage() {
                   min={0}
                 />
               </div>
+              <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+                <div>
+                  <Label className="text-sm font-semibold text-gray-700">¿Es tipo para Flete en Falso?</Label>
+                  <p className="text-xs text-gray-500">
+                    Activa esta opción si este registro representa el monto que se paga cuando un embarque se marca como flete en falso.
+                  </p>
+                </div>
+                <Switch
+                  checked={nuevoTipo.es_flete_falso}
+                  onCheckedChange={(checked) =>
+                    setNuevoTipo((prev) => ({
+                      ...prev,
+                      es_flete_falso: checked,
+                      pago_operador_flete_falso: checked
+                        ? prev.pago_operador_flete_falso || prev.precio_base || 0
+                        : 0,
+                    }))
+                  }
+                />
+              </div>
+              {nuevoTipo.es_flete_falso && (
+                <div>
+                  <Label>Pago Operador en Flete en Falso (MXN)</Label>
+                  <Input
+                    type="number"
+                    value={String(nuevoTipo.pago_operador_flete_falso)}
+                    onChange={(e) =>
+                      setNuevoTipo((prev) => ({
+                        ...prev,
+                        pago_operador_flete_falso: Number(e.target.value || 0),
+                      }))
+                    }
+                    min={0}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    Este monto reemplazará el pago estándar del operador cuando el embarque se marque como flete en falso.
+                  </p>
+                </div>
+              )}
             </div>
             <DialogFooter className="mt-4">
               <Button
@@ -8330,6 +8515,47 @@ export default function FacturacionCobranzaPage() {
                   />
                 </div>
               </div>
+              <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
+                <div>
+                  <Label className="text-sm font-semibold text-gray-700">¿Es tipo para Flete en Falso?</Label>
+                  <p className="text-xs text-gray-500">
+                    Al activarlo, este monto se usará cuando un embarque sea marcado como flete en falso.
+                  </p>
+                </div>
+                <Switch
+                  checked={editarTipo.es_flete_falso}
+                  onCheckedChange={(checked) =>
+                    setEditarTipo((prev) => ({
+                      ...prev,
+                      es_flete_falso: checked,
+                      pago_operador_flete_falso: checked
+                        ? prev.pago_operador_flete_falso ||
+                        parseMonto((tipoEditando as any)?.pago_operador_flete_falso) ||
+                        obtenerMontoTipoServicio(tipoEditando || undefined)
+                        : 0,
+                    }))
+                  }
+                />
+              </div>
+              {editarTipo.es_flete_falso && (
+                <div>
+                  <Label>Pago Operador en Flete en Falso (MXN)</Label>
+                  <Input
+                    type="number"
+                    value={String(editarTipo.pago_operador_flete_falso)}
+                    onChange={(e) =>
+                      setEditarTipo((prev) => ({
+                        ...prev,
+                        pago_operador_flete_falso: Number(e.target.value || 0),
+                      }))
+                    }
+                    min={0}
+                  />
+                  <p className="text-xs text-gray-500 mt-1">
+                    El pago al operador se ajustará automáticamente a este valor cuando el embarque sea flete en falso.
+                  </p>
+                </div>
+              )}
             </div>
             <DialogFooter className="mt-4">
               <Button

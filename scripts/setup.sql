@@ -428,6 +428,8 @@ CREATE TABLE IF NOT EXISTS tipos_servicio (
   nombre VARCHAR(150) NOT NULL,
   descripcion TEXT,
   precio_base NUMERIC(12,2) DEFAULT 0,
+    es_flete_falso BOOLEAN DEFAULT FALSE,
+  pago_operador_flete_falso NUMERIC(12,2),
   categoria VARCHAR(100),
   subcategoria VARCHAR(100),
   activo BOOLEAN DEFAULT TRUE,
@@ -441,6 +443,8 @@ CREATE INDEX IF NOT EXISTS idx_tipos_servicio_orden ON tipos_servicio(orden_visu
 
 -- Compatibilidad: agregar slug legible para importaciones
 ALTER TABLE tipos_servicio ADD COLUMN IF NOT EXISTS slug TEXT;
+ALTER TABLE tipos_servicio ADD COLUMN IF NOT EXISTS es_flete_falso BOOLEAN DEFAULT FALSE;
+ALTER TABLE tipos_servicio ADD COLUMN IF NOT EXISTS pago_operador_flete_falso NUMERIC(12,2);
 CREATE UNIQUE INDEX IF NOT EXISTS tipos_servicio_slug_uniq ON tipos_servicio(slug) WHERE slug IS NOT NULL;
 UPDATE tipos_servicio
 SET slug = COALESCE(slug, lower(regexp_replace(nombre, '\\s+', '-', 'g')))

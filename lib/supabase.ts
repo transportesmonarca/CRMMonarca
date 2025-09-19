@@ -99,6 +99,8 @@ export interface TipoServicio {
   nombre: string;
   descripcion?: string;
   precio_base?: number; // Este es el campo para el pago al operador
+  es_flete_falso?: boolean;
+  pago_operador_flete_falso?: number;
   categoria?: string;
   subcategoria?: string;
   activo: boolean;

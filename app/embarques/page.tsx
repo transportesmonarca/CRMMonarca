@@ -67,6 +67,59 @@ import {
   obtenerFotosEmbarque,
 } from "@/lib/supabase";
 
+const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
+  if (!tipo) return false;
+  if (typeof (tipo as any)?.es_flete_falso === "boolean") {
+    return Boolean((tipo as any).es_flete_falso);
+  }
+  if (typeof (tipo as any)?.flete_en_falso === "boolean") {
+    return Boolean((tipo as any).flete_en_falso);
+  }
+  const slug = String((tipo as any)?.slug || "").toLowerCase();
+  const nombre = String((tipo as any)?.nombre || "").toLowerCase();
+  return slug === "flete-en-falso" || nombre === "flete en falso";
+};
+
+const parseMonto = (valor: any): number | undefined => {
+  if (typeof valor === "number") {
+    return Number.isFinite(valor) ? valor : 0;
+  }
+  if (typeof valor === "string") {
+    const trimmed = valor.trim();
+    if (!trimmed) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) ? parsed : undefined;
+  }
+  return undefined;
+};
+
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
+  if (!tipo) return 0;
+  if (esTipoServicioFleteFalso(tipo)) {
+    const alterno =
+      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
+    const parsedAlterno = parseMonto(alterno);
+    if (parsedAlterno !== undefined) {
+      return parsedAlterno;
+    }
+  }
+
+  const candidatos = [
+    (tipo as any)?.precio_base,
+    (tipo as any)?.pago_operador,
+    (tipo as any)?.pagoOperador,
+  ];
+
+  for (const candidato of candidatos) {
+    const parsed = parseMonto(candidato);
+    if (parsed !== undefined) {
+      return parsed;
+    }
+  }
+
+  return 0;
+};
+
 export default function EmbarquesPage() {
   const [embarques, setEmbarques] = useState<Embarque[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
@@ -3232,7 +3285,18 @@ export default function EmbarquesPage() {
                             <p className="text-xs text-gray-500">
                               {(() => {
                                 const t = tiposServicio.find((x) => x.id === (embarque.tipo_servicio_id as any));
-                                return t && (t as any).precio_base ? `Precio base: ${(t as any).precio_base}` : null;
+                                if (!t) return null;
+                                const monto = obtenerMontoTipoServicio(t);
+                                const flagged = esTipoServicioFleteFalso(t);
+                                const base = parseMonto((t as any)?.precio_base);
+                                if (flagged) {
+                                  const detalleBase =
+                                    base !== undefined && base !== monto
+                                      ? ` (Base: $${base.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
+                                      : "";
+                                  return `Pago flete en falso: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${detalleBase}`;
+                                }
+                                return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                               })()}
                             </p>
                           </div>
