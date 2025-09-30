@@ -45,6 +45,8 @@ import {
   Eye,
   Trash,
   HelpCircle,
+  CheckCircle,
+  XCircle,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from 'next/navigation';
@@ -56,6 +58,12 @@ import {
   TipoServicio,
   obtenerFotosEmbarque,
   type FotoEmbarque,
+  type FacturaData,
+  calcularPagoOperador,
+  calcularPagoOperadorAsync,
+  obtenerPrecioFleteFalso,
+  actualizarPrecioFleteFalso,
+  actualizarFleteFalsoEmbarque,
 } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
 import { formatDateMatamoros, normalizeDate } from '@/lib/date-utils';
@@ -107,6 +115,9 @@ interface EmbarqueAsignado {
   tipo_servicio_id?: string;
   fechaArchivado?: string;
   usuarioArchivo?: string;
+  
+  // Nuevos campos JSON para facturación consolidada
+  facturas_json?: FacturaData[];
 
   // Campos y aliases que pueden venir del backend (snake_case)
   precio_flete?: number;
@@ -115,16 +126,7 @@ interface EmbarqueAsignado {
   carta_porte?: string;
   cliente_id?: string;
   load_number?: string;
-  numero_factura_1?: string;
-  numero_factura_2?: string;
-  numero_factura_3?: string;
-  numero_factura_4?: string;
-
-  // Invoice folios — pueden ser null cuando vienen desde la DB
-  folio_factura_1?: string | null;
-  folio_factura_2?: string | null;
-  folio_factura_3?: string | null;
-  folio_factura_4?: string | null;
+  // Nota: folio_factura_1-4 eliminadas - usar facturas_json
   observaciones_facturacion?: string | null;
 
   // Backend snake_case aliases used throughout the file (single declarations)
@@ -188,17 +190,14 @@ const parseMonto = (valor: any): number | undefined => {
   return undefined;
 };
 
-const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
-  if (!tipo) return 0;
-  if (esTipoServicioFleteFalso(tipo)) {
-    const alterno =
-      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
-    const parsedAlterno = parseMonto(alterno);
-    if (parsedAlterno !== undefined) {
-      return parsedAlterno;
-    }
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null, embarque?: any): number => {
+  // 🎯 FUENTE ÚNICA: Si hay embarque, SIEMPRE usar embarques.pago_operador
+  if (embarque && typeof embarque.pago_operador === 'number') {
+    return embarque.pago_operador;
   }
-
+  
+  // Fallback para casos donde solo se pasa el tipo (compatibilidad)
+  if (!tipo) return 0;
   const candidatos = [
     (tipo as any)?.precio_base,
     (tipo as any)?.pago_operador,
@@ -207,9 +206,7 @@ const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number =
 
   for (const candidato of candidatos) {
     const parsed = parseMonto(candidato);
-    if (parsed !== undefined) {
-      return parsed;
-    }
+    if (parsed !== undefined) return parsed;
   }
 
   return 0;
@@ -841,15 +838,35 @@ export default function FacturacionCobranzaPage() {
     setFechaFinAnalisis(fin.toISOString().slice(0, 10));
   };
 
-  // UX: Prefijar rango de fechas cuando se abre el modal para habilitar el botón sin pasos extra
+  // UX: Prefijar rango de fechas y generar análisis automáticamente cuando se abre el modal
   useEffect(() => {
     if (showAnalisisOperadoresModal) {
       if (!fechaInicioAnalisis || !fechaFinAnalisis) {
         setPeriodoActual(periodoAnalisis || "mes");
+      } else {
+        // Si las fechas ya están configuradas, generar análisis automáticamente
+        setTimeout(() => {
+          if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
+            generarAnalisisOperadores();
+          }
+        }, 500);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAnalisisOperadoresModal]);
+
+  // Auto-generar análisis cuando las fechas cambien (por periodo seleccionado)
+  useEffect(() => {
+    if (showAnalisisOperadoresModal && fechaInicioAnalisis && fechaFinAnalisis) {
+      if (new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
+        const timer = setTimeout(() => {
+          generarAnalisisOperadores();
+        }, 300);
+        return () => clearTimeout(timer);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechaInicioAnalisis, fechaFinAnalisis, showAnalisisOperadoresModal]);
 
   const generarAnalisisOperadores = async () => {
     // Validación: exigir rango de fechas para evitar consultas demasiado amplias
@@ -902,7 +919,7 @@ export default function FacturacionCobranzaPage() {
       let debugData: any = { todosEmbarquesCount: 0, todosEmbarquesSample: [], foundTimAll: false, embarquesFiltradosCount: 0, embarquesFiltradosSample: [], foundTimFiltered: false };
       try {
         debugData.todosEmbarquesCount = (todosEmbarques || []).length;
-        debugData.todosEmbarquesSample = (todosEmbarques || []).slice(0, 10).map((x: any) => ({ id: x.id, folio: x.folio || x.folio_factura_1 || '', operador: x.operadorAsignado?.nombre || '', operadorOriginal: x.operadorOriginalNombre || x.operadorOriginal || '' }));
+        debugData.todosEmbarquesSample = (todosEmbarques || []).slice(0, 10).map((x: any) => ({ id: x.id, folio: x.folio || '', operador: x.operadorAsignado?.nombre || '', operadorOriginal: x.operadorOriginalNombre || x.operadorOriginal || '' }));
         debugData.foundTimAll = (todosEmbarques || []).some((x: any) => String(x.folio || '').toLowerCase().includes('tim-2509-010') || String(x.folio || '').toLowerCase().includes('2509-010'));
       } catch (e) {
         // ignore
@@ -984,7 +1001,9 @@ export default function FacturacionCobranzaPage() {
       }
 
       // Construir lista para análisis: duplicar en contingencia (original y reemplazo) y NO calcular pago automático en esos casos
-      let embarquesParaAnalisis = embarquesFiltrados.flatMap((embarque) => {
+      let embarquesParaAnalisis: any[] = [];
+      
+      for (const embarque of embarquesFiltrados) {
         const tipoServicio = tiposServicio.find(
           (t) => t.id === embarque.tipo_servicio_id
         );
@@ -994,6 +1013,7 @@ export default function FacturacionCobranzaPage() {
           // Usar la fecha de creación como fecha de referencia en el análisis
           fechaAsignacion: embarque.fecha_creacion,
         };
+        
         // Enriquecer con datos de modificación (operador original y reemplazo)
         const mod = latestModsMap[embarque.id];
         if (mod) {
@@ -1021,22 +1041,10 @@ export default function FacturacionCobranzaPage() {
             nombre: operadorNombreParaAnalisis,
           };
         }
-        // Calcular un pago por defecto para el operador a partir de:
-        // 1) pago persistido en embarques.pago_operador (o alias pagoOperador)
-        // 2) si está marcado flete en falso, usar el monto del tipo de servicio 'Flete en Falso'
-        // 3) en otro caso, usar el precio_base del tipo del embarque
-        const pagoPersistidoCont = (embarque as any)?.pago_operador ?? (embarque as any)?.pagoOperador;
-        let precioPorTipoRaw_Cont: any;
-        if (pagoPersistidoCont != null) {
-          precioPorTipoRaw_Cont = pagoPersistidoCont;
-        } else if ((embarque as any)?.flete_falso || (base as any)?.flete_en_falso) {
-          const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
-          precioPorTipoRaw_Cont = tipoFleteFalso
-            ? obtenerMontoTipoServicio(tipoFleteFalso)
-            : 0;
-        } else {
-          precioPorTipoRaw_Cont = obtenerMontoTipoServicio(tipoServicio);
-        }
+        
+        // Calcular un pago por defecto para el operador usando la función centralizada ASÍNCRONA
+        let precioPorTipoRaw_Cont = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+        
         // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
         if (esCancelado(embarque)) {
           precioPorTipoRaw_Cont = 0;
@@ -1049,7 +1057,7 @@ export default function FacturacionCobranzaPage() {
           (embarque as any).modificadoPorEmergencia || embarquesModificadosIds.includes(embarque.id)
         );
 
-  if (esContingencia) {
+        if (esContingencia) {
           const duplicados: any[] = [];
           const nombreOriginal =
             base.operadorOriginalNombre ||
@@ -1080,37 +1088,25 @@ export default function FacturacionCobranzaPage() {
               rolContingencia: "reemplazo",
             });
           }
-          return duplicados.length
-            ? duplicados
-            : [{ ...base, pagoOperador: 0, modificadoPorEmergencia: true }];
+          
+          // Agregar los duplicados al array final
+          embarquesParaAnalisis.push(...(duplicados.length 
+            ? duplicados 
+            : [{ ...base, pagoOperador: 0, modificadoPorEmergencia: true }]));
+        } else {
+          // Caso normal: usar la función centralizada ASÍNCRONA para calcular el pago al operador
+          let precioPorTipoRaw = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+
+          // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
+          if (esCancelado(embarque)) {
+            precioPorTipoRaw = 0;
+          }
+
+          const precioPorTipo = typeof precioPorTipoRaw === 'number' ? precioPorTipoRaw : Number(precioPorTipoRaw) || 0;
+
+          embarquesParaAnalisis.push({ ...base, pagoOperador: precioPorTipo });
         }
-
-  // Caso normal: preferir un valor persistido en el embarque (pago_operador)
-  // para garantizar inmutabilidad histórica. Si no existe y el embarque está marcado
-  // como flete en falso, usar el precio configurado en tipos_servicio para 'flete en falso'.
-  // Si tampoco aplica, caer al precio_base del tipo de servicio del embarque.
-  const pagoPersistido = (embarque as any)?.pago_operador ?? (embarque as any)?.pagoOperador;
-  let precioPorTipoRaw: any;
-  if (pagoPersistido != null) {
-    precioPorTipoRaw = pagoPersistido;
-  } else if ((embarque as any)?.flete_falso || (base as any)?.flete_en_falso) {
-    const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
-    precioPorTipoRaw = tipoFleteFalso
-      ? obtenerMontoTipoServicio(tipoFleteFalso)
-      : 0;
-  } else {
-    precioPorTipoRaw = obtenerMontoTipoServicio(tipoServicio);
-  }
-
-  // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
-  if (esCancelado(embarque)) {
-    precioPorTipoRaw = 0;
-  }
-
-  const precioPorTipo = typeof precioPorTipoRaw === 'number' ? precioPorTipoRaw : Number(precioPorTipoRaw) || 0;
-
-  return [{ ...base, pagoOperador: precioPorTipo }];
-      });
+      }
 
       // Filtro por operador después de duplicar por contingencia
       if (filtroAnalisisOperador !== "todos") {
@@ -1831,6 +1827,16 @@ export default function FacturacionCobranzaPage() {
   // Modal para crear nuevo tipo de servicio
   const [showCrearTipoModal, setShowCrearTipoModal] = useState(false);
   const [showTiposInfo, setShowTiposInfo] = useState(false);
+  
+  // Estado para búsqueda de tipos de servicio
+  const [searchTipos, setSearchTipos] = useState("");
+  // Estados para validación de eliminación
+  const [tipoValidationInfo, setTipoValidationInfo] = useState<{[key: string]: {canDelete: boolean, reason: string, embarquesCount: number}} | null>(null);
+  const [loadingValidation, setLoadingValidation] = useState(false);
+  // Modal para configurar flete falso
+  const [showConfigurarFleteModal, setShowConfigurarFleteModal] = useState(false);
+  const [precioFleteFalso, setPrecioFleteFalso] = useState<string>('800.00');
+  const [guardandoPrecioFlete, setGuardandoPrecioFlete] = useState(false);
   const [itemsPerPageTipos, setItemsPerPageTipos] = useState(5);
   const [currentPageTipos, setCurrentPageTipos] = useState(1);
   // Ordenamiento para la tabla de Tipos de Servicio
@@ -1850,16 +1856,32 @@ export default function FacturacionCobranzaPage() {
     categoria: "",
     subcategoria: "",
     es_flete_falso: false,
-    pago_operador_flete_falso: 0,
   });
   const [guardandoEdicionTipo, setGuardandoEdicionTipo] = useState(false);
+  // Filtrar tipos de servicio por búsqueda
+  const tiposFiltrados = useMemo(() => {
+    if (!Array.isArray(tiposServicio)) return [];
+    
+    if (!searchTipos.trim()) {
+      return tiposServicio;
+    }
+    
+    const searchLower = searchTipos.toLowerCase().trim();
+    return tiposServicio.filter((tipo: any) => 
+      String(tipo.nombre || '').toLowerCase().includes(searchLower) ||
+      String(tipo.descripcion || '').toLowerCase().includes(searchLower) ||
+      String(tipo.categoria || '').toLowerCase().includes(searchLower) ||
+      String(tipo.subcategoria || '').toLowerCase().includes(searchLower)
+    );
+  }, [tiposServicio, searchTipos]);
+
   const totalPagesTipos = useMemo(
-    () => Math.max(1, Math.ceil((tiposServicio?.length || 0) / itemsPerPageTipos)),
-    [tiposServicio, itemsPerPageTipos]
+    () => Math.max(1, Math.ceil((tiposFiltrados?.length || 0) / itemsPerPageTipos)),
+    [tiposFiltrados, itemsPerPageTipos]
   );
   const paginatedTipos = useMemo(() => {
-    // Ordenar copia de tiposServicio según estado de orden
-    const todos = Array.isArray(tiposServicio) ? [...tiposServicio] : [];
+    // Ordenar copia de tiposFiltrados según estado de orden
+    const todos = [...tiposFiltrados];
     todos.sort((a: any, b: any) => {
       const dir = tiposSortDir === 'asc' ? 1 : -1;
       if (tiposSortBy === 'tipo') {
@@ -1886,7 +1908,7 @@ export default function FacturacionCobranzaPage() {
 
     const start = (currentPageTipos - 1) * itemsPerPageTipos;
     return todos.slice(start, start + itemsPerPageTipos);
-  }, [tiposServicio, currentPageTipos, itemsPerPageTipos]);
+  }, [tiposFiltrados, currentPageTipos, itemsPerPageTipos, tiposSortBy, tiposSortDir]);
   useEffect(() => {
     // Si cambia el total de páginas y la actual queda fuera de rango, ajusta
     if (currentPageTipos > totalPagesTipos) {
@@ -1894,10 +1916,10 @@ export default function FacturacionCobranzaPage() {
     }
   }, [totalPagesTipos]);
 
-  // Resetear página cuando cambie orden de tipos
+  // Resetear página cuando cambie orden de tipos o búsqueda
   useEffect(() => {
     setCurrentPageTipos(1);
-  }, [tiposSortBy, tiposSortDir, itemsPerPageTipos]);
+  }, [tiposSortBy, tiposSortDir, itemsPerPageTipos, searchTipos]);
   const [nuevoTipo, setNuevoTipo] = useState({
     nombre: "",
     descripcion: "",
@@ -1905,7 +1927,6 @@ export default function FacturacionCobranzaPage() {
     subcategoria: "",
     precio_base: 0,
     es_flete_falso: false,
-    pago_operador_flete_falso: 0,
   });
   const [guardandoNuevoTipo, setGuardandoNuevoTipo] = useState(false);
 
@@ -1914,22 +1935,12 @@ export default function FacturacionCobranzaPage() {
     useState<EmbarqueAsignado | null>(null);
   const [savingFacturacion, setSavingFacturacion] = useState(false);
   const [facturacionData, setFacturacionData] = useState({
-    numeroFactura1: "",
-    numeroFactura2: "",
-    numeroFactura3: "",
-  numeroFactura4: "",
-  fechaEnvioCliente1: "",
-  fechaEnvioCliente2: "",
-  fechaEnvioCliente3: "",
-  fechaEnvioCliente4: "",
-  fechaPagoCliente1: "",
-  fechaPagoCliente2: "",
-  fechaPagoCliente3: "",
-  fechaPagoCliente4: "",
-  referenciaPago1: "",
-  referenciaPago2: "",
-  referenciaPago3: "",
-  referenciaPago4: "",
+    facturas: [
+      { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+      { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+      { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+      { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" }
+    ] as FacturaData[],
     observacionesFacturacion: "",
   });
 
@@ -2286,10 +2297,7 @@ export default function FacturacionCobranzaPage() {
                     modelo: "",
                     numeroEconomico: "",
                   },
-              folio_factura_1: embarque.folio_factura_1,
-              folio_factura_2: embarque.folio_factura_2,
-              folio_factura_3: embarque.folio_factura_3,
-              folio_factura_4: embarque.folio_factura_4,
+              // Columnas legacy eliminadas - usar facturas_json
               fecha_envio_cliente: embarque.fecha_envio_cliente,
               fecha_pago: embarque.fecha_pago,
               referencia_pago: embarque.referencia_pago,
@@ -2395,7 +2403,13 @@ export default function FacturacionCobranzaPage() {
       setLoadingTiposServicio(true);
       try {
         const tiposData = await obtenerTiposServicio();
-        if (mounted.current) setTiposServicio(tiposData || []);
+        if (mounted.current) {
+          setTiposServicio(tiposData || []);
+          // Validar automáticamente qué tipos se pueden eliminar
+          if ((tiposData || []).length > 0) {
+            setTimeout(() => validateTiposServicioForDeletion(), 500);
+          }
+        }
       } catch (error) {
         console.error("Error loading tipos de servicio:", error);
         const tiposDefault: TipoServicio[] = [
@@ -2433,7 +2447,11 @@ export default function FacturacionCobranzaPage() {
             updated_at: new Date().toISOString(),
           },
         ];
-        if (mounted.current) setTiposServicio(tiposDefault);
+        if (mounted.current) {
+          setTiposServicio(tiposDefault);
+          // Validar automáticamente qué tipos se pueden eliminar
+          setTimeout(() => validateTiposServicioForDeletion(), 500);
+        }
       } finally {
         if (mounted.current) setLoadingTiposServicio(false);
       }
@@ -2641,18 +2659,10 @@ export default function FacturacionCobranzaPage() {
 
   const guardarTipoServicio = async (
     tipoId: string,
-    nuevoMonto: number,
-    options?: { esFleteFalso?: boolean }
+    nuevoMonto: number
   ) => {
     try {
-      const payload: any = {
-        updated_at: new Date().toISOString(),
-      };
-      if (options?.esFleteFalso) {
-        payload.pago_operador_flete_falso = nuevoMonto;
-      } else {
-        payload.precio_base = nuevoMonto;
-      }
+      const payload: any = { precio_base: nuevoMonto, updated_at: new Date().toISOString() };
       const { error } = await supabase
         .from("tipos_servicio")
         .update(payload)
@@ -2666,18 +2676,7 @@ export default function FacturacionCobranzaPage() {
       }
 
       if (mounted.current) {
-        setTiposServicio((prev) =>
-          prev.map((tipo) =>
-            tipo.id === tipoId
-              ? {
-                  ...tipo,
-                ...(options?.esFleteFalso
-                  ? { pago_operador_flete_falso: nuevoMonto }
-                  : { precio_base: nuevoMonto }),
-                }
-              : tipo
-          )
-        );
+        setTiposServicio((prev) => prev.map((tipo) => tipo.id === tipoId ? { ...tipo, precio_base: nuevoMonto } : tipo));
       }
     } catch (error) {
       console.error("Error:", error);
@@ -2692,10 +2691,10 @@ export default function FacturacionCobranzaPage() {
     onSave,
   }: {
     tipo: TipoServicio;
-      onSave: (monto: number, options?: { esFleteFalso?: boolean }) => void;
+      onSave: (monto: number) => void;
   }) {
     const [locked, setLocked] = useState(true);
-    const isFleteFalso = esTipoServicioFleteFalso(tipo);
+  const isFleteFalso = esTipoServicioFleteFalso(tipo);
     const [value, setValue] = useState<number>(obtenerMontoTipoServicio(tipo));
     const [saving, setSaving] = useState(false);
     const readOnly = false;
@@ -2727,11 +2726,7 @@ export default function FacturacionCobranzaPage() {
           onChange={(e) => setValue(Number(e.target.value))}
           className="w-28 text-right"
           disabled={locked || readOnly}
-          title={
-            isFleteFalso
-              ? "Monto a pagar cuando el embarque se marca como flete en falso"
-              : "Monto a pagar al operador para este tipo"
-          }
+          title={"Monto a pagar al operador para este tipo"}
         />
         <Button
           size="icon"
@@ -2788,10 +2783,6 @@ export default function FacturacionCobranzaPage() {
         categoria: (nuevoTipo.categoria || "General").trim(),
         subcategoria: nuevoTipo.subcategoria.trim() || null,
         precio_base: Number(nuevoTipo.precio_base) || 0,
-        es_flete_falso: nuevoTipo.es_flete_falso,
-        pago_operador_flete_falso: nuevoTipo.es_flete_falso
-          ? Number(nuevoTipo.pago_operador_flete_falso || 0)
-          : null,
         activo: true,
         orden_display: (tiposServicio?.length || 0) + 1,
         updated_at: new Date().toISOString(),
@@ -2800,7 +2791,7 @@ export default function FacturacionCobranzaPage() {
       const { data: created, error } = await supabase
         .from("tipos_servicio")
         .insert(payload)
-        .select("id, slug, nombre, descripcion, categoria, subcategoria, precio_base, es_flete_falso, pago_operador_flete_falso, activo, orden_visualizacion, orden_display, fecha_creacion, updated_at")
+  .select("id, slug, nombre, descripcion, categoria, subcategoria, precio_base, activo, orden_visualizacion, orden_display, fecha_creacion, updated_at")
         .single();
       if (error) {
         console.error("Error creando tipo de servicio:", error);
@@ -2817,9 +2808,7 @@ export default function FacturacionCobranzaPage() {
         categoria: created.categoria,
         subcategoria: created.subcategoria || undefined,
         precio_base: created.precio_base,
-        es_flete_falso: created.es_flete_falso ?? payload.es_flete_falso ?? false,
-        pago_operador_flete_falso:
-          created.pago_operador_flete_falso ?? payload.pago_operador_flete_falso ?? undefined,
+        // Campos eliminados: es_flete_falso, pago_operador_flete_falso
         activo: !!created.activo,
         orden_visualizacion: created.orden_visualizacion ?? created.orden_display,
         fecha_creacion: created.fecha_creacion || new Date().toISOString(),
@@ -2828,17 +2817,11 @@ export default function FacturacionCobranzaPage() {
       if (mounted.current) {
         setTiposServicio((prev) => [...prev, nuevo]);
         setShowCrearTipoModal(false);
-        setNuevoTipo({
-          nombre: "",
-          descripcion: "",
-          categoria: "",
-          subcategoria: "",
-          precio_base: 0,
-          es_flete_falso: false,
-          pago_operador_flete_falso: 0,
-        });
+        setNuevoTipo({ nombre: "", descripcion: "", categoria: "", subcategoria: "", precio_base: 0, es_flete_falso: false });
         // Notificar creación en verde
         toast({ title: 'Tipo de servicio creado', description: nuevo.nombre, variant: 'success' });
+        // Re-validar automáticamente después de crear
+        setTimeout(() => validateTiposServicioForDeletion(), 1000);
       }
     } catch (e) {
       console.error(e);
@@ -2861,6 +2844,102 @@ export default function FacturacionCobranzaPage() {
     );
     setConfirmDialogOpen(true);
   };
+
+  // =======================
+  // FUNCIONES FLETE FALSO
+  // =======================
+
+  // Helper para formatear precio en estilo mexicano
+  const formatearPrecioMexicano = (num: number): string => {
+    return num.toLocaleString('es-MX', { 
+      minimumFractionDigits: 2, 
+      maximumFractionDigits: 2 
+    });
+  };
+
+  // Helper para parsear precio mexicano a número
+  const parsearPrecioMexicano = (str: string): number => {
+    // Remover comas y convertir a número
+    const cleaned = str.replace(/,/g, '');
+    return Number(cleaned);
+  };
+
+  // Reemplazar cargarPrecioFleteFalso para usar API server-side
+  const cargarPrecioFleteFalso = async () => {
+    try {
+      const res = await fetch('/api/config/flete-falso', { cache: 'no-store' });
+      if (!res.ok) throw new Error('API no ok');
+      const json = await res.json();
+      const precio = Number(json?.precio);
+      setPrecioFleteFalso(!isNaN(precio) ? formatearPrecioMexicano(precio) : '800.00');
+    } catch (error) {
+      console.warn('No se pudo cargar precio global, usando 800.00');
+      setPrecioFleteFalso('800.00');
+    }
+  };
+
+  // Reemplazar guardarPrecioFleteFalso para usar API server-side
+  const guardarPrecioFleteFalso = async () => {
+    if (guardandoPrecioFlete) return;
+
+    const precio = parsearPrecioMexicano(precioFleteFalso);
+    if (isNaN(precio) || precio <= 0) {
+      toast({
+        title: 'Error',
+        description: 'El precio debe ser un número mayor a 0',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setGuardandoPrecioFlete(true);
+    try {
+      const res = await fetch('/api/config/flete-falso', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ precio, usuario: 'usuario' }),
+      });
+      
+      const data = await res.json();
+      
+      if (!res.ok) {
+        const errorMsg = data?.error || 'Error desconocido';
+        const errorDetails = data?.details || data;
+        console.error('Error detallado al guardar:', errorDetails);
+        
+        // Si la tabla no existe, sugerir ejecutar el script
+        if (errorMsg.includes('does not exist') || errorMsg.includes('no existe')) {
+          throw new Error('La tabla configuracion_sistema no existe. Ejecuta el script 107-crear-configuracion-sistema.sql en Supabase.');
+        }
+        
+        throw new Error(errorMsg);
+      }
+
+      toast({
+        title: 'Precio actualizado',
+        description: `El precio de flete en falso ahora es $${formatearPrecioMexicano(precio)}`,
+        variant: 'success',
+      });
+      setShowConfigurarFleteModal(false);
+    } catch (error) {
+      console.error('Error guardando precio flete falso:', error);
+      const errorMessage = error instanceof Error ? error.message : 'No se pudo guardar el precio. Intenta de nuevo.';
+      toast({
+        title: 'Error al guardar',
+        description: errorMessage,
+        variant: 'destructive',
+      });
+    } finally {
+      setGuardandoPrecioFlete(false);
+    }
+  };
+
+  // Cargar precio cuando se abre el modal
+  useEffect(() => {
+    if (showConfigurarFleteModal) {
+      cargarPrecioFleteFalso();
+    }
+  }, [showConfigurarFleteModal]);
 
   // Cargar embarques que usan este tipo (activos para facturación: estado_facturacion != archivado o null)
   const cargarUsosTipo = async (tipo: TipoServicio) => {
@@ -2912,10 +2991,7 @@ export default function FacturacionCobranzaPage() {
       descripcion: (tipo as any).descripcion || "",
       categoria: (tipo as any).categoria || "",
       subcategoria: (tipo as any).subcategoria || "",
-      es_flete_falso: esTipoServicioFleteFalso(tipo),
-      pago_operador_flete_falso:
-        parseMonto((tipo as any)?.pago_operador_flete_falso) ??
-        (esTipoServicioFleteFalso(tipo) ? obtenerMontoTipoServicio(tipo) : 0),
+      es_flete_falso: false,
     });
     setShowEditarTipoModal(true);
   };
@@ -2933,10 +3009,6 @@ export default function FacturacionCobranzaPage() {
         descripcion: editarTipo.descripcion.trim() || null,
         categoria: (editarTipo.categoria || 'General').trim(),
         subcategoria: editarTipo.subcategoria.trim() || null,
-        es_flete_falso: editarTipo.es_flete_falso,
-        pago_operador_flete_falso: editarTipo.es_flete_falso
-          ? Number(editarTipo.pago_operador_flete_falso ?? 0)
-          : null,
         updated_at: new Date().toISOString(),
       };
       const { error } = await supabase
@@ -2986,10 +3058,97 @@ export default function FacturacionCobranzaPage() {
       }
       // Notificar como eliminación lógica
       toast({ title: 'Tipo de servicio eliminado', description: 'Se desactivó y ocultó. Embarques existentes no se modifican.', variant: 'destructive' });
+      // Re-validar automáticamente después de desactivar
+      setTimeout(() => validateTiposServicioForDeletion(), 1000);
     } catch (e) {
       console.error("Error inesperado desactivando tipo:", e);
       toast({ title: 'Error inesperado', description: String((e as any)?.message || ''), variant: 'destructive' });
   toast({ title: 'Error inesperado', description: String((e as any)?.message || ''), variant: 'default' });
+    }
+  };
+
+  // Función para validar qué tipos de servicios se pueden eliminar
+  const validateTiposServicioForDeletion = async () => {
+    if (!tiposServicio.length) return;
+    
+    setLoadingValidation(true);
+    const validationInfo: {[key: string]: {canDelete: boolean, reason: string, embarquesCount: number}} = {};
+    
+    try {
+      for (const tipo of tiposServicio) {
+        try {
+          // Verificar referencias en múltiples tablas
+          const checks = await Promise.all([
+            // Tabla principal embarques
+            supabase.from('embarques')
+              .select('id', { count: 'exact', head: true })
+              .eq('tipo_servicio_id', tipo.id)
+              .neq('estado', 'cancelado'),
+            
+            // Tabla embarques_servicios (nueva estructura)
+            supabase.from('embarques_servicios')
+              .select('id', { count: 'exact', head: true })
+              .eq('tipo_servicio_id', tipo.id),
+              
+            // Tabla embarques_financiero (nueva estructura)
+            supabase.from('embarques_financiero')
+              .select('id', { count: 'exact', head: true })
+              .eq('tipo_servicio_id', tipo.id)
+          ]);
+
+          const embarquesCount = (checks[0].count || 0);
+          const serviciosCount = (checks[1].count || 0);
+          const financieroCount = (checks[2].count || 0);
+          const totalReferences = embarquesCount + serviciosCount + financieroCount;
+
+          if (totalReferences > 0) {
+            let reason = '';
+            if (embarquesCount > 0) reason += `${embarquesCount} embarque(s) activos`;
+            if (serviciosCount > 0) reason += `${reason ? ', ' : ''}${serviciosCount} servicio(s) configurados`;
+            if (financieroCount > 0) reason += `${reason ? ', ' : ''}${financieroCount} registro(s) financieros`;
+            
+            validationInfo[tipo.id] = {
+              canDelete: false,
+              reason: `En uso por ${reason}`,
+              embarquesCount: totalReferences
+            };
+          } else {
+            // Verificar si es el único tipo activo
+            const activeTipos = tiposServicio.filter(t => t.activo && t.id !== tipo.id);
+            if (activeTipos.length === 0) {
+              validationInfo[tipo.id] = {
+                canDelete: false,
+                reason: 'Es el único tipo de servicio activo',
+                embarquesCount: 0
+              };
+            } else {
+              validationInfo[tipo.id] = {
+                canDelete: true,
+                reason: 'Sin referencias, se puede eliminar',
+                embarquesCount: 0
+              };
+            }
+          }
+        } catch (error) {
+          console.error(`Error validando tipo ${tipo.nombre}:`, error);
+          validationInfo[tipo.id] = {
+            canDelete: false,
+            reason: 'Error al verificar referencias',
+            embarquesCount: 0
+          };
+        }
+      }
+      
+      setTipoValidationInfo(validationInfo);
+    } catch (error) {
+      console.error('Error general en validación:', error);
+      toast({ 
+        title: 'Error validando tipos de servicio', 
+        description: 'No se pudo verificar qué tipos se pueden eliminar',
+        variant: 'destructive' 
+      });
+    } finally {
+      setLoadingValidation(false);
     }
   };
 
@@ -3093,6 +3252,8 @@ export default function FacturacionCobranzaPage() {
       }
 
       toast({ title: 'Tipo de servicio eliminado', variant: 'destructive' });
+      // Re-validar automáticamente después de eliminar
+      setTimeout(() => validateTiposServicioForDeletion(), 1000);
     } catch (e) {
       const estr = typeof e === 'object' ? JSON.stringify(e) : String(e);
       console.error('Error inesperado al eliminar tipo de servicio:', estr, e);
@@ -3201,9 +3362,7 @@ export default function FacturacionCobranzaPage() {
       fechaPago: embarque.fechaPago || "",
       estado_facturacion:
         embarque.estado_facturacion || "pendiente_facturacion",
-      numeroFactura1: embarque.numero_factura_1 || "",
-      numeroFactura2: embarque.numero_factura_2 || "",
-      numeroFactura3: embarque.numero_factura_3 || "",
+      // Legacy: usar facturas_json en su lugar
       fechaEnvioCliente: embarque.fechaEnvioCliente || "",
       referenciaPago: embarque.referenciaPago || "",
     });
@@ -3230,9 +3389,7 @@ export default function FacturacionCobranzaPage() {
           pagado: formData.pagado,
           fecha_pago: formData.fechaPago || null,
           estado_facturacion: formData.estado_facturacion,
-          numero_factura_1: formData.numeroFactura1 || null,
-          numero_factura_2: formData.numeroFactura2 || null,
-          numero_factura_3: formData.numeroFactura3 || null,
+          // Legacy columns removed - usar facturas_json
           fecha_envio_cliente: formData.fechaEnvioCliente || null,
           referencia_pago: formData.referenciaPago || null,
           updated_at: new Date().toISOString(),
@@ -3299,46 +3456,51 @@ export default function FacturacionCobranzaPage() {
 
   const abrirModalFacturacion = (embarque: EmbarqueAsignado) => {
     setEmbarqueFacturacion(embarque);
+    
+    // Usar datos JSON (única fuente de verdad después de la migración)
+    const facturas: FacturaData[] = [];
+    
+    if (embarque.facturas_json && embarque.facturas_json.length > 0) {
+      // Usar datos JSON existentes
+      facturas.push(...embarque.facturas_json);
+    } else {
+      // Fallback para datos legacy en foliosFactura (compatibilidad temporal)
+      const legacyData = [
+        {
+          numero: embarque.foliosFactura?.folio1 || "",
+          fecha_envio: (embarque as any).fecha_envio_cliente || "",
+          fecha_pago: (embarque as any).fecha_pago || "",
+          referencia: (embarque as any).referencia_pago || ""
+        },
+        {
+          numero: embarque.foliosFactura?.folio2 || "",
+          fecha_envio: "",
+          fecha_pago: "",
+          referencia: ""
+        },
+        {
+          numero: embarque.foliosFactura?.folio3 || "",
+          fecha_envio: "",
+          fecha_pago: "",
+          referencia: ""
+        },
+        {
+          numero: embarque.foliosFactura?.folio4 || "",
+          fecha_envio: "",
+          fecha_pago: "",
+          referencia: ""
+        }
+      ];
+      facturas.push(...legacyData.filter(f => f.numero.trim() !== ""));
+    }
+    
+    // Rellenar hasta 4 elementos si es necesario
+    while (facturas.length < 4) {
+      facturas.push({ numero: "", fecha_envio: "", fecha_pago: "", referencia: "" });
+    }
+    
     setFacturacionData({
-      numeroFactura1:
-        embarque.foliosFactura?.folio1 ||
-        (embarque as any).folio_factura_1 ||
-        (embarque as any).numero_factura_1 ||
-        "",
-      numeroFactura2:
-        embarque.foliosFactura?.folio2 ||
-        (embarque as any).folio_factura_2 ||
-        (embarque as any).numero_factura_2 ||
-        "",
-      numeroFactura3:
-        embarque.foliosFactura?.folio3 ||
-        (embarque as any).folio_factura_3 ||
-        (embarque as any).numero_factura_3 ||
-        "",
-      numeroFactura4:
-        embarque.foliosFactura?.folio4 ||
-        (embarque as any).folio_factura_4 ||
-        (embarque as any).numero_factura_4 ||
-        "",
-      fechaEnvioCliente1:
-        (embarque as any).fecha_envio_cliente_1 ||
-        (embarque as any).fecha_envio_cliente ||
-        "",
-      fechaEnvioCliente2: (embarque as any).fecha_envio_cliente_2 || "",
-      fechaEnvioCliente3: (embarque as any).fecha_envio_cliente_3 || "",
-      fechaEnvioCliente4: (embarque as any).fecha_envio_cliente_4 || "",
-      fechaPagoCliente1:
-        (embarque as any).fecha_pago_1 || (embarque as any).fecha_pago || "",
-      fechaPagoCliente2: (embarque as any).fecha_pago_2 || "",
-      fechaPagoCliente3: (embarque as any).fecha_pago_3 || "",
-      fechaPagoCliente4: (embarque as any).fecha_pago_4 || "",
-      referenciaPago1:
-        (embarque as any).referencia_pago_1 ||
-        (embarque as any).referencia_pago ||
-        "",
-      referenciaPago2: (embarque as any).referencia_pago_2 || "",
-      referenciaPago3: (embarque as any).referencia_pago_3 || "",
-      referenciaPago4: (embarque as any).referencia_pago_4 || "",
+      facturas: facturas.slice(0, 4), // Asegurar máximo 4 facturas
       observacionesFacturacion:
         (embarque as any).observaciones_facturacion ||
         embarque.observacionesFacturacion ||
@@ -3360,52 +3522,27 @@ export default function FacturacionCobranzaPage() {
       }
 
       setSavingFacturacion(true);
-      // Tomar el primer valor no vacío para columnas legadas
-      const firstEnvio =
-        (facturacionData.fechaEnvioCliente1 ||
-          facturacionData.fechaEnvioCliente2 ||
-          facturacionData.fechaEnvioCliente3 ||
-          facturacionData.fechaEnvioCliente4 ||
-          "") || null;
-      const firstPago =
-        (facturacionData.fechaPagoCliente1 ||
-          facturacionData.fechaPagoCliente2 ||
-          facturacionData.fechaPagoCliente3 ||
-          facturacionData.fechaPagoCliente4 ||
-          "") || null;
-      const firstRef =
-        (facturacionData.referenciaPago1 ||
-          facturacionData.referenciaPago2 ||
-          facturacionData.referenciaPago3 ||
-          facturacionData.referenciaPago4 ||
-          "") || null;
+      // Filtrar facturas con datos para crear JSON
+      const facturasConDatos = facturacionData.facturas.filter(f => 
+        f.numero && f.numero.trim() !== ""
+      );
+      
+      // Tomar el primer valor no vacío para columnas legadas (compatibilidad)
+      const firstFactura = facturasConDatos[0];
+      const firstEnvio = firstFactura?.fecha_envio || null;
+      const firstPago = firstFactura?.fecha_pago || null;
+      const firstRef = firstFactura?.referencia || null;
 
       const { error } = await supabase
         .from("embarques")
         .update({
-          folio_factura_1: facturacionData.numeroFactura1 || null,
-          folio_factura_2: facturacionData.numeroFactura2 || null,
-          folio_factura_3: facturacionData.numeroFactura3 || null,
-          folio_factura_4: facturacionData.numeroFactura4 || null,
-          // Nuevas columnas por factura
-          fecha_envio_cliente_1: facturacionData.fechaEnvioCliente1 || null,
-          fecha_envio_cliente_2: facturacionData.fechaEnvioCliente2 || null,
-          fecha_envio_cliente_3: facturacionData.fechaEnvioCliente3 || null,
-          fecha_envio_cliente_4: facturacionData.fechaEnvioCliente4 || null,
-          fecha_pago_1: facturacionData.fechaPagoCliente1 || null,
-          fecha_pago_2: facturacionData.fechaPagoCliente2 || null,
-          fecha_pago_3: facturacionData.fechaPagoCliente3 || null,
-          fecha_pago_4: facturacionData.fechaPagoCliente4 || null,
-          referencia_pago_1: facturacionData.referenciaPago1 || null,
-          referencia_pago_2: facturacionData.referenciaPago2 || null,
-          referencia_pago_3: facturacionData.referenciaPago3 || null,
-          referencia_pago_4: facturacionData.referenciaPago4 || null,
-          // Mantener columnas legadas para compatibilidad
+          // Único campo JSON (después de la migración)
+          facturas_json: facturasConDatos,
+          // Mantener columnas principales para compatibilidad con otras vistas
           fecha_envio_cliente: firstEnvio,
           fecha_pago: firstPago,
           referencia_pago: firstRef,
-          observaciones_facturacion:
-            obs || null,
+          observaciones_facturacion: obs || null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", embarqueFacturacion.id);
@@ -3421,25 +3558,15 @@ export default function FacturacionCobranzaPage() {
         embarque.id === embarqueFacturacion.id
           ? {
               ...embarque,
+              facturas_json: facturasConDatos,
+              // Actualizar foliosFactura para compatibilidad con otras partes del código
               foliosFactura: {
-                folio1: facturacionData.numeroFactura1,
-                folio2: facturacionData.numeroFactura2,
-                folio3: facturacionData.numeroFactura3,
-                folio4: facturacionData.numeroFactura4,
+                folio1: facturasConDatos[0]?.numero || "",
+                folio2: facturasConDatos[1]?.numero || "",
+                folio3: facturasConDatos[2]?.numero || "",
+                folio4: facturasConDatos[3]?.numero || "",
               },
-              fecha_envio_cliente_1: facturacionData.fechaEnvioCliente1,
-              fecha_envio_cliente_2: facturacionData.fechaEnvioCliente2,
-              fecha_envio_cliente_3: facturacionData.fechaEnvioCliente3,
-              fecha_envio_cliente_4: facturacionData.fechaEnvioCliente4,
-              fecha_pago_1: facturacionData.fechaPagoCliente1,
-              fecha_pago_2: facturacionData.fechaPagoCliente2,
-              fecha_pago_3: facturacionData.fechaPagoCliente3,
-              fecha_pago_4: facturacionData.fechaPagoCliente4,
-              referencia_pago_1: facturacionData.referenciaPago1,
-              referencia_pago_2: facturacionData.referenciaPago2,
-              referencia_pago_3: facturacionData.referenciaPago3,
-              referencia_pago_4: facturacionData.referenciaPago4,
-              // legados para pantallas que aún lean los antiguos
+              // Campos principales para compatibilidad
               fechaEnvioCliente: firstEnvio || undefined as any,
               fechaPago: firstPago || undefined as any,
               referenciaPago: firstRef || undefined as any,
@@ -3459,26 +3586,14 @@ export default function FacturacionCobranzaPage() {
         if (embarqueDetalle && embarqueDetalle.id === embarqueFacturacion.id) {
           setEmbarqueDetalle({
             ...embarqueDetalle,
+            facturas_json: facturasConDatos,
             foliosFactura: {
-              folio1: facturacionData.numeroFactura1,
-              folio2: facturacionData.numeroFactura2,
-              folio3: facturacionData.numeroFactura3,
-              folio4: facturacionData.numeroFactura4,
+              folio1: facturasConDatos[0]?.numero || "",
+              folio2: facturasConDatos[1]?.numero || "",
+              folio3: facturasConDatos[2]?.numero || "",
+              folio4: facturasConDatos[3]?.numero || "",
             },
-            // Nuevos campos por factura
-            fecha_envio_cliente_1: facturacionData.fechaEnvioCliente1 || undefined,
-            fecha_envio_cliente_2: facturacionData.fechaEnvioCliente2 || undefined,
-            fecha_envio_cliente_3: facturacionData.fechaEnvioCliente3 || undefined,
-            fecha_envio_cliente_4: facturacionData.fechaEnvioCliente4 || undefined,
-            fecha_pago_1: facturacionData.fechaPagoCliente1 || undefined,
-            fecha_pago_2: facturacionData.fechaPagoCliente2 || undefined,
-            fecha_pago_3: facturacionData.fechaPagoCliente3 || undefined,
-            fecha_pago_4: facturacionData.fechaPagoCliente4 || undefined,
-            referencia_pago_1: facturacionData.referenciaPago1 || undefined,
-            referencia_pago_2: facturacionData.referenciaPago2 || undefined,
-            referencia_pago_3: facturacionData.referenciaPago3 || undefined,
-            referencia_pago_4: facturacionData.referenciaPago4 || undefined,
-            // Legados para compatibilidad en renderizados que aún lean los antiguos
+            // Campos principales para compatibilidad
             fecha_envio_cliente: firstEnvio || undefined,
             fecha_pago: firstPago || undefined,
             referencia_pago: firstRef || undefined,
@@ -3496,22 +3611,12 @@ export default function FacturacionCobranzaPage() {
         } catch {}
 
         setFacturacionData({
-          numeroFactura1: "",
-          numeroFactura2: "",
-          numeroFactura3: "",
-          numeroFactura4: "",
-          fechaEnvioCliente1: "",
-          fechaEnvioCliente2: "",
-          fechaEnvioCliente3: "",
-          fechaEnvioCliente4: "",
-          fechaPagoCliente1: "",
-          fechaPagoCliente2: "",
-          fechaPagoCliente3: "",
-          fechaPagoCliente4: "",
-          referenciaPago1: "",
-          referenciaPago2: "",
-          referenciaPago3: "",
-          referenciaPago4: "",
+          facturas: [
+            { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+            { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+            { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" },
+            { numero: "", fecha_envio: "", fecha_pago: "", referencia: "" }
+          ],
           observacionesFacturacion: "",
         });
       }
@@ -3613,7 +3718,9 @@ export default function FacturacionCobranzaPage() {
       const rows = listaNoArchivados.map((e: any) => {
         const operador =
           e.operadorAsignado?.nombre || e.operadorNombre || e.operador || "";
-        const tipoServicio = e.tipoServicioNombre || e.tipo_servicio_nombre || (e.tipo_servicio_id ? (tiposServicio.find((t:any)=>t.id===e.tipo_servicio_id)?.nombre) : "") || "";
+        // 🎯 ARQUITECTURA DESACOPLADA: Leer SOLO de columnas independientes
+        // Ya no consultamos tipos_servicios, solo las columnas desacopladas de embarques_financiero
+        const tipoServicio = e.tipo_servicio_nombre || "Sin especificar";
         const tracto =
           (e.tracto && (e.tracto.numero_economico || e.tracto.placas)) ||
           e.tractoNumero ||
@@ -3663,10 +3770,10 @@ export default function FacturacionCobranzaPage() {
           e.moneda_flete || "MXN",
           e.pagado ? "Sí" : "No",
           e.estado_facturacion || "",
-          e.foliosFactura?.folio1 || e.folio_factura_1 || e.numero_factura_1 || "",
-          e.foliosFactura?.folio2 || e.folio_factura_2 || e.numero_factura_2 || "",
-          e.foliosFactura?.folio3 || e.folio_factura_3 || e.numero_factura_3 || "",
-          e.foliosFactura?.folio4 || e.folio_factura_4 || e.numero_factura_4 || "",
+          e.foliosFactura?.folio1 || "",
+          e.foliosFactura?.folio2 || "",
+          e.foliosFactura?.folio3 || "",
+          e.foliosFactura?.folio4 || "",
           e.observacionesFacturacion || e.observaciones_facturacion || "",
         ];
       });
@@ -3713,26 +3820,10 @@ export default function FacturacionCobranzaPage() {
   setActiveDetailTab("general");
 
     setFacturacionFormData({
-      folio1:
-        embarque?.foliosFactura?.folio1 ||
-        (embarque as any).folio_factura_1 ||
-        (embarque as any).numero_factura_1 ||
-        "",
-      folio2:
-        embarque?.foliosFactura?.folio2 ||
-        (embarque as any).folio_factura_2 ||
-        (embarque as any).numero_factura_2 ||
-        "",
-      folio3:
-        embarque?.foliosFactura?.folio3 ||
-        (embarque as any).folio_factura_3 ||
-        (embarque as any).numero_factura_3 ||
-        "",
-      folio4:
-        embarque?.foliosFactura?.folio4 ||
-        (embarque as any).folio_factura_4 ||
-        (embarque as any).numero_factura_4 ||
-        "",
+      folio1: embarque?.foliosFactura?.folio1 || "",
+      folio2: embarque?.foliosFactura?.folio2 || "",
+      folio3: embarque?.foliosFactura?.folio3 || "",
+      folio4: embarque?.foliosFactura?.folio4 || "",
       cantidadFinalFacturada:
         embarque.cantidad_final_facturada || embarque.precioFlete || 0,
       observacionesFacturacion: embarque.observacionesFacturacion || "",
@@ -3749,10 +3840,7 @@ export default function FacturacionCobranzaPage() {
       const { error } = await supabase
         .from("embarques")
         .update({
-          folio_factura_1: facturacionFormData.folio1 || null,
-          folio_factura_2: facturacionFormData.folio2 || null,
-          folio_factura_3: facturacionFormData.folio3 || null,
-          folio_factura_4: facturacionFormData.folio4 || null,
+          // Legacy columns removed - using facturas_json
           cantidad_final_facturada:
             facturacionFormData.cantidadFinalFacturada || null,
           observaciones_facturacion:
@@ -3778,11 +3866,7 @@ export default function FacturacionCobranzaPage() {
                 folio3: facturacionFormData.folio3,
                 folio4: facturacionFormData.folio4,
               },
-              // also set top-level snake_case fields so other UI paths reading those see the update
-              folio_factura_1: facturacionFormData.folio1 || null,
-              folio_factura_2: facturacionFormData.folio2 || null,
-              folio_factura_3: facturacionFormData.folio3 || null,
-              folio_factura_4: facturacionFormData.folio4 || null,
+              // Legacy columns removed - now using only facturas_json
               cantidadFinalFacturada:
                 facturacionFormData.cantidadFinalFacturada,
               observacionesFacturacion:
@@ -3813,10 +3897,7 @@ export default function FacturacionCobranzaPage() {
           observacionesFacturacion: facturacionFormData.observacionesFacturacion,
           cantidad_final_facturada: facturacionFormData.cantidadFinalFacturada || null,
           observaciones_facturacion: facturacionFormData.observacionesFacturacion || null,
-          folio_factura_1: facturacionFormData.folio1 || null,
-          folio_factura_2: facturacionFormData.folio2 || null,
-          folio_factura_3: facturacionFormData.folio3 || null,
-          folio_factura_4: facturacionFormData.folio4 || null,
+          // Legacy columns removed - using facturas_json
         });
 
         setShowFacturacionEditModal(false);
@@ -4739,7 +4820,13 @@ export default function FacturacionCobranzaPage() {
         console.error("Excepción batch pagos:", e);
       }
 
-  const embarquesFormateados: EmbarqueAsignado[] = (data || []).map((embarque: any) => {
+      // Procesar embarques de forma asíncrona para calcular pagos correctos
+      const embarquesFormateados: EmbarqueAsignado[] = [];
+      
+      for (const embarque of (data || [])) {
+        // Calcular pago usando función asíncrona para obtener precio global de flete falso
+        const pagoOperador = await calcularPagoOperadorAsync(embarque, embarque.tipo_servicio, tiposServicio);
+        
         const formattedEmbarque: EmbarqueAsignado = {
           ...embarque,
           clienteNombre: embarque.cliente?.nombre || "Cliente no especificado",
@@ -4752,24 +4839,10 @@ export default function FacturacionCobranzaPage() {
               }
             : { id: "", nombre: "Sin asignar" },
           tipoServicioNombre: embarque.tipo_servicio?.nombre || "Sin especificar",
-          pagoOperador: obtenerMontoTipoServicio(embarque.tipo_servicio),
+          pagoOperador: pagoOperador,
           fechaAsignacion: embarque.fecha_creacion,
           modificadoPorEmergencia: embarquesModificadosIds.includes(embarque.id),
         };
-
-        // Ajustar pagoOperador con prioridad:
-        // 1) valor persistido en embarques.pago_operador (o alias pagoOperador)
-        // 2) si flete_falso, usar precio configurado de 'flete en falso'
-        // 3) si no, mantener precio_base del tipo de servicio
-        const pagoPersistido = (embarque as any)?.pago_operador ?? (embarque as any)?.pagoOperador;
-        if (pagoPersistido != null) {
-          formattedEmbarque.pagoOperador = typeof pagoPersistido === 'number' ? pagoPersistido : (Number(pagoPersistido) || 0);
-        } else if ((embarque as any)?.flete_falso) {
-          const tipoFleteFalso = encontrarTipoFleteFalso(tiposServicio);
-          formattedEmbarque.pagoOperador = tipoFleteFalso
-            ? obtenerMontoTipoServicio(tipoFleteFalso)
-            : 0;
-        }
 
         const mod = latestModsMap[embarque.id];
         if (mod) {
@@ -4794,8 +4867,8 @@ export default function FacturacionCobranzaPage() {
           }
         }
 
-        return formattedEmbarque;
-      });
+        embarquesFormateados.push(formattedEmbarque);
+      }
 
       // Filtro por operador (cliente) que contempla asignado, original y reemplazo
       let embarquesFiltradosLocal = embarquesFormateados;
@@ -4821,7 +4894,7 @@ export default function FacturacionCobranzaPage() {
       }
 
       if (mounted.current) {
-  setEmbarquesOperadorFiltrados(embarquesFiltradosLocal);
+        setEmbarquesOperadorFiltrados(embarquesFiltradosLocal);
 
         const initialContingencyState: typeof operadoresContingencia = {};
         embarquesFiltradosLocal.forEach((e) => {
@@ -4937,6 +5010,10 @@ export default function FacturacionCobranzaPage() {
                         onChange={(e) => {
                           setFechaInicioAnalisis(e.target.value);
                           if (analisisError) setAnalisisError(null);
+                          // Generar análisis automáticamente si ambas fechas están completas
+                          if (e.target.value && fechaFinAnalisis && new Date(e.target.value) <= new Date(fechaFinAnalisis)) {
+                            setTimeout(() => generarAnalisisOperadores(), 300);
+                          }
                         }}
                         className="w-36"
                       />
@@ -4951,6 +5028,10 @@ export default function FacturacionCobranzaPage() {
                         onChange={(e) => {
                           setFechaFinAnalisis(e.target.value);
                           if (analisisError) setAnalisisError(null);
+                          // Generar análisis automáticamente si ambas fechas están completas
+                          if (e.target.value && fechaInicioAnalisis && new Date(fechaInicioAnalisis) <= new Date(e.target.value)) {
+                            setTimeout(() => generarAnalisisOperadores(), 300);
+                          }
                         }}
                         className="w-36"
                       />
@@ -4961,10 +5042,14 @@ export default function FacturacionCobranzaPage() {
                       </Label>
                       <select
                         value={filtroAnalisisOperador}
-                        onChange={(e) =>
-                          setFiltroAnalisisOperador(e.target.value)
-                        }
-                        className="border rounded px-2 py-1 w-56"
+                        onChange={(e) => {
+                          setFiltroAnalisisOperador(e.target.value);
+                          // Generar análisis automáticamente si las fechas están completas
+                          if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
+                            setTimeout(() => generarAnalisisOperadores(), 100);
+                          }
+                        }}
+                        className="border rounded px-3 py-2 w-56 h-10 text-sm"
                         disabled={loadingEmbarques}
                       >
                         <option value="todos">Todos los operadores</option>
@@ -4991,8 +5076,14 @@ export default function FacturacionCobranzaPage() {
                             const val = e.target.value;
                             setPeriodoAnalisis(val);
                             setPeriodoActual(val);
+                            // Generar análisis automáticamente después de establecer el periodo
+                            setTimeout(() => {
+                              if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
+                                generarAnalisisOperadores();
+                              }
+                            }, 200);
                           }}
-                          className="border rounded px-2 py-1 w-56"
+                          className="border rounded px-3 py-2 w-56 h-10 text-sm"
                         >
                           <option value="mes">Mes actual</option>
                           <option value="mes_anterior">Mes anterior</option>
@@ -5008,26 +5099,7 @@ export default function FacturacionCobranzaPage() {
                           <option value="un_ano_atras">Un año atrás</option>
                           <option value="año">Año actual</option>
                         </select>
-                        <Button
-                          onClick={generarAnalisisOperadores}
-                          variant="default"
-                          className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
-                          disabled={
-                            Boolean(
-                              loadingAnalisis ||
-                                !fechaInicioAnalisis ||
-                                !fechaFinAnalisis ||
-                                (fechaInicioAnalisis &&
-                                  fechaFinAnalisis &&
-                                  new Date(fechaInicioAnalisis) >
-                                    new Date(fechaFinAnalisis))
-                            )
-                          }
-                        >
-                          {loadingAnalisis
-                            ? "Generando..."
-                            : "Generar Análisis"}
-                        </Button>
+
                         <Button
                           onClick={exportarAnalisisExcel}
                           variant="outline"
@@ -5078,8 +5150,7 @@ export default function FacturacionCobranzaPage() {
                     </div>
                     {analisisData.resumenGeneral === null && (
                       <div className="text-center py-8 text-gray-500">
-                        Por favor, haz clic en "Generar Análisis" para ver los
-                        datos.
+                        Por favor, selecciona las fechas y operador para generar el análisis automáticamente.
                       </div>
                     )}
                     {activeAnalisisTab === "resumen" &&
@@ -5495,12 +5566,9 @@ export default function FacturacionCobranzaPage() {
                                       </td>
                                       <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
                                         {(() => {
-                                          if (e.modificadoPorEmergencia) {
-                                            const m = operadoresContingencia[e.id] || {};
-                                            const monto = e.rolContingencia === "original" ? (m.original || 0) : (m.reemplazo || 0);
-                                            return `$${Number(monto || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                                          }
-                                          return `$${Number(e.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                          const monto = Number(e.pago_operador ?? 0);
+                                          const seguro = Number.isFinite(monto) ? monto : 0;
+                                          return `$${seguro.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                                         })()}
                                       </td>
                                       <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
@@ -7537,15 +7605,15 @@ export default function FacturacionCobranzaPage() {
 
         {/* Control Clientes */}
         <Dialog open={showControlClientesModal} onOpenChange={setShowControlClientesModal}>
-  <DialogContent className="max-w-[1400px] w-[95vw] max-h-[95vh]">
-            <DialogHeader>
+  <DialogContent className="max-w-[1400px] w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
+            <DialogHeader className="flex-shrink-0">
               <DialogTitle>Control de Clientes</DialogTitle>
               <DialogDescription>
                 Consulta los embarques no archivados por cliente.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
+            <div className="space-y-4 flex-1 overflow-y-auto">
               <div className="flex flex-wrap items-start gap-3">
                 <div className="flex flex-col gap-3 w-full">
                   {/* Primera fila: Cliente + Periodo + Estado + Acciones */}
@@ -7876,6 +7944,45 @@ export default function FacturacionCobranzaPage() {
                         <span className="text-sm">Mostrar cancelados</span>
                       </label>
                     </div>
+
+                    {/* Controles de paginación */}
+                    <div className="flex items-center gap-2 text-sm ml-auto">
+                      <Label htmlFor="items-per-page-control-act" className="text-sm">Registros por página:</Label>
+                      <Select
+                        value={String(itemsPerPageControl)}
+                        onValueChange={(v) => setItemsPerPageControl(Number(v))}
+                      >
+                        <SelectTrigger id="items-per-page-control-act" className="w-[100px]">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {[5, 10, 15, 20, 25, 50, 100].map(n => (
+                            <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="flex items-center gap-2 text-sm">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPageControlActivos(p => Math.max(1, p - 1))}
+                        disabled={currentPageControlActivos <= 1}
+                      >
+                        Anterior
+                      </Button>
+                      <span>
+                        Página {currentPageControlActivos} de {totalPagesControlActivos}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setCurrentPageControlActivos(p => Math.min(totalPagesControlActivos, p + 1))}
+                        disabled={currentPageControlActivos >= totalPagesControlActivos}
+                      >
+                        Siguiente
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -7883,14 +7990,14 @@ export default function FacturacionCobranzaPage() {
               </div>
 
       <div>
-                    <div className="overflow-x-auto">
+                    <div className="overflow-x-auto overflow-y-auto max-h-[60vh] border border-gray-200 rounded-lg">
                     <table className="min-w-full text-sm border-collapse divide-y divide-gray-200">
                       <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
                           <th className="px-3 py-2 text-left font-semibold text-gray-700 w-[60px]">{renderSortHeader("Folio", "folio")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">Empresa</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Load", "load")}</th>
-                          <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Tipo Servicio", "tipo")}</th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-700 w-[130px]">{renderSortHeader("Tipo Servicio", "tipo")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Fecha", "fecha")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700">{renderSortHeader("Monto", "monto")}</th>
                           <th className="px-3 py-2 text-left font-semibold text-gray-700 w-[120px]">{renderSortHeader("Estado", "estado")}</th>
@@ -7909,7 +8016,7 @@ export default function FacturacionCobranzaPage() {
                               <td className="px-3 py-2 text-blue-700 font-medium w-[60px] whitespace-nowrap">{e.folio}</td>
                               <td className="px-3 py-2 text-gray-700">{(e as any).clienteNombre || "-"}</td>
                               <td className="px-3 py-2 text-gray-700">{e.load_number || "-"}</td>
-                              <td className="px-3 py-2 text-gray-700">{tipoNombre}</td>
+                              <td className="px-3 py-2 text-gray-700 w-[130px]">{tipoNombre}</td>
                               <td className="px-3 py-2 text-gray-700">{new Date(e.fechaAsignacion || e.fecha_creacion || e.updated_at || Date.now()).toLocaleDateString()}</td>
                               <td className="px-3 py-2 text-gray-800 font-semibold">${amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {e.moneda_flete || 'MXN'}</td>
                               <td className="px-3 py-2 text-gray-700 w-[120px]">
@@ -7958,7 +8065,7 @@ export default function FacturacionCobranzaPage() {
                                 <td className="px-3 py-2 text-blue-700 font-medium w-[60px] whitespace-nowrap">{e.folio}</td>
                                 <td className="px-3 py-2 text-gray-700">{(e as any).clienteNombre || "-"}</td>
                                 <td className="px-3 py-2 text-gray-700">{e.load_number || "-"}</td>
-                                <td className="px-3 py-2 text-gray-700">{tipoNombre}</td>
+                                <td className="px-3 py-2 text-gray-700 w-[130px]">{tipoNombre}</td>
                                 <td className="px-3 py-2 text-gray-700">{new Date(e.fechaAsignacion || e.fecha_creacion || e.updated_at || Date.now()).toLocaleDateString()}</td>
                                 <td className="px-3 py-2 text-gray-800 font-semibold">
                                   ${amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
@@ -7980,46 +8087,6 @@ export default function FacturacionCobranzaPage() {
                         ))}
                       </tbody>
                     </table>
-                  </div>
-      {/* Pagination controls */}
-                  <div className="flex flex-wrap items-center justify-between gap-3 mt-3">
-                    <div className="flex items-center gap-2 text-sm">
-                      <Label htmlFor="items-per-page-control-act" className="text-sm">Registros por página:</Label>
-                      <Select
-                        value={String(itemsPerPageControl)}
-                        onValueChange={(v) => setItemsPerPageControl(Number(v))}
-                      >
-                        <SelectTrigger id="items-per-page-control-act" className="w-[100px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[5, 10, 15, 20, 25, 50, 100].map(n => (
-                            <SelectItem key={n} value={String(n)}>{n}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPageControlActivos(p => Math.max(1, p - 1))}
-        disabled={currentPageControlActivos <= 1}
-                      >
-                        Anterior
-                      </Button>
-                      <span>
-        Página {currentPageControlActivos} de {totalPagesControlActivos}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPageControlActivos(p => Math.min(totalPagesControlActivos, p + 1))}
-        disabled={currentPageControlActivos >= totalPagesControlActivos}
-                      >
-                        Siguiente
-                      </Button>
-                    </div>
                   </div>
       </div>
 
@@ -8119,33 +8186,87 @@ export default function FacturacionCobranzaPage() {
                     <Download className="h-4 w-4 mr-2" /> Exportar
                   </Button>
                   <Button
+                    variant="outline"
+                    onClick={() => setShowConfigurarFleteModal(true)}
+                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                  >
+                    Flete en Falso
+                  </Button>
+                  <Button
                     onClick={() => setShowCrearTipoModal(true)}
                     className="bg-green-600 hover:bg-green-700 text-white"
                   >
                     + Agregar Tipo de Servicio
                   </Button>
-                  {/* Botón eliminado: configurar flete en falso */}
                   
                 </div>
               </div>
 
+              {/* Input de búsqueda */}
+              <div className="relative">
+                <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <Input
+                  placeholder="Buscar tipos de servicio por nombre, descripción, categoría..."
+                  value={searchTipos}
+                  onChange={(e) => setSearchTipos(e.target.value)}
+                  className="pl-10"
+                />
+              </div>
+
               {/* Modal informativo con el texto azul */}
               <Dialog open={showTiposInfo} onOpenChange={setShowTiposInfo}>
-                <DialogContent className="max-w-xl">
+                <DialogContent className="max-w-2xl">
                   <DialogHeader>
-                    <DialogTitle>Tabulador de Pagos a Operadores</DialogTitle>
+                    <DialogTitle>Gestión de Tipos de Servicio - Información</DialogTitle>
                   </DialogHeader>
-                  <div className="space-y-2">
-                    <p className="text-sm text-blue-800">
-                      Define el monto que pagarás a tus operadores por cada tipo de
-                      servicio. Cuando asignes un embarque con un tipo de servicio
-                      específico, el sistema calculará automáticamente el pago
-                      correspondiente al operador basándose en estos valores.
-                    </p>
-                    <p className="text-xs text-blue-700">
-                      • Los montos se establecen en pesos mexicanos (MXN) • Los
-                      cambios se guardan automáticamente en la base de datos
-                    </p>
+                  <div className="space-y-4">
+                    <div>
+                      <h4 className="text-sm font-semibold text-blue-800 mb-2">Tabulador de Pagos a Operadores</h4>
+                      <p className="text-sm text-blue-800">
+                        Define el monto que pagarás a tus operadores por cada tipo de
+                        servicio. Cuando asignes un embarque con un tipo de servicio
+                        específico, el sistema calculará automáticamente el pago
+                        correspondiente al operador basándose en estos valores.
+                      </p>
+                      <p className="text-xs text-blue-700 mt-1">
+                        • Los montos se establecen en pesos mexicanos (MXN) • Los
+                        cambios se guardan automáticamente en la base de datos
+                      </p>
+                    </div>
+
+                    <div className="border-t pt-3">
+                      <h4 className="text-sm font-semibold text-red-800 mb-2">Reglas de Eliminación</h4>
+                      <div className="space-y-2 text-sm">
+                        <div className="flex items-start gap-2">
+                          <CheckCircle className="h-4 w-4 text-green-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <span className="font-medium text-green-800">Se puede eliminar:</span>
+                            <p className="text-gray-700">Tipos de servicio sin referencias activas en embarques, servicios o registros financieros.</p>
+                          </div>
+                        </div>
+                        <div className="flex items-start gap-2">
+                          <XCircle className="h-4 w-4 text-red-600 mt-0.5 flex-shrink-0" />
+                          <div>
+                            <span className="font-medium text-red-800">NO se puede eliminar:</span>
+                            <div className="text-gray-700">
+                              <p>• Tipos con embarques activos en el sistema</p>
+                              <p>• Tipos referenciados en configuraciones de servicios</p>
+                              <p>• Tipos con registros financieros asociados</p>
+                              <p>• El único tipo de servicio activo restante</p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
+                        <div className="flex items-center gap-2">
+                          <AlertTriangle className="h-4 w-4 text-amber-600" />
+                          <span className="text-sm font-medium text-amber-800">Alternativa Segura</span>
+                        </div>
+                        <p className="text-xs text-amber-700 mt-1">
+                          Si no se puede eliminar, el sistema desactivará automáticamente el tipo para ocultarlo sin perder datos históricos.
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </DialogContent>
               </Dialog>
@@ -8165,6 +8286,16 @@ export default function FacturacionCobranzaPage() {
                   </p>
                   <p className="text-sm text-gray-400 mt-1">
                     Los tipos de servicio configurados aparecerán aquí
+                  </p>
+                </div>
+              ) : tiposFiltrados.length === 0 ? (
+                <div className="text-center py-8">
+                  <Search className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                  <p className="text-gray-500">
+                    No se encontraron tipos de servicio que coincidan con "{searchTipos}"
+                  </p>
+                  <p className="text-sm text-gray-400 mt-1">
+                    Intenta con otros términos de búsqueda
                   </p>
                 </div>
               ) : (
@@ -8209,6 +8340,9 @@ export default function FacturacionCobranzaPage() {
                           Pago Operador (MXN){tiposSortBy === 'pago' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
                         </th>
                         <th className="px-3 py-2 text-center font-semibold text-gray-700">
+                          Estado
+                        </th>
+                        <th className="px-3 py-2 text-center font-semibold text-gray-700">
                           Detalles
                         </th>
                         <th className="px-3 py-2 text-center font-semibold text-gray-700 w-28">
@@ -8240,30 +8374,36 @@ export default function FacturacionCobranzaPage() {
                                 minimumFractionDigits: 2,
                                 maximumFractionDigits: 2,
                               })}`;
-                              const flagged = esTipoServicioFleteFalso(tipo);
-                              const base = parseMonto((tipo as any)?.precio_base);
                               return (
                                 <div className="flex flex-col items-end">
                                   <span>{formatted}</span>
-                                  {flagged && (
-                                    <span className="mt-1 flex items-center gap-2 text-xs text-amber-700">
-                                      <Badge className="bg-amber-100 text-amber-800 border border-amber-200">
-                                        Flete en Falso
-                                      </Badge>
-                                      {base !== undefined && base !== montoActivo ? (
-                                        <span className="text-[11px] text-gray-500">
-                                          Base: $
-                                          {base.toLocaleString('es-MX', {
-                                            minimumFractionDigits: 2,
-                                            maximumFractionDigits: 2,
-                                          })}
-                                        </span>
-                                      ) : null}
-                                    </span>
-                                  )}
                                 </div>
                               );
                             })()}
+                          </td>
+                          {/* Nueva columna de Estado */}
+                          <td className="px-3 py-2 text-center">
+                            <div className="flex items-center justify-center">
+                              {loadingValidation ? (
+                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
+                              ) : tipoValidationInfo?.[tipo.id] ? (
+                                tipoValidationInfo[tipo.id].canDelete ? (
+                                  <div className="flex items-center gap-1 text-green-600" title={tipoValidationInfo[tipo.id].reason}>
+                                    <CheckCircle className="h-4 w-4" />
+                                    <span className="text-xs font-medium">Eliminar</span>
+                                  </div>
+                                ) : (
+                                  <div className="flex items-center gap-1 text-red-600" title={tipoValidationInfo[tipo.id].reason}>
+                                    <XCircle className="h-4 w-4" />
+                                    <span className="text-xs font-medium">
+                                      {tipoValidationInfo[tipo.id].embarquesCount > 0 && `${tipoValidationInfo[tipo.id].embarquesCount} refs`}
+                                    </span>
+                                  </div>
+                                )
+                              ) : (
+                                <div className="text-gray-400 text-xs">-</div>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-2">
                             {/* Detalles column: lock + edit + save */}
@@ -8300,11 +8440,31 @@ export default function FacturacionCobranzaPage() {
                                 variant="outline"
                                 size="icon"
                                 onClick={() => eliminarTipoServicio(tipo)}
-                                title="Eliminar"
+                                title={
+                                  tipoValidationInfo?.[tipo.id]
+                                    ? tipoValidationInfo[tipo.id].canDelete
+                                      ? "Eliminar tipo de servicio"
+                                      : `No se puede eliminar: ${tipoValidationInfo[tipo.id].reason}`
+                                    : loadingValidation
+                                    ? "Validando..."
+                                    : "Eliminar"
+                                }
                                 aria-label="Eliminar"
-                                className="border-red-300 text-red-600 hover:text-red-700 hover:bg-red-50"
+                                disabled={
+                                  loadingValidation || 
+                                  (tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete)
+                                }
+                                className={`border-red-300 ${
+                                  tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete
+                                    ? "text-red-300 bg-red-50 cursor-not-allowed opacity-50"
+                                    : "text-red-600 hover:text-red-700 hover:bg-red-50"
+                                }`}
                               >
-                                <Trash className="h-4 w-4" />
+                                {loadingValidation ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-400"></div>
+                                ) : (
+                                  <Trash className="h-4 w-4" />
+                                )}
                               </Button>
                             </div>
                           </td>
@@ -8340,6 +8500,90 @@ export default function FacturacionCobranzaPage() {
                 </div>
               )}
             </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal: Configurar Flete en Falso */}
+        <Dialog open={showConfigurarFleteModal} onOpenChange={setShowConfigurarFleteModal}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle>Configurar Precio de Flete en Falso</DialogTitle>
+              <DialogDescription>
+                Establece el precio único para todos los fletes en falso (contingencias).
+                Este precio se aplicará automáticamente cuando se marque un embarque como "flete en falso".
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="flex items-center gap-2">
+                  <div className="text-amber-600">⚠️</div>
+                  <div>
+                    <p className="text-sm font-medium text-amber-800">Precio Global</p>
+                    <p className="text-xs text-amber-700">
+                      Este precio se aplicará a TODOS los embarques marcados como flete en falso,
+                      independientemente del tipo de servicio.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="precioFlete">Precio del Operador (MXN)</Label>
+                <Input
+                  id="precioFlete"
+                  type="text"
+                  value={precioFleteFalso}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    // Permitir solo números, comas y puntos
+                    const cleaned = value.replace(/[^\d.,]/g, '');
+                    
+                    // Si es un número válido, formatearlo
+                    const num = parsearPrecioMexicano(cleaned);
+                    if (!isNaN(num) && num >= 0) {
+                      setPrecioFleteFalso(formatearPrecioMexicano(num));
+                    } else if (cleaned === '' || cleaned === '0' || /^\d*\.?\d{0,2}$/.test(cleaned)) {
+                      // Permitir entrada intermedia válida
+                      setPrecioFleteFalso(cleaned);
+                    }
+                  }}
+                  onBlur={() => {
+                    // Al perder el foco, asegurar formato correcto
+                    const num = parsearPrecioMexicano(precioFleteFalso);
+                    if (!isNaN(num) && num >= 0) {
+                      setPrecioFleteFalso(formatearPrecioMexicano(num));
+                    } else {
+                      setPrecioFleteFalso('800.00');
+                    }
+                  }}
+                  placeholder="800.00"
+                  className="text-right"
+                  disabled={guardandoPrecioFlete}
+                />
+                <p className="text-xs text-gray-600">
+                  Este será el monto que se pagará automáticamente a los operadores
+                  cuando un embarque se marque como "flete en falso".
+                </p>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button
+                variant="outline"
+                onClick={() => setShowConfigurarFleteModal(false)}
+                disabled={guardandoPrecioFlete}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={guardarPrecioFleteFalso}
+                disabled={guardandoPrecioFlete}
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                {guardandoPrecioFlete ? 'Guardando...' : 'Guardar Precio'}
+              </Button>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
 
@@ -8412,45 +8656,7 @@ export default function FacturacionCobranzaPage() {
                   min={0}
                 />
               </div>
-              <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
-                <div>
-                  <Label className="text-sm font-semibold text-gray-700">¿Es tipo para Flete en Falso?</Label>
-                  <p className="text-xs text-gray-500">
-                    Activa esta opción si este registro representa el monto que se paga cuando un embarque se marca como flete en falso.
-                  </p>
-                </div>
-                <Switch
-                  checked={nuevoTipo.es_flete_falso}
-                  onCheckedChange={(checked) =>
-                    setNuevoTipo((prev) => ({
-                      ...prev,
-                      es_flete_falso: checked,
-                      pago_operador_flete_falso: checked
-                        ? prev.pago_operador_flete_falso || prev.precio_base || 0
-                        : 0,
-                    }))
-                  }
-                />
-              </div>
-              {nuevoTipo.es_flete_falso && (
-                <div>
-                  <Label>Pago Operador en Flete en Falso (MXN)</Label>
-                  <Input
-                    type="number"
-                    value={String(nuevoTipo.pago_operador_flete_falso)}
-                    onChange={(e) =>
-                      setNuevoTipo((prev) => ({
-                        ...prev,
-                        pago_operador_flete_falso: Number(e.target.value || 0),
-                      }))
-                    }
-                    min={0}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    Este monto reemplazará el pago estándar del operador cuando el embarque se marque como flete en falso.
-                  </p>
-                </div>
-              )}
+              {/* Eliminado: configuración por tipo para flete en falso (precio ahora es global) */}
             </div>
             <DialogFooter className="mt-4">
               <Button
@@ -8515,47 +8721,7 @@ export default function FacturacionCobranzaPage() {
                   />
                 </div>
               </div>
-              <div className="flex items-center justify-between rounded-md border border-gray-200 bg-gray-50 px-4 py-3">
-                <div>
-                  <Label className="text-sm font-semibold text-gray-700">¿Es tipo para Flete en Falso?</Label>
-                  <p className="text-xs text-gray-500">
-                    Al activarlo, este monto se usará cuando un embarque sea marcado como flete en falso.
-                  </p>
-                </div>
-                <Switch
-                  checked={editarTipo.es_flete_falso}
-                  onCheckedChange={(checked) =>
-                    setEditarTipo((prev) => ({
-                      ...prev,
-                      es_flete_falso: checked,
-                      pago_operador_flete_falso: checked
-                        ? prev.pago_operador_flete_falso ||
-                        parseMonto((tipoEditando as any)?.pago_operador_flete_falso) ||
-                        obtenerMontoTipoServicio(tipoEditando || undefined)
-                        : 0,
-                    }))
-                  }
-                />
-              </div>
-              {editarTipo.es_flete_falso && (
-                <div>
-                  <Label>Pago Operador en Flete en Falso (MXN)</Label>
-                  <Input
-                    type="number"
-                    value={String(editarTipo.pago_operador_flete_falso)}
-                    onChange={(e) =>
-                      setEditarTipo((prev) => ({
-                        ...prev,
-                        pago_operador_flete_falso: Number(e.target.value || 0),
-                      }))
-                    }
-                    min={0}
-                  />
-                  <p className="text-xs text-gray-500 mt-1">
-                    El pago al operador se ajustará automáticamente a este valor cuando el embarque sea flete en falso.
-                  </p>
-                </div>
-              )}
+              {/* Eliminado: configuración por tipo para flete en falso (precio ahora es global) */}
             </div>
             <DialogFooter className="mt-4">
               <Button
@@ -8949,24 +9115,22 @@ export default function FacturacionCobranzaPage() {
                             </thead>
                             <tbody>
                               {(() => {
+                                // Leer datos desde facturas_json (nueva fuente de verdad)
+                                const facturas = embarqueDetalle?.facturas_json || [];
+                                
                                 const f = [1,2,3,4].map((i) => {
+                                  const factura = facturas[i-1]; // Array es 0-indexed
                                   const anyDet = embarqueDetalle as any;
+                                  
                                   return {
                                     n: i,
-                                    folio:
+                                    folio: 
+                                      factura?.numero ||
                                       (anyDet.foliosFactura && anyDet.foliosFactura[`folio${i}`]) ||
-                                      anyDet[`folio_factura_${i}`] ||
-                                      anyDet[`numero_factura_${i}`] ||
-                                      (i === 1 ? anyDet["numero_factura_1"] : undefined),
-                                    envio:
-                                      anyDet[`fecha_envio_cliente_${i}`] ||
-                                      (i === 1 ? anyDet["fecha_envio_cliente"] : undefined),
-                                    pago:
-                                      anyDet[`fecha_pago_${i}`] ||
-                                      (i === 1 ? anyDet["fecha_pago"] : undefined),
-                                    ref:
-                                      anyDet[`referencia_pago_${i}`] ||
-                                      (i === 1 ? anyDet["referencia_pago"] : undefined),
+                                      "",
+                                    envio: factura?.fecha_envio || "",
+                                    pago: factura?.fecha_pago || (i === 1 ? anyDet["fecha_pago"] : ""),
+                                    ref: factura?.referencia || "",
                                   };
                                 });
                                 return f.map((row) => (
@@ -9494,237 +9658,84 @@ export default function FacturacionCobranzaPage() {
                 <div>Referencia</div>
               </div>
 
-              {/* Row 1 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-                <div>
-                  <Label className="md:hidden" htmlFor="numeroFactura1">Número Factura 1</Label>
-                  <Input
-                    id="numeroFactura1"
-                    value={facturacionData.numeroFactura1}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        numeroFactura1: e.target.value,
-                      })
-                    }
-                  />
+              {/* Rows dinámicas basadas en el array de facturas */}
+              {facturacionData.facturas.map((factura, index) => (
+                <div key={index} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                  <div>
+                    <Label className="md:hidden" htmlFor={`numeroFactura${index + 1}`}>
+                      Número Factura {index + 1}
+                    </Label>
+                    <Input
+                      id={`numeroFactura${index + 1}`}
+                      value={factura.numero}
+                      onChange={(e) => {
+                        const nuevasFacturas = [...facturacionData.facturas];
+                        nuevasFacturas[index] = { ...factura, numero: e.target.value };
+                        setFacturacionData({
+                          ...facturacionData,
+                          facturas: nuevasFacturas,
+                        });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="md:hidden" htmlFor={`fechaEnvioCliente${index + 1}`}>
+                      Fecha envío al cliente
+                    </Label>
+                    <Input
+                      type="date"
+                      id={`fechaEnvioCliente${index + 1}`}
+                      value={factura.fecha_envio || ""}
+                      onChange={(e) => {
+                        const nuevasFacturas = [...facturacionData.facturas];
+                        nuevasFacturas[index] = { ...factura, fecha_envio: e.target.value };
+                        setFacturacionData({
+                          ...facturacionData,
+                          facturas: nuevasFacturas,
+                        });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="md:hidden" htmlFor={`fechaPagoCliente${index + 1}`}>
+                      Fecha de pago
+                    </Label>
+                    <Input
+                      type="date"
+                      id={`fechaPagoCliente${index + 1}`}
+                      value={factura.fecha_pago || ""}
+                      onChange={(e) => {
+                        const nuevasFacturas = [...facturacionData.facturas];
+                        nuevasFacturas[index] = { ...factura, fecha_pago: e.target.value };
+                        setFacturacionData({
+                          ...facturacionData,
+                          facturas: nuevasFacturas,
+                        });
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="md:hidden" htmlFor={`referenciaPago${index + 1}`}>
+                      Referencia de pago
+                    </Label>
+                    <Input
+                      id={`referenciaPago${index + 1}`}
+                      value={factura.referencia || ""}
+                      onChange={(e) => {
+                        const nuevasFacturas = [...facturacionData.facturas];
+                        nuevasFacturas[index] = { ...factura, referencia: e.target.value };
+                        setFacturacionData({
+                          ...facturacionData,
+                          facturas: nuevasFacturas,
+                        });
+                      }}
+                    />
+                  </div>
                 </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaEnvioCliente1">Fecha envío al cliente</Label>
-                  <Input
-                    type="date"
-                    id="fechaEnvioCliente1"
-                    value={facturacionData.fechaEnvioCliente1}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaEnvioCliente1: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaPagoCliente1">Fecha de pago</Label>
-                  <Input
-                    type="date"
-                    id="fechaPagoCliente1"
-                    value={facturacionData.fechaPagoCliente1}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaPagoCliente1: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="referenciaPago1">Referencia de pago</Label>
-                  <Input
-                    id="referenciaPago1"
-                    value={facturacionData.referenciaPago1}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        referenciaPago1: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </div>
+              ))}
 
-              {/* Row 2 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-                <div>
-                  <Label className="md:hidden" htmlFor="numeroFactura2">Número Factura 2</Label>
-                  <Input
-                    id="numeroFactura2"
-                    value={facturacionData.numeroFactura2}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        numeroFactura2: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaEnvioCliente2">Fecha envío al cliente</Label>
-                  <Input
-                    type="date"
-                    id="fechaEnvioCliente2"
-                    value={facturacionData.fechaEnvioCliente2}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaEnvioCliente2: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaPagoCliente2">Fecha de pago</Label>
-                  <Input
-                    type="date"
-                    id="fechaPagoCliente2"
-                    value={facturacionData.fechaPagoCliente2}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaPagoCliente2: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="referenciaPago2">Referencia de pago</Label>
-                  <Input
-                    id="referenciaPago2"
-                    value={facturacionData.referenciaPago2}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        referenciaPago2: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </div>
 
-              {/* Row 3 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-                <div>
-                  <Label className="md:hidden" htmlFor="numeroFactura3">Número Factura 3</Label>
-                  <Input
-                    id="numeroFactura3"
-                    value={facturacionData.numeroFactura3}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        numeroFactura3: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaEnvioCliente3">Fecha envío al cliente</Label>
-                  <Input
-                    type="date"
-                    id="fechaEnvioCliente3"
-                    value={facturacionData.fechaEnvioCliente3}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaEnvioCliente3: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaPagoCliente3">Fecha de pago</Label>
-                  <Input
-                    type="date"
-                    id="fechaPagoCliente3"
-                    value={facturacionData.fechaPagoCliente3}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaPagoCliente3: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="referenciaPago3">Referencia de pago</Label>
-                  <Input
-                    id="referenciaPago3"
-                    value={facturacionData.referenciaPago3}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        referenciaPago3: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </div>
 
-              {/* Row 4 */}
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
-                <div>
-                  <Label className="md:hidden" htmlFor="numeroFactura4">Número Factura 4</Label>
-                  <Input
-                    id="numeroFactura4"
-                    value={facturacionData.numeroFactura4}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        numeroFactura4: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaEnvioCliente4">Fecha envío al cliente</Label>
-                  <Input
-                    type="date"
-                    id="fechaEnvioCliente4"
-                    value={facturacionData.fechaEnvioCliente4}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaEnvioCliente4: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="fechaPagoCliente4">Fecha de pago</Label>
-                  <Input
-                    type="date"
-                    id="fechaPagoCliente4"
-                    value={facturacionData.fechaPagoCliente4}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        fechaPagoCliente4: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-                <div>
-                  <Label className="md:hidden" htmlFor="referenciaPago4">Referencia de pago</Label>
-                  <Input
-                    id="referenciaPago4"
-                    value={facturacionData.referenciaPago4}
-                    onChange={(e) =>
-                      setFacturacionData({
-                        ...facturacionData,
-                        referenciaPago4: e.target.value,
-                      })
-                    }
-                  />
-                </div>
-              </div>
 
               <div>
                 <Label htmlFor="observacionesFacturacion">Observaciones</Label>

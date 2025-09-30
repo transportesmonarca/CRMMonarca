@@ -53,6 +53,8 @@ import { useSearchParams } from "next/navigation";
 import {
   supabase,
   obtenerTiposServicio,
+  obtenerPrecioFleteFalso,
+  actualizarFleteFalsoEmbarque,
   type Embarque,
   type Operador,
   type Camion,
@@ -92,30 +94,31 @@ const parseMonto = (valor: any): number | undefined => {
   return undefined;
 };
 
-const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
-  if (!tipo) return 0;
-  if (esTipoServicioFleteFalso(tipo)) {
-    const alterno =
-      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
-    const parsedAlterno = parseMonto(alterno);
-    if (parsedAlterno !== undefined) {
-      return parsedAlterno;
-    }
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null, precioGlobalFleteFalso: number = 666, embarque?: any, debugEmbarque?: string): number => {
+  // Debug específico para embarque 048
+  const isDebug = debugEmbarque?.includes('048');
+  if (isDebug) {
+    console.log('=== DEBUG EMBARQUE 048 - PAGO OPERADOR (FUENTE ÚNICA) ===');
+    console.log('Embarque completo:', embarque);
+    console.log('Embarque.pago_operador:', embarque?.pago_operador);
   }
-
-  const candidatos = [
-    (tipo as any)?.precio_base,
-    (tipo as any)?.pago_operador,
-    (tipo as any)?.pagoOperador,
-  ];
-
-  for (const candidato of candidatos) {
-    const parsed = parseMonto(candidato);
-    if (parsed !== undefined) {
-      return parsed;
+  
+  // 🎯 FUENTE ÚNICA: SIEMPRE usar embarques.pago_operador
+  // Esta es la ÚNICA fuente de verdad para el pago del operador
+  if (embarque && typeof embarque.pago_operador === 'number') {
+    if (isDebug) {
+      console.log('RESULTADO FINAL (desde embarques.pago_operador):', embarque.pago_operador);
+      console.log('=== FIN DEBUG 048 ===');
     }
+    return embarque.pago_operador;
   }
-
+  
+  // Si no hay embarque o no tiene pago_operador definido, retornar 0
+  if (isDebug) {
+    console.log('RESULTADO FINAL: 0 (embarque sin pago_operador definido)');
+    console.log('=== FIN DEBUG 048 ===');
+  }
+  
   return 0;
 };
 
@@ -123,6 +126,91 @@ const encontrarTipoFleteFalso = (
   tipos?: Array<Partial<TipoServicio>> | null,
 ): Partial<TipoServicio> | undefined => {
   return (tipos || []).find((tipo) => esTipoServicioFleteFalso(tipo));
+};
+
+// Función helper para detectar si un embarque tiene múltiples direcciones
+const tieneMultiplesDirecciones = (recolectas: any[], entregas: any[]) => {
+  const recolectasValidas = recolectas.filter((r: any) => r.direccion?.trim());
+  const entregasValidas = entregas.filter((e: any) => e.direccion?.trim());
+  return recolectasValidas.length > 1 || entregasValidas.length > 1;
+};
+
+// Función para extraer múltiples direcciones de las observaciones
+const extraerDireccionesMultiples = (observaciones: string | null) => {
+  if (!observaciones) return { recolectas: [], entregas: [], observacionesLimpias: "" };
+
+  const marcador = "--- DIRECCIONES MÚLTIPLES ---";
+  const partes = observaciones.split(marcador);
+  
+  if (partes.length < 2) {
+    // No hay direcciones múltiples guardadas
+    return { recolectas: [], entregas: [], observacionesLimpias: observaciones };
+  }
+
+  const observacionesLimpias = partes[0].trim();
+  const direccionesTexto = partes[1];
+
+  const recolectas: Array<{direccion: string, fecha: string, hora: string}> = [];
+  const entregas: Array<{direccion: string, fecha: string, hora: string}> = [];
+
+  try {
+    const lineas = direccionesTexto.split('\n').map(l => l.trim()).filter(l => l);
+    let seccionActual = '';
+
+    for (const linea of lineas) {
+      if (linea === 'RECOLECCIONES:') {
+        seccionActual = 'recolecciones';
+        continue;
+      }
+      if (linea === 'ENTREGAS:') {
+        seccionActual = 'entregas';
+        continue;
+      }
+
+      // Parsear línea de dirección: "1. Dirección (fecha hora)"
+      const match = linea.match(/^\d+\.\s*(.+?)(\s*\(([^)]+)\))?$/);
+      if (match) {
+        const direccion = match[1].trim();
+        const fechaHora = match[3] || '';
+        
+        // Separar fecha y hora si están presentes
+        const partesFechaHora = fechaHora.split(' ').filter(p => p);
+        const fecha = partesFechaHora[0] || '';
+        const hora = partesFechaHora[1] || '';
+
+        const direccionObj = { direccion, fecha, hora };
+
+        if (seccionActual === 'recolecciones') {
+          recolectas.push(direccionObj);
+        } else if (seccionActual === 'entregas') {
+          entregas.push(direccionObj);
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('Error parseando direcciones múltiples:', e);
+  }
+
+  return { recolectas, entregas, observacionesLimpias };
+};
+
+// Función para determinar si un embarque tiene múltiples direcciones (versión simplificada)
+const embarqueTieneMultiplesDirecciones = (embarque: any) => {
+  // 1. Verificar observaciones (método principal para embarques con múltiples direcciones)
+  if (embarque.observaciones && embarque.observaciones.includes('DIRECCIONES MÚLTIPLES')) {
+    try {
+      const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones);
+      if (tieneMultiplesDirecciones(recolectas, entregas)) {
+        return true;
+      }
+    } catch (e) {
+      console.warn('Error parseando direcciones múltiples desde observaciones:', e);
+    }
+  }
+
+  // 2. Para este sistema, la mayoría de embarques solo tienen direcciones individuales
+  // en los campos legacy, por lo que retornamos false si no hay marcador en observaciones
+  return false;
 };
 
 export default function AsignarOperadoresPage() {
@@ -151,6 +239,7 @@ export default function AsignarOperadoresPage() {
   }, [operadores]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [precioGlobalFleteFalso, setPrecioGlobalFleteFalso] = useState<number>(666); // Estado para precio global
   const [showConfirmAsignar, setShowConfirmAsignar] = useState(false);
   const [pendingAsignacion, setPendingAsignacion] = useState<{
     embarqueId: string | null;
@@ -165,6 +254,8 @@ export default function AsignarOperadoresPage() {
   // Paginación principal (lista de embarques) – mismo método que en Crear Embarques
   const [listaPage, setListaPage] = useState(1);
   const [listaPageSize, setListaPageSize] = useState(12);
+  // Resaltar un embarque recién enviado desde "Completar y Enviar"
+  const [highlightId, setHighlightId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showModifyModal, setShowModifyModal] = useState(false);
   // Cancelación
@@ -271,7 +362,11 @@ export default function AsignarOperadoresPage() {
     try {
       setSaving(true);
       await agregarAuditLog("ELIMINAR", "Asignación → Registros Completados", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
-      const { error } = await supabase.from("embarques").delete().eq("id", embarque.id);
+      
+      // Determinar qué tabla usar según la fuente del embarque
+      const tabla = "embarques"; // ✅ SIMPLIFICADO: Solo usar tabla legacy
+      
+      const { error } = await supabase.from(tabla).delete().eq("id", embarque.id);
       if (error) {
         console.error("Error eliminando embarque:", error);
         toast({ title: "Error al eliminar", description: error.message || "Error desconocido", variant: "destructive" });
@@ -627,8 +722,11 @@ export default function AsignarOperadoresPage() {
         }\n\n[CANCELADO] ${cancelReason}`.trim();
       } catch {}
 
+      // Determinar qué tabla usar según la fuente del embarque
+      const tabla = "embarques"; // ✅ SIMPLIFICADO: Solo usar tabla legacy
+      
       const { error: baseError } = await supabase
-        .from("embarques")
+        .from(tabla)
         .update(baseUpdate)
         .eq("id", cancelingEmbarque.id);
       if (baseError) {
@@ -642,7 +740,7 @@ export default function AsignarOperadoresPage() {
           cancelado_por: getCurrentUser()?.nombre || "Usuario",
           motivo_cancelacion: cancelReason.trim(),
         };
-        await supabase.from("embarques").update(metaUpdate).eq("id", cancelingEmbarque.id);
+        await supabase.from(tabla).update(metaUpdate).eq("id", cancelingEmbarque.id);
       } catch (e) {
         console.warn("No se pudo guardar metadata de cancelación", e);
       }
@@ -669,34 +767,96 @@ export default function AsignarOperadoresPage() {
   // Cargar datos desde Supabase
   const cargarDatos = async () => {
     try {
+      console.log('🔄 Cargando datos para asignación (SOLO TABLA LEGACY)...');
       setLoading(true);
 
-    const { data: embarquesData, error: embarquesError } = await supabase
+      // ✅ SIMPLIFICADO: Solo cargar embarques de tabla legacy (embarques)
+      const { data: embarquesLegacy, error: embarquesLegacyError } = await supabase
         .from("embarques")
         .select(
           `
         *,
+        recolectas_json,
+        entregas_json,
         cliente:clientes(*),
         operador:operadores(*),
         camion:camiones(*),
         remolque:remolques(*)
       `
         )
-        .in("estado", ["listo-para-asignar", "asignado", "en-transito", "cancelado", "archivado"]) // incluir cancelados y archivados para lógica de doble archivado
+        .in("estado", [
+          "listo-para-asignar", "listo-para-asignar_contingencia", "listo-para-asignar_contingencia_FF",
+          "asignado", "asignado_contingencia", "asignado_contingencia_FF", 
+          "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF",
+          "cancelado", "archivado"
+        ])
         .order("fecha_creacion", { ascending: false });
 
-      if (embarquesError) {
-        console.error("Error cargando embarques:", embarquesError);
-        setEmbarques([]);
-      } else {
-        const embarquesConModificaciones = await Promise.all(
-          (embarquesData || []).map(async (embarque) => {
-            const modificado = await verificarModificacion(embarque.id);
-            return { ...embarque, modificado };
-          })
-        );
-        setEmbarques(embarquesConModificaciones);
+      if (embarquesLegacyError) {
+        console.error("❌ Error cargando embarques:", embarquesLegacyError);
+        throw embarquesLegacyError;
       }
+
+      console.log('✅ Embarques cargados:', embarquesLegacy?.length || 0);
+      
+      // 🔍 DEBUG ESPECÍFICO - Buscar embarque 048
+      const embarque048 = embarquesLegacy?.find(e => e.folio?.includes('048'));
+      if (embarque048) {
+        console.log('🎯 ENCONTRADO EMBARQUE 048:', {
+          folio: embarque048.folio,
+          estado: embarque048.estado,
+          flete_falso: embarque048.flete_falso,
+          pago_operador: embarque048.pago_operador,
+          tipo_servicio_id: embarque048.tipo_servicio_id
+        });
+      } else {
+        console.log('⚠️ No se encontró embarque 048 en los datos cargados');
+      }
+      
+      // Marcar todos como fuente legacy para compatibilidad
+      const embarquesDeduplicated = (embarquesLegacy || []).map(e => ({ 
+        ...e, 
+        _fuente: 'legacy' 
+      }));
+      
+      console.log('🎯 Total de embarques disponibles:', embarquesDeduplicated.length);
+      
+      // Log de estados para debug
+      const porEstado = embarquesDeduplicated.reduce((acc: any, e: any) => {
+        acc[e.estado] = (acc[e.estado] || 0) + 1;
+        return acc;
+      }, {});
+      console.log('📈 Distribución por estado:', porEstado);
+
+      // Verificar modificaciones en todos los embarques
+      const embarquesConModificaciones = await Promise.all(
+        embarquesDeduplicated.map(async (embarque) => {
+          const modificado = await verificarModificacion(embarque.id);
+          return { ...embarque, modificado };
+        })
+      );
+      
+      console.log('📦 Embarques finales para UI:', embarquesConModificaciones.length);
+      
+      // Log específico de embarques modificados
+      const embarquesModificados = embarquesConModificaciones.filter(e => (e as any).modificado);
+      console.log('🔴 Embarques con modificaciones por contingencia:', embarquesModificados.length);
+      if (embarquesModificados.length > 0) {
+        embarquesModificados.forEach(e => {
+          console.log(`   🔴 ${e.folio} - MODIFICADO POR CONTINGENCIA`);
+        });
+      }
+      
+      // Log específico de embarques "listo-para-asignar" (incluye contingencia)
+      const listosParaAsignar = embarquesConModificaciones.filter(e => 
+        e.estado?.startsWith('listo-para-asignar')
+      );
+      console.log('🎯 Embarques "listo-para-asignar" (incluye contingencia) para UI:', listosParaAsignar.length);
+      listosParaAsignar.forEach(e => {
+        console.log(`   ✅ ${e.folio} (${e._fuente}): ${e.estado} ${(e as any).modificado ? '🔴' : ''}`);
+      });
+      
+      setEmbarques(embarquesConModificaciones);
 
       const { data: operadoresData, error: operadoresError } = await supabase
         .from("operadores")
@@ -755,6 +915,15 @@ export default function AsignarOperadoresPage() {
         console.warn("No se pudieron cargar tipos de servicio:", e);
         setTiposServicio([]);
       }
+
+      // Cargar precio global de flete falso
+      try {
+        const precioGlobal = await obtenerPrecioFleteFalso();
+        setPrecioGlobalFleteFalso(precioGlobal);
+      } catch (e) {
+        console.warn("No se pudo cargar precio global flete falso:", e);
+        setPrecioGlobalFleteFalso(666); // Fallback
+      }
     } catch (error) {
       console.error("Error general:", error);
       setEmbarques([]);
@@ -770,64 +939,79 @@ export default function AsignarOperadoresPage() {
     try {
       setLoadingCompleted(true);
 
-      let { data: embarquesData, error: embarquesError } = await supabase
+      // ✅ SIMPLIFICADO: Solo cargar de tabla legacy (embarques)
+      let { data: embarquesLegacy, error: embarquesLegacyError } = await supabase
         .from("embarques")
         .select(
           `
         *,
+        recolectas_json,
+        entregas_json,
         cliente:clientes(*),
         operador:operadores(*),
         camion:camiones(*),
         remolque:remolques(*)
       `
         )
-        .in("estado", ["finalizado", "cancelado", "archivado"]) // incluir archivados si fueron archivados en Asignación
+        .in("estado", ["finalizado", "cancelado", "archivado"])
         .order("updated_at", { ascending: false });
 
-      if (
-        embarquesError &&
-        embarquesError.message.includes("fecha_finalizacion")
-      ) {
-        console.warn(
-          "fecha_finalizacion column not found, using updated_at for ordering"
-        );
+      if (embarquesLegacyError && embarquesLegacyError.message.includes("fecha_finalizacion")) {
+        console.warn("fecha_finalizacion column not found, using updated_at for ordering");
 
         const { data: fallbackData, error: fallbackError } = await supabase
           .from("embarques")
           .select(
             `
             *,
+            recolectas_json,
+            entregas_json,
             cliente:clientes(*),
             operador:operadores(*),
             camion:camiones(*),
             remolque:remolques(*)
           `
           )
-          .in("estado", ["finalizado", "cancelado", "archivado"]) // incluir archivados si fueron archivados en Asignación
+          .in("estado", ["finalizado", "cancelado", "archivado"])
           .order("updated_at", { ascending: false });
 
         if (fallbackError) {
-          console.error(
-            "Error cargando embarques finalizados (fallback):",
-            fallbackError
-          );
+          console.error("Error cargando embarques finalizados (fallback):", fallbackError);
           setEmbarquesFinalizados([]);
           return;
+        } else {
+          embarquesLegacy = fallbackData;
+          embarquesLegacyError = null;
         }
-
-        embarquesData = fallbackData;
-      } else if (embarquesError) {
-        console.error("Error cargando embarques finalizados:", embarquesError);
+      } 
+      
+      if (embarquesLegacyError) {
+        console.error("❌ Error cargando embarques finalizados:", embarquesLegacyError);
         setEmbarquesFinalizados([]);
         return;
       }
+
+      // ✅ Solo usar embarques legacy - marcar con fuente para compatibilidad
+      const todosLosEmbarques = (embarquesLegacy || []).map(e => ({ ...e, _fuente: 'legacy' }));
+      
+      // ✅ SIMPLIFICADO: Sin deduplicación (solo una fuente)
+      const embarquesDeduplicated = todosLosEmbarques;
+
+      // Verificar modificaciones en TODOS los embarques finalizados (igual que los principales)
+      console.log('🔍 Verificando modificaciones en embarques finalizados...');
+      const embarquesFinalizadosConModificaciones = await Promise.all(
+        embarquesDeduplicated.map(async (embarque) => {
+          const modificado = await verificarModificacion(embarque.id);
+          return { ...embarque, modificado };
+        })
+      );
 
       // Mostrar todos los FINALIZADOS.
       // Mostrar CANCELADOS solo si fueron archivados desde Asignación (tag en observaciones).
       // Mostrar ARCHIVADOS si:
       //   - Fueron previamente FINALIZADOS (tienen fecha_finalizacion), o
       //   - Fueron archivados desde Asignación (tienen el tag en observaciones).
-      const withArchFilter = (embarquesData || []).filter((e) => {
+      const withArchFilter = embarquesFinalizadosConModificaciones.filter((e: any) => {
         if (e.estado === "finalizado") return true;
         if (e.estado === "cancelado") {
           const obs = (e.observaciones || "").toUpperCase();
@@ -841,6 +1025,16 @@ export default function AsignarOperadoresPage() {
         }
         return false;
       });
+
+      // Log de embarques finalizados modificados
+      const finalizadosModificados = withArchFilter.filter(e => (e as any).modificado);
+      console.log('🔴 Embarques FINALIZADOS con modificaciones por contingencia:', finalizadosModificados.length);
+      if (finalizadosModificados.length > 0) {
+        finalizadosModificados.forEach(e => {
+          console.log(`   🔴 ${e.folio} - FINALIZADO MODIFICADO POR CONTINGENCIA`);
+        });
+      }
+
       setEmbarquesFinalizados(withArchFilter);
       // Actualizar contadores globales desde la BD
       await contarCompletadosDB();
@@ -854,16 +1048,26 @@ export default function AsignarOperadoresPage() {
 
   const contarCompletadosDB = async () => {
     try {
-      const [{ count: countFinalizados }, { count: countCanceladosArch } ] = await Promise.all([
+      // ✅ SIMPLIFICADO: Solo contar de tabla legacy
+      const [
+        { count: countFinalizadosLegacy }, 
+        { count: countCanceladosArchLegacy }
+      ] = await Promise.all([
         supabase.from("embarques").select("id", { count: "exact", head: true }).eq("estado", "finalizado"),
         supabase
           .from("embarques")
           .select("id", { count: "exact", head: true })
           .eq("estado", "cancelado")
-          .ilike("observaciones", "%[ARCHIVADO-ASIGNACION]%"),
+          .ilike("observaciones", "%[ARCHIVADO-ASIGNACION]%")
       ]);
-      setTotalFinalizadosDB(typeof countFinalizados === "number" ? countFinalizados : null);
-      setTotalCanceladosArchivadosDB(typeof countCanceladosArch === "number" ? countCanceladosArch : null);
+      
+      // Solo usar conteos de tabla legacy
+      const totalCompletados = (countFinalizadosLegacy || 0) + (countCanceladosArchLegacy || 0);
+      const totalFinalizados = countFinalizadosLegacy || 0;
+      const totalCanceladosArch = countCanceladosArchLegacy || 0;
+      
+      setTotalFinalizadosDB(totalFinalizados);
+      setTotalCanceladosArchivadosDB(totalCanceladosArch);
     } catch (err) {
       console.error("Error contando completados:", err);
       setTotalFinalizadosDB(null);
@@ -932,6 +1136,65 @@ export default function AsignarOperadoresPage() {
   useEffect(() => {
     cargarDatos();
   }, []);
+
+  // Función para refrescar datos manualmente
+  const refrescarDatos = () => {
+    console.log('🔄 Refrescando datos manualmente...');
+    cargarDatos();
+  };
+
+  // Exponer función globalmente para debugging
+  useEffect(() => {
+    (window as any).refrescarAsignacion = refrescarDatos;
+    (window as any).cargarDatosAsignacion = cargarDatos;
+  }, []);
+
+  // Si llegamos con ?nuevo=<embarqueId>, forzar vista para mostrarlo como card
+  useEffect(() => {
+    try {
+      const nuevo = (searchParams?.get("nuevo") || "").trim();
+      if (!nuevo) return;
+
+      // Asegurar filtro y búsqueda vacíos para que sea visible en la lista principal
+      if (filtroEstado !== "todos") setFiltroEstado("todos");
+      if (searchTerm) setSearchTerm("");
+
+      // Construir la lista base de embarques activos (sin archivado asignación)
+      const baseList = (embarques || []).filter((e) => {
+        const obsUpper = (e.observaciones || "").toUpperCase();
+        const archivadoAsignacion = obsUpper.includes("[ARCHIVADO-ASIGNACION]");
+        const estadosActivos = [
+          "listo-para-asignar", "listo-para-asignar_contingencia", "listo-para-asignar_contingencia_FF",
+          "asignado", "asignado_contingencia", "asignado_contingencia_FF", 
+          "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF"
+        ];
+        return estadosActivos.includes(e.estado) && !archivadoAsignacion;
+      });
+      const idx = baseList.findIndex((e) => e.id === nuevo);
+      if (idx >= 0) {
+        const pageIndex = Math.floor(idx / Math.max(1, listaPageSize)) + 1;
+        if (listaPage !== pageIndex) setListaPage(pageIndex);
+        setHighlightId(nuevo);
+        // Scroll a la tarjeta una vez que el DOM tenga la tarjeta renderizada
+        setTimeout(() => {
+          try {
+            const el = document.getElementById(`embarque-card-${nuevo}`);
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+          } catch {}
+        }, 400);
+        // Limpiar el parámetro para evitar re-disparos posteriores
+        setTimeout(() => {
+          try {
+            const url = new URL(window.location.href);
+            url.searchParams.delete("nuevo");
+            window.history.replaceState({}, "", url.toString());
+          } catch {}
+        }, 800);
+        // Quitar resaltado después de unos segundos
+        setTimeout(() => setHighlightId(null), 5000);
+      }
+    } catch {}
+  }, [embarques, listaPageSize, searchParams]);
 
   // Verificar existencia de tabla registros_kilometraje (best-effort)
   useEffect(() => {
@@ -1144,7 +1407,7 @@ export default function AsignarOperadoresPage() {
     // Contar fotos para todos los embarques cuando se cargan
     if (embarques.length > 0) {
       embarques.forEach(embarque => {
-        if ((embarque.estado === "asignado" || embarque.modificado) && !(embarque.id in fotosCount)) {
+        if ((embarque.estado?.startsWith("asignado") || embarque.modificado) && !(embarque.id in fotosCount)) {
           contarFotosEmbarque(embarque.id);
         }
       });
@@ -1174,19 +1437,33 @@ export default function AsignarOperadoresPage() {
         quickpaid_descuento = precioFlete * quickpaid_percent;
         precio_quickpaid = precioFlete - quickpaid_descuento;
       }
-      // Calcular y persistir el pago al operador basado en el tipo de servicio del embarque
+      // 🎯 NUEVA LÓGICA: Copiar tipos_servicio.precio_base → embarques.pago_operador
       try {
         const embarqueObj = embarques.find((e) => e.id === embarqueId);
         const tipoServicio = tiposServicio.find((t) => t.id === embarqueObj?.tipo_servicio_id);
-        const precioOperador = obtenerMontoTipoServicio(tipoServicio);
-        // Añadir al update payload
-        // (si la columna no existe en la DB, Supabase retornará un error y el update fallará)
-        // Pero preferimos intentar persistir para garantizar inmutabilidad histórica.
-        // Lo agregamos al objeto que se envía en el .update() más abajo.
-        // Para esto, extendemos asignacionUpdatePayload temporalmente.
-        (asignacion as any).__pagoOperadorToPersist = precioOperador;
+        
+        // Obtener precio_base del tipo de servicio (valor que el usuario configuró)
+        let pagoOperadorToPersist = 0;
+        if (tipoServicio) {
+          // Usar precio_base como fuente principal
+          const precioBase = parseMonto((tipoServicio as any)?.precio_base);
+          if (precioBase !== undefined && precioBase > 0) {
+            pagoOperadorToPersist = precioBase;
+            console.log(`✅ Copiando precio_base ${precioBase} → embarques.pago_operador para ${embarqueObj?.folio}`);
+          } else {
+            // Fallback a pago_operador del tipo si precio_base no existe
+            const pagoOperadorTipo = parseMonto((tipoServicio as any)?.pago_operador);
+            if (pagoOperadorTipo !== undefined && pagoOperadorTipo > 0) {
+              pagoOperadorToPersist = pagoOperadorTipo;
+              console.log(`⚠️ Fallback: usando pago_operador ${pagoOperadorTipo} → embarques.pago_operador para ${embarqueObj?.folio}`);
+            }
+          }
+        }
+        
+        (asignacion as any).__pagoOperadorToPersist = pagoOperadorToPersist;
       } catch (e) {
         console.warn('No se pudo calcular pagoOperador para persistir:', e);
+        (asignacion as any).__pagoOperadorToPersist = 0;
       }
       // Construir payload y añadir pago_operador si lo calculamos
       const updatePayload: any = {
@@ -1286,21 +1563,30 @@ export default function AsignarOperadoresPage() {
         "Asignación Embarques",
         `Folio: ${embarqueAModificar.folio}`
       );
-    if (!embarqueAModificar || !modificacionData.razon.trim()) {
-      toast({ title: "Por favor ingresa una justificación para la modificación", variant: "destructive" });
+    if (!embarqueAModificar) {
+      toast({ title: "Error: No se encontró el embarque a modificar", variant: "destructive" });
       return;
     }
 
-    // Permitir guardar cuando únicamente se marca/desmarca "Flete en Falso" con justificación
-    const hayCambioSoloFleteEnFalso = (modificacionData.flete_en_falso !== !!embarqueAModificar.flete_falso);
-    if (
-      !modificacionData.cambiar_operador &&
-      !modificacionData.cambiar_camion &&
-      !modificacionData.cambiar_remolque &&
-      !modificacionData.cambiar_flete &&
-      !hayCambioSoloFleteEnFalso
-    ) {
+    // Verificar si hay algún cambio válido
+    const hayCambioFleteEnFalso = (modificacionData.flete_en_falso !== !!embarqueAModificar.flete_falso);
+    
+    // Lista de cambios posibles
+    const hayAlgunCambio = 
+      modificacionData.cambiar_operador ||
+      modificacionData.cambiar_camion ||
+      modificacionData.cambiar_remolque ||
+      modificacionData.cambiar_flete ||
+      hayCambioFleteEnFalso; // Flete en falso cuenta como un cambio válido
+    
+    if (!hayAlgunCambio) {
       toast({ title: "Por favor selecciona al menos un elemento a modificar", variant: "destructive" });
+      return;
+    }
+
+    // Verificar justificación solo si hay cambios válidos
+    if (!modificacionData.razon.trim()) {
+      toast({ title: "Por favor ingresa una justificación para la modificación", variant: "destructive" });
       return;
     }
 
@@ -1385,33 +1671,109 @@ export default function AsignarOperadoresPage() {
       // (el checkbox vive en la pestaña Flete y puede marcarse sin capturar un nuevo precio)
       updateData.flete_falso = modificacionData.flete_en_falso;
 
-      // Si se marca Flete en Falso, y existe un tipo de servicio especial con el monto,
-      // usar ese monto como pago_operador en el embarque
-    if (modificacionData.flete_en_falso) {
+      // 🎯 NUEVA LÓGICA: Manejar flete en falso con precio configurable
+      if (modificacionData.flete_en_falso) {
         try {
-          const fleteTipo = encontrarTipoFleteFalso(tiposServicio);
-          if (fleteTipo) {
-            const montoFalso = obtenerMontoTipoServicio(fleteTipo);
-            // Establecer el pago_operador al monto definido para flete en falso
-    // Requerimiento: al marcar el checkbox, el pago asignado al operador debe ser el capturado en "Precio Flete en Falso"
-    updateData.pago_operador = montoFalso;
-            // Además, reemplazar el precio almacenado del embarque para que la tarjeta muestre el monto de flete en falso
-            // y para mantener consistencia contable.
-            try {
-              updateData.precio_flete = montoFalso;
-              // Preferir moneda definida en el tipo, si existe, o usar la moneda elegida en la modificación
-              updateData.moneda_flete = (fleteTipo as any)?.moneda_flete || modificacionData.nueva_moneda_flete || updateData.moneda_flete || 'MXN';
-            } catch (e) {
-              // best-effort: si la columna no existe en la BD, la actualización posterior la ignorará en el retry
-            }
-            // Notificar al usuario (mejor esfuerzo)
-            try {
-              toast({ title: 'Aplicado monto flete en falso', description: `$${montoFalso.toLocaleString('es-MX')}` });
-            } catch (e) {}
+          console.log('🚀 Activando flete falso para embarque:', embarqueAModificar.id);
+          
+          // Usar precio global configurado por el usuario
+          const montoFleteFalso = precioGlobalFleteFalso;
+          console.log('💰 Reemplazando pago_operador con flete falso:', montoFleteFalso);
+          
+          // Actualizar directamente en embarques.pago_operador
+          updateData.pago_operador = montoFleteFalso;
+          
+          // Intentar actualizar con RPC (best effort)
+          try {
+            await actualizarFleteFalsoEmbarque(embarqueAModificar.id, true, montoFleteFalso);
+          } catch (rpcError) {
+            console.warn('RPC flete falso falló, continuando con actualización directa:', rpcError);
           }
+          
+          toast({ 
+            title: 'Flete en falso activado', 
+            description: `Pago del operador cambiado a $${montoFleteFalso.toLocaleString('es-MX')} MXN` 
+          });
         } catch (e) {
-          console.warn('No se pudo aplicar monto flete en falso al sueldo del operador:', e);
+          console.error('❌ Error aplicando flete falso:', e);
+          toast({ 
+            title: 'Error aplicando flete falso', 
+            description: String((e as any)?.message || e), 
+            variant: 'destructive' 
+          });
         }
+      } else {
+        // 🔄 Si se desmarca flete en falso, restaurar precio original del tipo de servicio
+        try {
+          console.log('🔄 Desactivando flete falso para embarque:', embarqueAModificar.id);
+          
+          // Obtener precio_base original del tipo de servicio
+          const tipoServicio = tiposServicio.find(t => t.id === embarqueAModificar.tipo_servicio_id);
+          let precioOriginal = 0;
+          
+          if (tipoServicio) {
+            const precioBase = parseMonto((tipoServicio as any)?.precio_base);
+            if (precioBase !== undefined && precioBase > 0) {
+              precioOriginal = precioBase;
+            } else {
+              const pagoOperadorTipo = parseMonto((tipoServicio as any)?.pago_operador);
+              if (pagoOperadorTipo !== undefined && pagoOperadorTipo > 0) {
+                precioOriginal = pagoOperadorTipo;
+              }
+            }
+          }
+          
+          console.log('💰 Restaurando pago_operador a precio original:', precioOriginal);
+          updateData.pago_operador = precioOriginal;
+          
+          // Intentar desactivar con RPC (best effort)
+          try {
+            await actualizarFleteFalsoEmbarque(embarqueAModificar.id, false);
+          } catch (rpcError) {
+            console.warn('RPC desactivar flete falso falló, continuando:', rpcError);
+          }
+          
+          toast({ 
+            title: 'Flete en falso desactivado', 
+            description: `Pago del operador restaurado a $${precioOriginal.toLocaleString('es-MX')} MXN` 
+          });
+        } catch (e) {
+          console.error('❌ Error desactivando flete falso:', e);
+          toast({ 
+            title: 'Error desactivando flete falso', 
+            description: String((e as any)?.message || e), 
+            variant: 'destructive' 
+          });
+        }
+      }
+
+      // 🎯 NUEVA LÓGICA: Actualizar estado para incluir "_contingencia" o "_contingencia_FF"
+      const estadoActual = embarqueAModificar.estado || 'listo-para-asignar';
+      
+      // Limpiar estado actual si ya tiene sufijos de contingencia
+      const estadoBase = estadoActual.replace(/_contingencia_FF$/, '').replace(/_contingencia$/, '');
+      
+      // Determinar nuevo estado basado en las modificaciones
+      let nuevoEstado = estadoBase;
+      if (modificacionData.flete_en_falso) {
+        nuevoEstado = `${estadoBase}_contingencia_FF`;
+      } else {
+        // Cualquier otra modificación por contingencia (operador, camión, remolque, flete)
+        const hayOtraModificacion = 
+          modificacionData.cambiar_operador ||
+          modificacionData.cambiar_camion ||
+          modificacionData.cambiar_remolque ||
+          modificacionData.cambiar_flete;
+          
+        if (hayOtraModificacion) {
+          nuevoEstado = `${estadoBase}_contingencia`;
+        }
+      }
+      
+      // Solo actualizar estado si cambió
+      if (nuevoEstado !== estadoActual) {
+        updateData.estado = nuevoEstado;
+        console.log(`🔄 Actualizando estado: ${estadoActual} → ${nuevoEstado}`);
       }
 
       // Intentar actualizar; si falla por columna inexistente (por ejemplo pago_operador), reintentar sin ese campo
@@ -1485,6 +1847,7 @@ export default function AsignarOperadoresPage() {
         razon: modificacionData.razon,
         usuario_modificacion: "Sistema",
         fecha_modificacion: new Date().toISOString(),
+        tipo_modificacion: "EDITAR_EMBARQUE", // Distinguir de cambios de estado
       };
 
       if (embarqueAModificar.operador_id) {
@@ -1596,9 +1959,20 @@ export default function AsignarOperadoresPage() {
       }
 
       try {
-        const { error: logError } = await supabase
+        let { error: logError } = await supabase
           .from("embarque_modificaciones")
           .insert(auditData);
+
+        // Si falla, podría ser porque la columna tipo_modificacion no existe
+        // Intentar sin esa columna
+        if (logError && logError.message && logError.message.includes("tipo_modificacion")) {
+          console.warn("Campo tipo_modificacion no existe, reintentando sin él...");
+          const { tipo_modificacion, ...auditDataSinTipo } = auditData;
+          const { error: retryError } = await supabase
+            .from("embarque_modificaciones")
+            .insert(auditDataSinTipo);
+          logError = retryError;
+        }
 
         if (logError) {
           console.error("Error registrando modificación:", logError);
@@ -1606,7 +1980,7 @@ export default function AsignarOperadoresPage() {
             logError.message.includes("Could not find") &&
             logError.message.includes("column")
           ) {
-            toast({ title: "Modificación guardada (audit error)", description: `Problema con la tabla de auditoría. Ejecuta el script SQL 33. Detalle: ${logError.message}`, variant: "destructive" });
+            toast({ title: "Modificación guardada (audit error)", description: `Problema con la tabla de auditoría. Ejecuta mejora-globo-modificado.sql. Detalle: ${logError.message}`, variant: "destructive" });
           } else {
             toast({ title: "Modificación guardada (audit error)", description: `No se pudo registrar la auditoría: ${logError.message}`, variant: "destructive" });
           }
@@ -1846,27 +2220,68 @@ export default function AsignarOperadoresPage() {
     setActiveModifyTab("justificacion");
   };
 
-  const verificarModificacion = async (embarqueId: string) => {
-    try {
-      const { data, error } = await supabase
-        .from("embarque_modificaciones")
-        .select("id")
-        .eq("embarque_id", embarqueId)
-        .limit(1);
+  // 🎯 Función helper para analizar el tipo de contingencia
+  const analizarContingencia = (estado: string) => {
+    const esContingencia = estado.includes('_contingencia');
+    const esFleteFalso = estado.includes('_contingencia_FF');
+    const estadoBase = estado.replace(/_contingencia_FF$/, '').replace(/_contingencia$/, '');
+    
+    return {
+      esContingencia,
+      esFleteFalso,
+      estadoBase,
+      tipoContingencia: esFleteFalso ? 'Flete en Falso' : 'Modificación general'
+    };
+  };
 
+  // 🎯 Función helper para verificar si un estado es activo (incluye contingencia)
+  const esEstadoActivo = (estado: string) => {
+    return estado?.startsWith("listo-para-asignar") || 
+           estado?.startsWith("asignado") || 
+           estado?.startsWith("en-transito");
+  };
+
+  const verificarModificacion = async (embarqueId: string) => {
+    // 🎯 NUEVA LÓGICA: Verificar directamente por el estado del embarque
+    try {
+      const { data: embarqueData, error } = await supabase
+        .from("embarques")
+        .select("estado")
+        .eq("id", embarqueId)
+        .single();
+        
       if (error) {
-        console.error("Error verificando modificaciones:", error);
+        console.warn(`⚠️ Error consultando estado del embarque ${embarqueId}:`, error?.message);
         return false;
       }
-
-      return data && data.length > 0;
+      
+      const estado = embarqueData?.estado || '';
+      const analisis = analizarContingencia(estado);
+      
+      console.log(`🔍 Embarque ${embarqueId} - Estado: ${estado}, Contingencia: ${analisis.esContingencia ? 'SÍ' : 'NO'}${analisis.esFleteFalso ? ' (FF)' : ''}`);
+      
+      return analisis.esContingencia;
     } catch (error) {
-      console.error("Error:", error);
+      console.error("Error inesperado verificando estado de modificación:", error);
       return false;
     }
   };
 
   const getEstadoBadge = (estado: string) => {
+    // Detectar si es flete falso
+    if (estado.includes('_contingencia_FF')) {
+      return (
+        <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-100">
+          Flete F.
+        </Badge>
+      );
+    }
+    
+    // Ocultar el badge "asignado" y otros estados base de contingencia
+    if (estado === "asignado" || estado.includes('_contingencia')) {
+      return null;
+    }
+    
     const estados = {
       "listo-para-asignar": {
         color: "bg-blue-100 text-blue-800",
@@ -1923,10 +2338,14 @@ export default function AsignarOperadoresPage() {
 
     const matchesFilter =
       filtroEstado === "todos"
-        ? embarque.estado !== "finalizado"
+        ? [
+            "listo-para-asignar", "listo-para-asignar_contingencia", "listo-para-asignar_contingencia_FF",
+            "asignado", "asignado_contingencia", "asignado_contingencia_FF", 
+            "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF"
+          ].includes(embarque.estado)
         : filtroEstado === "finalizados"
-        ? embarque.estado === "finalizado"
-        : embarque.estado === filtroEstado;
+        ? embarque.estado.startsWith("finalizado")
+        : embarque.estado.startsWith(filtroEstado);
 
   // Si ya fue archivado en Asignación (tiene la etiqueta), ocultarlo de la lista principal
   const observacionesUpper = (embarque.observaciones || "").toUpperCase();
@@ -1934,6 +2353,12 @@ export default function AsignarOperadoresPage() {
   const ocultarPorArchivoAsignacion = archivadoAsignacion;
 
     return matchesSearch && matchesFilter && !ocultarPorArchivoAsignacion;
+  })
+  .sort((a, b) => {
+    // Ordenar por fecha de creación (más reciente primero) - SOLO TABLA LEGACY
+    const fechaA = new Date(a.fecha_creacion || 0).getTime();
+    const fechaB = new Date(b.fecha_creacion || 0).getTime();
+    return fechaB - fechaA; // Más reciente primero (descending)
   });
 
   // Paginación principal (igual que Crear Embarques)
@@ -2608,7 +3033,7 @@ export default function AsignarOperadoresPage() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Asignar Operadores
+              Asignación de Embarques
             </h1>
             <p className="text-gray-600 mt-2">
               Asignar recursos a embarques listos
@@ -2657,8 +3082,8 @@ export default function AsignarOperadoresPage() {
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">Embarques Pendientes por Asignar</p>
-                  <p className="text-2xl font-bold text-blue-700">{embarques.filter((e) => e.estado === "listo-para-asignar").length}</p>
+                  <p className="text-sm font-medium text-gray-600">Pendientes por Asignar</p>
+                  <p className="text-2xl font-bold text-blue-700">{embarques.filter((e) => e.estado?.startsWith("listo-para-asignar")).length}</p>
                 </div>
                 <svg className="h-8 w-8 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -2816,8 +3241,35 @@ export default function AsignarOperadoresPage() {
 
         {/* Lista de embarques */}
         <div className="grid grid-cols-1 gap-4">
-          {embarquesPaginados.map((embarque) => (
-            <Card key={embarque.id}>
+          {(() => {
+            // Log temporal de embarques modificados
+            console.log('🔍 Total embarques paginados:', embarquesPaginados.length);
+            console.log('🔴 Embarques con modificación:', embarquesPaginados.filter(e => (e as any).modificado).length);
+            return null;
+          })()}
+          {embarquesPaginados.map((embarque) => {
+            // Log temporal para depuración
+            if ((embarque as any).modificado) {
+              console.log(`🔴 Embarque modificado detectado: ${embarque.folio}`, (embarque as any).modificado);
+            }
+            // Analizar tipo de contingencia para colores diferenciados
+            const analisisContingencia = analizarContingencia(embarque.estado || '');
+            
+            return (
+            <Card
+              key={`${embarque.folio}-${(embarque as any)._fuente || 'legacy'}`}
+              id={`embarque-card-${embarque.id}`}
+              className={`
+                ${highlightId === embarque.id ? "ring-2 ring-blue-500" : ""}
+                ${analisisContingencia.esFleteFalso ? "!bg-orange-50 !border-orange-200" : ""}
+                ${analisisContingencia.esContingencia && !analisisContingencia.esFleteFalso ? "!bg-red-50 !border-red-200" : ""}
+              `.trim()}
+              style={analisisContingencia.esContingencia ? { 
+                backgroundColor: analisisContingencia.esFleteFalso ? '#fff7ed' : '#fef2f2', 
+                borderColor: analisisContingencia.esFleteFalso ? '#fed7aa' : '#fecaca',
+                borderWidth: '1px' 
+              } : undefined}
+            >
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div>
@@ -2984,6 +3436,23 @@ export default function AsignarOperadoresPage() {
                         <Package className="h-5 w-5 text-blue-600 mr-1" />
                         {embarque.folio}
                       </span>
+                      
+                      {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
+                      {(() => {
+                        const analisis = analizarContingencia(embarque.estado || '');
+                        if (analisis.esContingencia && !analisis.esFleteFalso) {
+                          return (
+                            <span
+                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold align-middle bg-red-100 text-red-800 border border-red-200"
+                              title="Modificado por contingencia"
+                            >
+                              🔴 CONTINGENCIA
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                      
                       {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
                         <span
                           className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
@@ -2998,12 +3467,14 @@ export default function AsignarOperadoresPage() {
                       {(() => {
                         const cliente = embarque.cliente?.nombre ? `Cliente: ${embarque.cliente.nombre}` : "";
                         const load = embarque.load_number ? `Load: ${embarque.load_number}` : "";
-                        const sep = cliente && load ? " • " : "";
-                        return `${cliente}${sep}${load}` || "`";
+                        
+                        const parts = [cliente, load].filter(Boolean);
+                        return parts.join(" • ") || "";
                       })()}
                     </CardDescription>
                   </div>
                   <div className="flex items-center space-x-2">
+                    {/* Badge de Direcciones Múltiples ahora está junto al botón Detalles */}
                     {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1">
                         <Button
@@ -3019,7 +3490,57 @@ export default function AsignarOperadoresPage() {
                           try { if ((embarque.folio || "").toString().toUpperCase().includes("2509-015") || (embarque.folio || "").toString().toUpperCase().includes("TIM 2509 015") || (embarque.folio || "").toString().toUpperCase().includes("TIM-2509-015")) {
                             console.debug('openDetails: folio match', { raw: embarque, normalized });
                           } } catch(e) {}
-                          setEmbarqueDetalle(normalized);
+                          
+                          // Procesar direcciones múltiples como en el modal de embarques
+                          let recolectas: any[] = [];
+                          let entregas: any[] = [];
+                          
+                          try {
+                            // Prioridad 1: Intentar extraer de campos JSON (si existieran)
+                            if ((embarque as any).recolectas_json) {
+                              recolectas = JSON.parse((embarque as any).recolectas_json);
+                            }
+                            if ((embarque as any).entregas_json) {
+                              entregas = JSON.parse((embarque as any).entregas_json);
+                            }
+                          } catch (jsonError) {
+                            console.warn("Error parsing JSON direcciones:", jsonError);
+                          }
+                          
+                          // Prioridad 2: Si no hay datos JSON, extraer de observaciones
+                          if (recolectas.length === 0 && entregas.length === 0) {
+                            const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
+                            recolectas = extracted.recolectas;
+                            entregas = extracted.entregas;
+                          }
+                          
+                          // Preparar embarque con direcciones múltiples
+                          let embarqueConDirecciones = normalized;
+                          
+                          if (recolectas.length > 0 || entregas.length > 0) {
+                            // Usar las direcciones múltiples extraídas
+                            const recolectasFinales = recolectas.length > 0 ? recolectas : [
+                              { direccion: normalized.direccion_recolecta || normalized.origen || "", fecha: normalized.fecha_recolecta || "", hora: normalized.hora_recolecta || "" }
+                            ];
+                            
+                            const entregasFinales = entregas.length > 0 ? entregas : [
+                              { direccion: normalized.direccion_entrega || normalized.destino || "", fecha: normalized.fecha_entrega || "", hora: normalized.hora_entrega || "" }
+                            ];
+
+                            embarqueConDirecciones = { ...normalized, recolectas: recolectasFinales, entregas: entregasFinales } as any;
+                          } else {
+                            // Usar direcciones legacy como fallback
+                            const recolectasLegacy = [
+                              { direccion: normalized.direccion_recolecta || normalized.origen || "", fecha: normalized.fecha_recolecta || "", hora: normalized.hora_recolecta || "" }
+                            ];
+                            const entregasLegacy = [
+                              { direccion: normalized.direccion_entrega || normalized.destino || "", fecha: normalized.fecha_entrega || "", hora: normalized.hora_entrega || "" }
+                            ];
+                            
+                            embarqueConDirecciones = { ...normalized, recolectas: recolectasLegacy, entregas: entregasLegacy } as any;
+                          }
+                          
+                          setEmbarqueDetalle(embarqueConDirecciones);
                           setActiveTab("general");
                           setSelectedImage(null);
                           setShowDetailsModal(true);
@@ -3030,9 +3551,18 @@ export default function AsignarOperadoresPage() {
                         <Eye className="h-4 w-4 mr-1" />
                         Detalles
                       </Button>
-                      {(embarque.estado === "listo-para-asignar" ||
-                        embarque.estado === "asignado" ||
-                        embarque.estado === "en-transito") && (
+                      {/* Badge D. Múltiples junto al botón Detalles */}
+                      {embarqueTieneMultiplesDirecciones(embarque) && (
+                        <Badge 
+                          className="bg-blue-100 text-blue-800 hover:bg-blue-200 ml-2"
+                          title="Este embarque tiene múltiples direcciones de recolecta o entrega"
+                        >
+                          D. Múltiples
+                        </Badge>
+                      )}
+                      {(embarque.estado?.startsWith("listo-para-asignar") ||
+                        embarque.estado?.startsWith("asignado") ||
+                        embarque.estado?.startsWith("en-transito")) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -3045,7 +3575,7 @@ export default function AsignarOperadoresPage() {
                           Cancelar
                         </Button>
                       )}
-                      {(embarque.estado === "asignado" ||
+                      {(embarque.estado?.startsWith("asignado") ||
                         embarque.modificado) && (
                         <Button
                           variant="outline"
@@ -3063,7 +3593,7 @@ export default function AsignarOperadoresPage() {
                         </Button>
                       )}
                       {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
-                      {(embarque.estado === "asignado" || embarque.modificado || embarque.estado === "listo-para-asignar") && (
+                      {(embarque.estado?.startsWith("asignado") || embarque.modificado || embarque.estado?.startsWith("listo-para-asignar")) && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -3087,7 +3617,7 @@ export default function AsignarOperadoresPage() {
                           Km
                         </Button>
                       )}
-                      {embarque.estado === "asignado" && (
+                      {embarque.estado?.startsWith("asignado") && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -3129,8 +3659,8 @@ export default function AsignarOperadoresPage() {
                           Modificar
                         </Button>
                       )}
-                      {(embarque.estado === "asignado" ||
-                        embarque.estado === "en-transito") && (
+                      {(embarque.estado?.startsWith("asignado") ||
+                        embarque.estado?.startsWith("en-transito")) && (
                         <Button
                           variant="default"
                           size="sm"
@@ -3185,9 +3715,6 @@ export default function AsignarOperadoresPage() {
                     <div className="flex items-center space-x-2">
                       <AlertTriangle className="h-5 w-5 text-red-600" />
                       <div>
-                        <p className="text-red-800 font-medium">
-                          ⚠️ EMBARQUE MODIFICADO
-                        </p>
                         <p className="text-red-600 text-sm">
                           Este embarque ha sido modificado por situaciones de
                           emergencia/contingencia
@@ -3230,6 +3757,40 @@ export default function AsignarOperadoresPage() {
                                     </span>
                                   )}
                                 </p>
+                                {embarque.operador && embarque.tipo_servicio_id && (
+                                  <p className="text-xs text-gray-500 mt-1">
+                                    {(() => {
+                                      const tipoServicio = tiposServicio.find((t) => t.id === embarque.tipo_servicio_id);
+                                      if (!tipoServicio) return null;
+                                      
+                                      // 🔍 DEBUG específico para embarque 048
+                                      const isDebug048 = embarque.folio?.includes('048');
+                                      if (isDebug048) {
+                                        console.log('=== DEBUG TARJETA EMBARQUE 048 ===');
+                                        console.log('Estado:', embarque.estado);
+                                        console.log('Flete falso (campo):', embarque.flete_falso);
+                                        console.log('Tipo servicio encontrado:', tipoServicio);
+                                        console.log('Precio global flete falso:', precioGlobalFleteFalso);
+                                      }
+                                      
+                                      const monto = obtenerMontoTipoServicio(tipoServicio, precioGlobalFleteFalso, embarque, embarque.folio);
+                                      
+                                      if (isDebug048) {
+                                        console.log('Monto calculado:', monto);
+                                        console.log('=== FIN DEBUG TARJETA 048 ===');
+                                      }
+                                      
+                                      if (!monto || monto === 0) return null;
+                                      
+                                      // 🎯 CORRECCIÓN: Detectar flete falso usando la misma lógica que obtenerMontoTipoServicio
+                                      const analisisContingencia = analizarContingencia(embarque.estado || '');
+                                      const esFleteFalso = analisisContingencia.esFleteFalso || embarque?.flete_falso === true;
+                                      const sufijo = esFleteFalso ? " (flete falso)" : "";
+                                      
+                                      return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sufijo}`;
+                                    })()}
+                                  </p>
+                                )}
                               </div>
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Tractocamión</label>
@@ -3547,19 +4108,14 @@ export default function AsignarOperadoresPage() {
                     </div>
 
                     {/* Recursos Asignados */}
-                    {(embarque.estado === "asignado" ||
-                      embarque.estado === "en-transito") && (
+                    {(embarque.estado?.startsWith("asignado") ||
+                      embarque.estado?.startsWith("en-transito")) && (
                       <div className="border-t pt-4">
                         <div className="flex items-center mb-3">
                           <UserCheck className="h-4 w-4 text-gray-600 mr-2" />
                           <h4 className="text-sm font-semibold text-gray-800">
                             Recursos Asignados
                           </h4>
-                          {embarque.modificado && (
-                            <Badge className="ml-3 bg-red-100 text-red-800 text-xs">
-                              MODIFICADO
-                            </Badge>
-                          )}
                         </div>
 
                         <div className="flex flex-col md:flex-row md:items-start ml-8 w-full">
@@ -3575,6 +4131,22 @@ export default function AsignarOperadoresPage() {
                                 ? `${embarque.operador.nombre} ${embarque.operador.apellidos}`
                                 : "Sin asignar"}
                             </p>
+                            {embarque.operador && embarque.tipo_servicio_id && (
+                              <p className="text-xs text-gray-500 mt-1">
+                                {(() => {
+                                  const tipoServicio = tiposServicio.find((t) => t.id === embarque.tipo_servicio_id);
+                                  if (!tipoServicio) return null;
+                                  const monto = obtenerMontoTipoServicio(tipoServicio, precioGlobalFleteFalso, embarque, embarque.folio);
+                                  if (!monto || monto === 0) return null;
+                                  
+                                  // Mostrar contexto adicional si es flete falso
+                                  const esFleteFalso = embarque?.flete_falso === true;
+                                  const sufijo = esFleteFalso ? " (flete falso)" : "";
+                                  
+                                  return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sufijo}`;
+                                })()}
+                              </p>
+                            )}
                             </div>
                             {/* Tractocamión */}
                             <div className="space-y-1 ml-20">
@@ -3634,7 +4206,7 @@ export default function AsignarOperadoresPage() {
                     )}
 
                     {/* Formulario de Asignación */}
-                    {embarque.estado === "listo-para-asignar" && (
+                    {embarque.estado?.startsWith("listo-para-asignar") && (
                       <div className="border-t pt-4">
                         <div className="flex items-center mb-3">
                           <Settings className="h-4 w-4 text-blue-600 mr-2" />
@@ -3763,7 +4335,7 @@ export default function AsignarOperadoresPage() {
                                   value={
                                     asignaciones[embarque.id]?.moneda_flete ||
                                     embarque.moneda_flete ||
-                                    "MXN"
+                                    ""
                                   }
                                   onValueChange={(value) =>
                                     setAsignaciones((prev) => ({
@@ -3777,7 +4349,7 @@ export default function AsignarOperadoresPage() {
                                   required
                                 >
                                   <SelectTrigger className="w-20 bg-white">
-                                    <SelectValue />
+                                    <SelectValue placeholder="Moneda" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="MXN">MXN</SelectItem>
@@ -4016,7 +4588,8 @@ export default function AsignarOperadoresPage() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+          );
+          })}
         </div>
       </div>
 
@@ -4182,15 +4755,16 @@ export default function AsignarOperadoresPage() {
                               {embarqueDetalle.cliente?.email ||
                                 "No especificado"}
                             </p>
-                          </div>
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                              Forma de Facturación
-                            </label>
-                            <p className="text-sm text-gray-700">
-                              {embarqueDetalle.cliente?.forma_facturacion ||
-                                "No especificado"}
-                            </p>
+                            <div className="space-y-1 mt-2">
+                              <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                                Forma de Facturación
+                              </label>
+                              <p className="text-sm text-gray-700">
+                                {embarqueDetalle.cliente?.forma_facturacion ||
+                                  (embarqueDetalle.cliente as any)?.tipo_facturacion ||
+                                  "No especificado"}
+                              </p>
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -4200,15 +4774,7 @@ export default function AsignarOperadoresPage() {
                         <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
                           Información del Embarque
                         </h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                          <div className="space-y-1">
-                            <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                              Estado
-                            </label>
-                            <div className="flex items-center">
-                              {getEstadoBadge(embarqueDetalle.estado)}
-                            </div>
-                          </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                               Carta Porte
@@ -4256,77 +4822,187 @@ export default function AsignarOperadoresPage() {
 
                   {/* Ubicaciones Tab */}
                   {activeTab === "ubicaciones" && (
-                    <div className="space-y-6">
-                      <div className="bg-white border rounded-lg p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
-                          Direcciones de Recolecta y Entrega
-                        </h3>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium text-gray-700">
-                              Dirección de Recolecta
-                            </label>
-                            <div className="bg-gray-50 border rounded-lg p-4">
-                              <p className="text-sm text-gray-900 leading-relaxed">
-                                {embarqueDetalle.direccion_recolecta ||
-                                  embarqueDetalle.origen ||
-                                  "No especificada"}
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                  Fecha
-                                </label>
-                                <p className="text-sm text-gray-700">
-                                  {embarqueDetalle.fecha_recolecta
-                                    ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta)
-                                    : "Sin fecha"}
-                                </p>
+                    <div className="space-y-4 mt-6">
+                      <div className="space-y-6">
+                        {(() => {
+                          // Usar la misma lógica que en embarques para mostrar direcciones múltiples
+                          let recolectasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                          let entregasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                          
+                          try {
+                            // Prioridad 1: Intentar extraer de campos JSON 
+                            if ((embarqueDetalle as any).recolectas_json) {
+                              recolectasFinales = JSON.parse((embarqueDetalle as any).recolectas_json);
+                            }
+                            if ((embarqueDetalle as any).entregas_json) {
+                              entregasFinales = JSON.parse((embarqueDetalle as any).entregas_json);
+                            }
+                          } catch (jsonError) {
+                            console.warn("Error parsing JSON direcciones:", jsonError);
+                          }
+                          
+                          // Prioridad 2: Si no hay datos JSON, extraer de observaciones
+                          if (recolectasFinales.length === 0 && entregasFinales.length === 0) {
+                            try {
+                              const extracted = extraerDireccionesMultiples(embarqueDetalle.observaciones || "");
+                              recolectasFinales = extracted.recolectas;
+                              entregasFinales = extracted.entregas;
+                            } catch (e) {
+                              console.warn('Error parseando direcciones múltiples:', e);
+                            }
+                          }
+                          
+                          // Prioridad 3: Si aún no hay direcciones múltiples, usar campos legacy como fallback
+                          if (recolectasFinales.length === 0) {
+                            const recolectaIndividual = embarqueDetalle.direccion_recolecta || embarqueDetalle.origen;
+                            if (recolectaIndividual) {
+                              recolectasFinales = [{
+                                direccion: recolectaIndividual,
+                                fecha: embarqueDetalle.fecha_recolecta || "",
+                                hora: embarqueDetalle.hora_recolecta || ""
+                              }];
+                            }
+                          }
+                          
+                          if (entregasFinales.length === 0) {
+                            const entregaIndividual = embarqueDetalle.direccion_entrega || embarqueDetalle.destino;
+                            if (entregaIndividual) {
+                              entregasFinales = [{
+                                direccion: entregaIndividual,
+                                fecha: embarqueDetalle.fecha_entrega || "",
+                                hora: embarqueDetalle.hora_entrega || ""
+                              }];
+                            }
+                          }
+
+                          return (
+                            <>
+                              {/* Sección de Recolecta */}
+                              <div className="space-y-4">
+                                <h4 className="font-medium text-gray-900">
+                                  Información de Recolecta
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  <div className="md:col-span-2">
+                                    <Label className="text-sm font-medium text-gray-700">
+                                      Dirección de Recolecta
+                                    </Label>
+                                    {(recolectasFinales.length > 0 && recolectasFinales.some((r: any) => (r.direccion || "").trim() !== "")) ? (
+                                      <div className="space-y-2 mt-1">
+                                        {recolectasFinales.map((r, i) => (
+                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
+                                            <div className="font-medium text-xs text-gray-700">
+                                              {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                            </div>
+                                            <div className="whitespace-pre-wrap mt-1">{r.direccion || "Sin especificar"}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
+                                        {recolectasFinales[0]?.direccion || embarqueDetalle.direccion_recolecta || "Sin especificar"}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="flex items-start gap-4">
+                                    <div className="flex-1">
+                                      <Label className="text-sm font-medium text-gray-700">
+                                        Fecha de Recolecta
+                                      </Label>
+                                      {(() => {
+                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
+                                        const fecha = reco?.fecha || embarqueDetalle.fecha_recolecta;
+                                        return (
+                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                            {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                          </p>
+                                        );
+                                      })()}
+                                    </div>
+                                    <div className="w-40 shrink-0">
+                                      <Label className="text-sm font-medium text-gray-700">
+                                        Hora de Recolecta
+                                      </Label>
+                                      {(() => {
+                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
+                                        const hora = reco?.hora || embarqueDetalle.hora_recolecta;
+                                        return (
+                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                            {hora || "Sin especificar"}
+                                          </p>
+                                        );
+                                      })()}
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                  Hora
-                                </label>
-                                <p className="text-sm text-gray-700">
-                                  {embarqueDetalle.hora_recolecta || "Sin hora"}
-                                </p>
+
+                              {/* Sección de Entrega */}
+                              <div className="space-y-4 border-t pt-4">
+                                <h4 className="font-medium text-gray-900">
+                                  Información de Entrega
+                                </h4>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                  <div className="md:col-span-2">
+                                    <Label className="text-sm font-medium text-gray-700">
+                                      Dirección de Entrega
+                                    </Label>
+                                    {(entregasFinales.length > 0 && entregasFinales.some((e: any) => (e.direccion || "").trim() !== "")) ? (
+                                      <div className="space-y-2 mt-1">
+                                        {entregasFinales.map((e, i) => (
+                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
+                                            <div className="font-medium text-xs text-gray-700">
+                                              {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                            </div>
+                                            <div className="whitespace-pre-wrap mt-1">{e.direccion || "Sin especificar"}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    ) : (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
+                                        {entregasFinales[0]?.direccion || embarqueDetalle.direccion_entrega || "Sin especificar"}
+                                      </p>
+                                    )}
+                                  </div>
+                                  <div className="space-y-4">
+                                    <div className="flex items-start gap-4">
+                                      <div className="flex-1">
+                                        <Label className="text-sm font-medium text-gray-700">
+                                          Fecha de Entrega
+                                        </Label>
+                                        {(() => {
+                                          const ents = entregasFinales || [];
+                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
+                                          const fecha = lastEnt?.fecha || embarqueDetalle.fecha_entrega;
+                                          return (
+                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                              {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                            </p>
+                                          );
+                                        })()}
+                                      </div>
+                                      <div className="w-40 shrink-0">
+                                        <Label className="text-sm font-medium text-gray-700">
+                                          Hora de Entrega
+                                        </Label>
+                                        {(() => {
+                                          const ents = entregasFinales || [];
+                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
+                                          const hora = lastEnt?.hora || embarqueDetalle.hora_entrega;
+                                          return (
+                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                              {hora || "Sin especificar"}
+                                            </p>
+                                          );
+                                        })()}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
                               </div>
-                            </div>
-                          </div>
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium text-gray-700">
-                              Dirección de Entrega
-                            </label>
-                            <div className="bg-gray-50 border rounded-lg p-4">
-                              <p className="text-sm text-gray-900 leading-relaxed">
-                                {embarqueDetalle.direccion_entrega ||
-                                  embarqueDetalle.destino ||
-                                  "No especificada"}
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                  Fecha
-                                </label>
-                                <p className="text-sm text-gray-700">
-                                  {embarqueDetalle.fecha_entrega
-                                    ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega)
-                                    : "Sin fecha"}
-                                </p>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                                  Hora
-                                </label>
-                                <p className="text-sm text-gray-700">
-                                  {embarqueDetalle.hora_entrega || "Sin hora"}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
@@ -4591,6 +5267,8 @@ export default function AsignarOperadoresPage() {
                             </div>
                           </div>
                         </div>
+
+
                       </div>
 
                       <div className="bg-white border rounded-lg p-6">
@@ -5260,13 +5938,11 @@ export default function AsignarOperadoresPage() {
                       </div>
                       {(() => {
                         try {
-                          const fleteTipo = encontrarTipoFleteFalso(tiposServicio);
-                          const monto = fleteTipo ? obtenerMontoTipoServicio(fleteTipo) : null;
                           return (
                             <p className="text-xs text-gray-600">
-                              {monto != null
-                                ? `Al activar este checkbox, al guardar se actualizará el pago del operador por el monto configurado como "Flete en Falso": $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
-                                : 'Define el monto de "Flete en Falso" en Configuración → Tipos de Servicio para aplicarlo automáticamente al pago del operador.'}
+                              {precioGlobalFleteFalso > 0
+                                ? `Al activar este checkbox, al guardar se actualizará el pago del operador por el monto configurado como "Flete en Falso": $${precioGlobalFleteFalso.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`
+                                : 'Configure el precio global de flete en falso en Facturación-Cobranza → Modal "Configurar Precio de Flete en Falso".'}
                             </p>
                           );
                         } catch {
@@ -5410,7 +6086,7 @@ export default function AsignarOperadoresPage() {
                                     const sel = (tiposServicio || []).find((t: any) => (t.id === modificacionData.selected_tipo_servicio) || (String((t as any).slug||'').toLowerCase() === String(modificacionData.selected_tipo_servicio||'').toLowerCase()));
                                     return esTipoServicioFleteFalso(sel);
                                   })();
-                                  const monto = f ? obtenerMontoTipoServicio(f) : null;
+                                  const monto = f ? obtenerMontoTipoServicio(f, precioGlobalFleteFalso, embarqueAModificar) : null;
                                   return isSelectedFF ? (
                                     <p className="text-xs text-gray-700 mt-2">
                                       {monto != null
@@ -5638,7 +6314,27 @@ export default function AsignarOperadoresPage() {
                       </thead>
                       <tbody>
                         {embarquesFinalizadosPaginados.map((embarque) => (
-                          <tr key={embarque.id} className="border-b hover:bg-purple-50">
+                          <tr 
+                            key={`${embarque.id}-${(embarque as any)._fuente || 'legacy'}-completed`} 
+                            className={`
+                              border-b
+                              ${(() => {
+                                const analisisContingencia = analizarContingencia(embarque.estado || '');
+                                return analisisContingencia.esFleteFalso 
+                                  ? "bg-orange-50 hover:bg-orange-100 border-orange-200" 
+                                  : analisisContingencia.esContingencia 
+                                    ? "bg-red-50 hover:bg-red-100 border-red-200"
+                                    : "hover:bg-purple-50";
+                              })()}
+                            `.trim()}
+                            style={(() => {
+                              const analisisContingencia = analizarContingencia(embarque.estado || '');
+                              return analisisContingencia.esContingencia ? {
+                                backgroundColor: analisisContingencia.esFleteFalso ? '#fff7ed' : '#fef2f2',
+                                borderColor: analisisContingencia.esFleteFalso ? '#fed7aa' : '#fecaca'
+                              } : undefined;
+                            })()}
+                          >
                             <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">{embarque.folio}</td>
                             <td className="px-3 py-2 w-48 md:w-64 truncate">{embarque.cliente?.nombre || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-14 md:w-16 truncate">{embarque.load_number || ""}</td>

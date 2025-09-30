@@ -8,7 +8,7 @@ import { Printer, Users, Truck, Container, Package, TrendingUp, AlertTriangle } 
 import { useState, useEffect } from "react"
 import PieChart from "@/components/ui/pie-chart"
 // Corregir importación para usar la instancia supabase existente
-import { supabase } from "@/lib/supabase"
+import { supabase, obtenerPrecioFleteFalso } from "@/lib/supabase"
 import { agregarAuditLog } from "@/lib/audit"
 // No export; se cambia por impresión
 
@@ -40,6 +40,19 @@ export default function ConsultasPage() {
       const year = now.getFullYear()
       const startOfYear = `${year}-01-01`
       const startOfNextYear = `${year + 1}-01-01`
+
+      let precioGlobalFleteFalso = 0
+      try {
+        const precioObtenido = await obtenerPrecioFleteFalso()
+        if (typeof precioObtenido === "number" && Number.isFinite(precioObtenido) && precioObtenido > 0) {
+          precioGlobalFleteFalso = precioObtenido
+        }
+      } catch (error) {
+        console.warn("No se pudo obtener el precio global de flete falso, usando fallback", error)
+      }
+      if (precioGlobalFleteFalso <= 0) {
+        precioGlobalFleteFalso = 666
+      }
 
       // Traer una sola vez el dataset relevante del año y construir todas las agregaciones en memoria
       // Traer el dataset del año. Seleccionamos '*' para incluir posibles
@@ -85,12 +98,38 @@ export default function ConsultasPage() {
       const clientesMetaMap = new Map((clientesMeta || []).map((c: any) => [c.id, c]))
 
       // Helper local: calcular monto contable de una fila (mismo criterio que Facturación)
+      const parseMonto = (valor: any): number | undefined => {
+        if (typeof valor === "number") {
+          return Number.isFinite(valor) ? valor : undefined
+        }
+        if (typeof valor === "string") {
+          const trimmed = valor.trim()
+          if (!trimmed) return undefined
+          const parsed = Number(trimmed)
+          return Number.isFinite(parsed) ? parsed : undefined
+        }
+        return undefined
+      }
+
       const getMontoFromRow = (e: any) => {
         if (!e) return 0
         // QuickPaid preferido cuando está activo y existe precio_quickpaid
         if (e?.quickpaid_enabled && (typeof e?.precio_quickpaid === 'number' || typeof e?.precio_quickpaid === 'string')) {
           return typeof e.precio_quickpaid === 'number' ? e.precio_quickpaid : Number(e.precio_quickpaid) || 0
         }
+
+        const estadoLower = String(e?.estado || "").toLowerCase()
+        const esFleteFalsoEstado = estadoLower.includes("_contingencia_ff")
+        const esFleteFalsoLegacy = e?.flete_falso === true
+
+        if (esFleteFalsoEstado || esFleteFalsoLegacy) {
+          const pagoOperador = parseMonto(e?.pago_operador)
+          if (typeof pagoOperador === "number" && pagoOperador > 0) {
+            return pagoOperador
+          }
+          return precioGlobalFleteFalso
+        }
+
         if (typeof e?.cantidad_final_facturada === 'number') return e.cantidad_final_facturada
         if (typeof e?.precio_flete === 'number') return e.precio_flete
         if (typeof e?.precio_flete === 'string') return Number(e.precio_flete) || 0

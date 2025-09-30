@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { getSupabaseAdmin } from "@/lib/supabaseAdmin";
+import { calcularPagoOperador } from "@/lib/supabase";
 import * as XLSX from "xlsx";
 
 export const runtime = "nodejs";

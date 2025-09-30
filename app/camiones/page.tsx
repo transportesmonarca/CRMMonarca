@@ -101,6 +101,67 @@ const uuidv4 = () => {
   });
 };
 
+// 🎲 Función para generar datos aleatorios de tractocamión
+const generarDatosAleatoriosCamion = (setFormData: any, toast: any) => {
+  const marcas = ["Freightliner", "Kenworth", "Peterbilt", "Volvo", "Mack", "International"];
+  const modelos = ["Cascadia", "T680", "579", "VNL", "Anthem", "LT"];
+  const años = Array.from({ length: 10 }, (_, i) => 2024 - i); // Últimos 10 años
+  
+  const marcaRandom = marcas[Math.floor(Math.random() * marcas.length)];
+  const modeloRandom = modelos[Math.floor(Math.random() * modelos.length)];
+  const añoRandom = años[Math.floor(Math.random() * años.length)];
+  const numeroEconomico = Math.floor(Math.random() * 9999) + 1000;
+  const numeroSerie = `${marcaRandom.slice(0, 3).toUpperCase()}${Math.floor(Math.random() * 900000) + 100000}`;
+  
+  // Placas mexicanas formato ABC-1234
+  const letras = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const placasMX = Array.from({ length: 3 }, () => letras[Math.floor(Math.random() * letras.length)]).join('') + 
+                  '-' + Math.floor(Math.random() * 9000 + 1000);
+  
+  const kilometraje = Math.floor(Math.random() * 800000) + 50000; // Entre 50k y 850k km
+  
+  // Fechas futuras para vencimientos
+  const hoy = new Date();
+  const seguroMX = new Date(hoy);
+  seguroMX.setMonth(hoy.getMonth() + Math.floor(Math.random() * 12) + 1);
+  const seguroUS = new Date(hoy);
+  seguroUS.setMonth(hoy.getMonth() + Math.floor(Math.random() * 12) + 1);
+  
+  const polizaMX = `POL-MX-${Math.floor(Math.random() * 900000) + 100000}`;
+  const polizaUS = `POL-US-${Math.floor(Math.random() * 900000) + 100000}`;
+  
+  const tagMX = `TAG-MX-${Math.floor(Math.random() * 90000) + 10000}`;
+  const tagUS = `TAG-US-${Math.floor(Math.random() * 90000) + 10000}`;
+
+  setFormData({
+    numero_economico: numeroEconomico.toString(),
+    marca: marcaRandom,
+    modelo: modeloRandom,
+    año: añoRandom.toString(),
+    numero_serie: numeroSerie,
+    placas: placasMX,
+    kilometraje: kilometraje.toString(),
+    estado: "disponible",
+    ultima_verificacion: "",
+    frecuencia_verificacion: "6", // 6 meses
+    poliza_seguro_mexicano: polizaMX,
+    fecha_vencimiento_seguro_mexicano: seguroMX.toISOString().split('T')[0],
+    poliza_seguro_americano: polizaUS,
+    fecha_vencimiento_seguro_americano: seguroUS.toISOString().split('T')[0],
+    comentarios: `Tractocamión ${marcaRandom} ${modeloRandom} ${añoRandom} - Generado automáticamente`,
+    tag_americano: tagUS,
+    tag_mexicano: tagMX,
+    numero_base: Math.floor(Math.random() * 9000) + 1000,
+    numeros_adicionales: [],
+    documentos: [],
+  });
+
+  toast({
+    title: "Datos generados",
+    description: `Tractocamión ${marcaRandom} ${numeroEconomico} creado con datos aleatorios`,
+  });
+};
+
 // Normalizar fecha: devolver siempre YYYY-MM-DD cuando sea posible.
 // - Si ya es date-only (YYYY-MM-DD) devolver tal cual.
 // - Si viene un timestamp/ISO, convertir a fecha en la zona America/Matamoros y devolver YYYY-MM-DD.
@@ -2377,12 +2438,27 @@ export default function CamionesPage() {
               </DialogTrigger>
               <DialogContent className={`max-w-4xl ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
                 <DialogHeader>
-                  <DialogTitle>
-                    {editingCamion ? "Editar Camión" : "Nuevo Camión"}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Completa la información del camión
-                  </DialogDescription>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <DialogTitle>
+                        {editingCamion ? "Editar Camión" : "Nuevo Camión"}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Completa la información del camión
+                      </DialogDescription>
+                    </div>
+                    {!editingCamion && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => generarDatosAleatoriosCamion(setFormData, toast)}
+                        className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+                      >
+                        🎲 Datos Aleatorios
+                      </Button>
+                    )}
+                  </div>
                 </DialogHeader>
 
                 <div className="w-full">

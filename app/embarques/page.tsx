@@ -38,6 +38,7 @@ import {
   MapPin,
   Calendar,
   Truck,
+  Trash,
   Eye,
   RefreshCw,
   Printer,
@@ -53,6 +54,7 @@ import { getCurrentUser } from "@/lib/auth";
 import { agregarAuditLog } from "@/lib/audit";
 import { formatDateMatamoros } from '@/lib/date-utils';
 import { normalizeDate } from '@/lib/date-utils';
+import { useRouter } from "next/navigation";
 import {
   supabase,
   type Embarque,
@@ -93,17 +95,15 @@ const parseMonto = (valor: any): number | undefined => {
   return undefined;
 };
 
-const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number => {
+const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null, precioGlobalFleteFalso: number = 800, embarque?: any): number => {
   if (!tipo) return 0;
-  if (esTipoServicioFleteFalso(tipo)) {
-    const alterno =
-      (tipo as any)?.pago_operador_flete_falso ?? (tipo as any)?.pagoOperadorFleteEnFalso;
-    const parsedAlterno = parseMonto(alterno);
-    if (parsedAlterno !== undefined) {
-      return parsedAlterno;
-    }
+  
+  // Solo usar precio global si el EMBARQUE específico está marcado como flete falso
+  if (embarque?.flete_falso === true) {
+    return precioGlobalFleteFalso;
   }
 
+  // Para servicios normales o si el embarque no está marcado como flete falso, usar precio base
   const candidatos = [
     (tipo as any)?.precio_base,
     (tipo as any)?.pago_operador,
@@ -112,15 +112,14 @@ const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null): number =
 
   for (const candidato of candidatos) {
     const parsed = parseMonto(candidato);
-    if (parsed !== undefined) {
-      return parsed;
-    }
+    if (parsed !== undefined) return parsed;
   }
 
   return 0;
 };
 
 export default function EmbarquesPage() {
+  const router = useRouter();
   const [embarques, setEmbarques] = useState<Embarque[]>([]);
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [operadores, setOperadores] = useState<Operador[]>([]);
@@ -128,10 +127,31 @@ export default function EmbarquesPage() {
   const [remolques, setRemolques] = useState<Remolque[]>([]);
   const [contactos, setContactos] = useState<ContactoCliente[]>([]);
   const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([]);
+  const [precioGlobalFleteFalso, setPrecioGlobalFleteFalso] = useState(800);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
-  const [filtroEstado, setFiltroEstado] = useState("todos");
+  // Estados para filtros y búsqueda con persistencia
+  const [filtroEstado, setFiltroEstado] = useState(() => {
+    // 🔧 Cargar filtro desde localStorage o usar "todos" por defecto
+    if (typeof window !== 'undefined') {
+      const savedFilter = localStorage.getItem('embarques-filtro-estado');
+      console.log(`🔧 [FILTRO] Cargando filtro desde localStorage: '${savedFilter}' → usando: '${savedFilter || 'todos'}'`);
+      return savedFilter || "todos";
+    }
+    return "todos";
+  });
+
+  // 🔧 Función para cambiar filtro con persistencia
+  const cambiarFiltroEstado = (nuevoFiltro: string) => {
+    console.log(`🔧 [FILTRO] Cambiando filtro de '${filtroEstado}' → '${nuevoFiltro}'`);
+    setFiltroEstado(nuevoFiltro);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('embarques-filtro-estado', nuevoFiltro);
+      console.log(`🔧 [FILTRO] Guardado en localStorage: '${nuevoFiltro}'`);
+    }
+  };
+
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [embarqueEditando, setEmbarqueEditando] = useState<Embarque | null>(
@@ -163,6 +183,32 @@ export default function EmbarquesPage() {
   const [publicExpirationInput, setPublicExpirationInput] = useState<string | null>(null);
   const [publicForEmbarqueId, setPublicForEmbarqueId] = useState<string | null>(null);
   const [embarqueFotos, setEmbarqueFotos] = useState<FotoEmbarque[]>([]);
+
+  // Persistencia local (client-side) para marcar embarques que el usuario completó
+  // Esto evita que el botón "Completar y Enviar" reaparezca después de recargar
+  const LOCAL_KEY_COMPLETADOS = 'embarques_completados_local_v1';
+  const getCompletedLocal = (): string[] => {
+    try {
+      const raw = localStorage.getItem(LOCAL_KEY_COMPLETADOS);
+      return raw ? JSON.parse(raw) : [];
+    } catch (e) {
+      return [];
+    }
+  };
+  const addCompletedLocal = (id: string) => {
+    try {
+      const arr = new Set(getCompletedLocal());
+      arr.add(String(id));
+      localStorage.setItem(LOCAL_KEY_COMPLETADOS, JSON.stringify(Array.from(arr)));
+    } catch (e) {}
+  };
+  const removeCompletedLocal = (id: string) => {
+    try {
+      const arr = new Set(getCompletedLocal());
+      arr.delete(String(id));
+      localStorage.setItem(LOCAL_KEY_COMPLETADOS, JSON.stringify(Array.from(arr)));
+    } catch (e) {}
+  };
 
   const { toast } = useToast();
 
@@ -222,9 +268,26 @@ export default function EmbarquesPage() {
 
   // Cargar datos iniciales
   useEffect(() => {
+    console.log(`🔧 [MOUNT] Componente montado, filtro inicial: '${filtroEstado}'`);
     loadData();
     cargarProximoFolio();
+    cargarPrecioGlobalFleteFalso();
   }, []);
+
+  const cargarPrecioGlobalFleteFalso = async () => {
+    try {
+      const res = await fetch('/api/config/flete-falso');
+      if (res.ok) {
+        const data = await res.json();
+        const precio = Number(data.precio);
+        if (!isNaN(precio)) {
+          setPrecioGlobalFleteFalso(precio);
+        }
+      }
+    } catch (error) {
+      console.warn('No se pudo cargar precio global de flete falso, usando 800.00');
+    }
+  };
 
   const loadData = async () => {
     setLoading(true);
@@ -246,7 +309,10 @@ export default function EmbarquesPage() {
 
   const loadEmbarques = async () => {
     try {
-      const { data, error } = await supabase
+      console.log("🔄 Cargando embarques desde tablas legacy Y normalizadas...");
+      
+      // 1. Cargar embarques LEGACY
+      const { data: embarquesLegacy, error: errorLegacy } = await supabase
         .from("embarques")
         .select(
           `
@@ -259,12 +325,243 @@ export default function EmbarquesPage() {
         )
         .order("fecha_creacion", { ascending: false });
 
-      if (error) {
-        console.error("Error loading embarques:", error);
-        return;
+      if (errorLegacy) {
+        console.error("Error loading embarques legacy:", errorLegacy);
       }
 
-      setEmbarques(data || []);
+      // 2. ELIMINADO: Ya no usamos tabla normalizada embarques_nuevo
+      // Todos los datos vienen de la tabla embarques legacy
+      const embarquesNormalizados: any[] = [];
+      const errorNormalizado = null;
+
+      if (errorNormalizado) {
+        console.error("Error loading embarques normalizados:", errorNormalizado);
+      }
+
+      // 3. Combinar y transformar embarques normalizados al formato legacy para compatibilidad
+      const embarquesNormalizadosCompatibles = (embarquesNormalizados || []).map((embarque: any) => {
+        const ubicacion = embarque.ubicaciones?.[0] || {};
+        const financiero = embarque.financiero?.[0] || {};
+        const estado = embarque.estado?.[0] || {};
+        const documento = embarque.documentos?.[0] || {};
+        const adicional = embarque.adicional?.[0] || {};
+
+        return {
+          ...embarque,
+          // Mapear campos de ubicaciones
+          origen: ubicacion.origen || 'Por definir',
+          destino: ubicacion.destino || 'Por definir',
+          direccion_recolecta: ubicacion.direccion_recolecta,
+          direccion_entrega: ubicacion.direccion_entrega,
+          fecha_recolecta: ubicacion.fecha_recolecta,
+          hora_recolecta: ubicacion.hora_recolecta,
+          fecha_entrega: ubicacion.fecha_entrega,
+          hora_entrega: ubicacion.hora_entrega,
+          aduana_cruce: ubicacion.aduana_cruce,
+          patente_agente_aduanal: ubicacion.patente_agente_aduanal,
+          
+          // Mapear campos financieros (usar arquitectura desacoplada)
+          precio_flete: embarque.tipo_servicio_precio || financiero.precio_flete || 0,
+          precio_operador: embarque.precio_operador_final || financiero.precio_operador || 0,
+          tipo_servicio_nombre: embarque.tipo_servicio_nombre || financiero.tipo_servicio_nombre,
+          flete_falso: financiero.flete_falso || false,
+          
+          // Mapear campos de estado (derivar desde fechas para arquitectura normalizada)
+          estado: (() => {
+            const folio = embarque.folio;
+            const estadoOriginal = embarque.estado;
+            const estadoNormalizado = estado.estado;
+            
+            // 🔧 DEBUG: Logging para diagnóstico
+            if (folio) {
+              console.log(`🔧 [MAPEO] ${folio}: estadoLegacy='${estadoOriginal}', estadoNorm='${estadoNormalizado}'`);
+            }
+            
+            // 🔧 PRIORIDAD 1: Si existe el campo estado en la tabla embarques_estado (arquitectura normalizada)
+            if (estado.estado) {
+              console.log(`🔧 [MAPEO] ${folio}: Usando estado normalizado '${estado.estado}'`);
+              return estado.estado;
+            }
+            
+            // 🔧 PRIORIDAD 2: Derivar desde fechas específicas (arquitectura normalizada)
+            if (estado.fecha_cancelacion) {
+              console.log(`🔧 [MAPEO] ${folio}: Derivado 'cancelado' por fecha_cancelacion`);
+              return 'cancelado';
+            }
+            if (estado.fecha_archivado) {
+              console.log(`🔧 [MAPEO] ${folio}: Derivado 'archivado' por fecha_archivado`);
+              return 'archivado';
+            }
+            if (estado.fecha_finalizacion) {
+              console.log(`🔧 [MAPEO] ${folio}: Derivado 'finalizado' por fecha_finalizacion`);
+              return 'finalizado';
+            }
+            if (estado.fecha_pago && estado.pagado) {
+              console.log(`🔧 [MAPEO] ${folio}: Derivado 'entregado' por fecha_pago+pagado`);
+              return 'entregado';
+            }
+            if (estado.fecha_completado) {
+              console.log(`🔧 [MAPEO] ${folio}: Derivado 'listo-para-asignar' por fecha_completado`);
+              return 'listo-para-asignar';
+            }
+            
+            // 🔧 PRIORIDAD 3: Si no hay info en tabla normalizada, usar estado legacy
+            // PERO con lógica inteligente para mantener funcionalidad del botón
+            if (embarque.estado) {
+              // Normalizar distintos formatos que puedan venir (array, objeto, string)
+              try {
+                // Caso: arquitectura normalizada embebe un array en `embarque.estado`
+                if (Array.isArray(embarque.estado) && embarque.estado[0]) {
+                  const posible = (embarque.estado[0] as any).estado || (embarque.estado[0] as any).nombre || null;
+                  if (posible === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' desde array → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  if (typeof posible === 'string' && posible) {
+                    console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy desde array '${posible}'`);
+                    return posible;
+                  }
+                }
+
+                // Caso: puede venir como objeto con campo `estado`
+                if (typeof embarque.estado === 'object' && embarque.estado !== null) {
+                  const posibleObj = (embarque.estado as any).estado || (embarque.estado as any).nombre || null;
+                  if (posibleObj === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' desde objeto → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  if (typeof posibleObj === 'string' && posibleObj) {
+                    console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy desde objeto '${posibleObj}'`);
+                    return posibleObj;
+                  }
+                }
+
+                // Caso: valor primitivo (string)
+                if (typeof embarque.estado === 'string') {
+                  if (embarque.estado === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy '${embarque.estado}'`);
+                  return embarque.estado;
+                }
+              } catch (e) {
+                console.warn(`⚠️ [MAPEO] ${folio}: Error normalizando estado legacy`, e);
+              }
+            }
+            
+            // 🔧 FALLBACK: Estado por defecto para nuevos embarques
+            console.log(`🔧 [MAPEO] ${folio}: Usando estado por defecto 'creado'`);
+            return 'creado';
+          })(),
+          estado_facturacion: estado.estado_facturacion || 'pendiente_facturacion',
+          pagado: estado.pagado || false,
+          fecha_creacion: estado.fecha_creacion || embarque.created_at,
+          
+          // Mapear documentos
+          carta_porte: documento.carta_porte,
+          
+          // Mapear campos adicionales
+          dueno_mercancia: adicional.dueno_mercancia,
+          representante_cliente: adicional.representante_cliente,
+          info_representante: adicional.info_representante,
+          observaciones: adicional.observaciones,
+          
+          // Marcar como normalizado para distinguir
+          _fuente: 'normalizado'
+        };
+      });
+
+      // 4. Combinar ambas fuentes
+      const embarquesCombinados = [
+        ...(embarquesNormalizadosCompatibles || []),
+        ...(embarquesLegacy || []).map((e: any) => ({ ...e, _fuente: 'legacy' }))
+      ];
+
+      // 4.1. Deduplicar embarques (priorizar normalizados sobre legacy)
+      const embarquesUnicos = new Map();
+      
+      embarquesCombinados.forEach(embarque => {
+        const id = embarque.id;
+        const existing = embarquesUnicos.get(id);
+        
+        if (!existing) {
+          embarquesUnicos.set(id, embarque);
+        } else if (embarque._fuente === 'normalizado' && existing._fuente === 'legacy') {
+          // Priorizar versión normalizada sobre legacy
+          embarquesUnicos.set(id, embarque);
+          console.log(`🔄 Reemplazando ${id} legacy con normalizado`);
+        } else if (embarque._fuente === 'legacy' && existing._fuente === 'normalizado') {
+          // Mantener versión normalizada, ignorar legacy
+          console.log(`⚠️ Ignorando ${id} legacy (ya existe normalizado)`);
+        }
+      });
+      
+  let todosLosEmbarques = Array.from(embarquesUnicos.values());
+      console.log(`🔀 Deduplicación: ${embarquesCombinados.length} → ${todosLosEmbarques.length} embarques únicos`);
+
+      // 5. Ordenar por fecha de creación
+      todosLosEmbarques.sort((a, b) => {
+        const fechaA = new Date(a.fecha_creacion || a.created_at).getTime();
+        const fechaB = new Date(b.fecha_creacion || b.created_at).getTime();
+        return fechaB - fechaA; // Más reciente primero
+      });
+
+      // Log específico para TIM-2509-039
+      const tim039Legacy = embarquesLegacy?.find(e => e.id === 'TIM-2509-039');
+      const tim039Norm = embarquesNormalizados?.find(e => e.id === 'TIM-2509-039');
+      const tim039Final = todosLosEmbarques.find(e => e.id === 'TIM-2509-039');
+      
+      console.log(`🔍 TIM-2509-039 - Legacy: ${tim039Legacy ? '✅' : '❌'}, Normalizado: ${tim039Norm ? '✅' : '❌'}, Final: ${tim039Final ? '✅' : '❌'}`);
+      
+      if (tim039Norm) {
+        console.log('📋 TIM-2509-039 detalles normalizados:', {
+          id: tim039Norm.id,
+          tipo_servicio_precio: tim039Norm.tipo_servicio_precio,
+          precio_operador_final: tim039Norm.precio_operador_final,
+          tipo_servicio_nombre: tim039Norm.tipo_servicio_nombre
+        });
+      }
+
+      console.log(`✅ Embarques cargados: ${embarquesLegacy?.length || 0} legacy + ${embarquesNormalizados?.length || 0} normalizados = ${todosLosEmbarques.length} total`);
+      
+      // 🔧 DIAGNÓSTICO: Verificar estados después de cargar
+      const estadosUnicos = new Set(todosLosEmbarques.map(e => e.estado));
+      console.log(`📊 Estados presentes: ${Array.from(estadosUnicos).join(', ')}`);
+      
+      const listos = todosLosEmbarques.filter(e => e.estado === 'listo-para-asignar');
+      if (listos.length > 0) {
+        console.log(`🟢 Embarques listo-para-asignar: ${listos.map(e => e.folio).join(', ')}`);
+      }
+
+      // 🔧 Tracking del embarque de prueba
+      const embarquePrueba = todosLosEmbarques.find(e => e.folio?.includes('FLOW-1758831360353'));
+      if (embarquePrueba) {
+        console.log(`🔧 [CARGA] Embarque de prueba cargado:`, {
+          folio: embarquePrueba.folio,
+          estado: embarquePrueba.estado,
+          fecha_cancelacion: embarquePrueba.fecha_cancelacion,
+          fecha_archivado: embarquePrueba.fecha_archivado,
+          _fuente: embarquePrueba._fuente
+        });
+      }
+      
+      // Aplicar marcas locales de completado (persistidas en localStorage)
+      try {
+        const completados = getCompletedLocal();
+        if (completados.length > 0) {
+          todosLosEmbarques = todosLosEmbarques.map((e: any) => {
+            if (completados.includes(String(e.id))) {
+              return { ...e, estado: 'listo-para-asignar', _completadoLocal: true };
+            }
+            return e;
+          });
+        }
+      } catch (e) {
+        console.warn('No se pudo aplicar completados locales', e);
+      }
+
+      setEmbarques(todosLosEmbarques);
     } catch (error) {
       console.error("Error:", error);
     }
@@ -376,33 +673,27 @@ export default function EmbarquesPage() {
 
       const baseFormat = `TIM-${year}${month}`;
 
-      const { data: existingEmbarques, error } = await supabase
+      // Consultar último folio solo en tabla embarques
+      const { data: ultimoFolio, error: folioError } = await supabase
         .from("embarques")
         .select("folio")
         .like("folio", `${baseFormat}-%`)
         .order("folio", { ascending: false })
         .limit(1);
 
-      if (error) {
-        console.error("Error getting existing folios:", error);
+      if (folioError || !ultimoFolio || ultimoFolio.length === 0) {
         return `${baseFormat}-001`;
       }
 
-      if (!existingEmbarques || existingEmbarques.length === 0) {
-        return `${baseFormat}-001`;
-      }
+      const ultimoNumero = ultimoFolio[0].folio;
+      
+      // Extraer el número secuencial del folio
+      const match = /-(\d{3})$/.exec(ultimoNumero);
+      const numeroActual = match ? parseInt(match[1], 10) : 0;
+      const siguienteNumero = numeroActual + 1;
 
-      const lastFolio = existingEmbarques[0].folio;
-      const consecutiveMatch = lastFolio.match(/-(\d{3})$/);
-
-      if (!consecutiveMatch) {
-        return `${baseFormat}-001`;
-      }
-
-      const lastConsecutive = Number.parseInt(consecutiveMatch[1]);
-      const nextConsecutive = (lastConsecutive + 1).toString().padStart(3, "0");
-
-      return `${baseFormat}-${nextConsecutive}`;
+      const siguiente = String(siguienteNumero).padStart(3, "0");
+      return `${baseFormat}-${siguiente}`;
     } catch (error) {
       console.error("Error generating folio:", error);
       return "Error al generar";
@@ -646,30 +937,104 @@ export default function EmbarquesPage() {
     }
   };
 
+  // Función helper para detectar si un embarque tiene múltiples direcciones
+  const tieneMultiplesDirecciones = (recolectas: any[], entregas: any[]) => {
+    const recolectasValidas = recolectas.filter((r: any) => r.direccion?.trim());
+    const entregasValidas = entregas.filter((e: any) => e.direccion?.trim());
+    return recolectasValidas.length > 1 || entregasValidas.length > 1;
+  };
+
+  // Función para extraer múltiples direcciones de las observaciones
+  const extraerDireccionesMultiples = (observaciones: string | null) => {
+    if (!observaciones) return { recolectas: [], entregas: [], observacionesLimpias: "" };
+
+    const marcador = "--- DIRECCIONES MÚLTIPLES ---";
+    const partes = observaciones.split(marcador);
+    
+    if (partes.length < 2) {
+      // No hay direcciones múltiples guardadas
+      return { recolectas: [], entregas: [], observacionesLimpias: observaciones };
+    }
+
+    const observacionesLimpias = partes[0].trim();
+    const direccionesTexto = partes[1];
+
+    const recolectas: Array<{direccion: string, fecha: string, hora: string}> = [];
+    const entregas: Array<{direccion: string, fecha: string, hora: string}> = [];
+
+    try {
+      const lineas = direccionesTexto.split('\n').map(l => l.trim()).filter(l => l);
+      let seccionActual = '';
+
+      for (const linea of lineas) {
+        if (linea === 'RECOLECCIONES:') {
+          seccionActual = 'recolecciones';
+          continue;
+        }
+        if (linea === 'ENTREGAS:') {
+          seccionActual = 'entregas';
+          continue;
+        }
+
+        // Parsear línea de dirección: "1. Dirección (fecha hora)"
+        const match = linea.match(/^\d+\.\s*(.+?)(\s*\(([^)]+)\))?$/);
+        if (match) {
+          const direccion = match[1].trim();
+          const fechaHora = match[3] || '';
+          
+          // Separar fecha y hora si están presentes
+          const partesFechaHora = fechaHora.split(' ').filter(p => p);
+          const fecha = partesFechaHora[0] || '';
+          const hora = partesFechaHora[1] || '';
+
+          const direccionObj = { direccion, fecha, hora };
+
+          if (seccionActual === 'recolecciones') {
+            recolectas.push(direccionObj);
+          } else if (seccionActual === 'entregas') {
+            entregas.push(direccionObj);
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Error parseando direcciones múltiples:', e);
+    }
+
+    return { recolectas, entregas, observacionesLimpias };
+  };
+
   const handleEdit = async (embarque: Embarque) => {
+    // Extraer direcciones múltiples de observaciones si existen
+    const { recolectas, entregas, observacionesLimpias } = extraerDireccionesMultiples(embarque.observaciones || null);
+
+    // Si no se encontraron direcciones múltiples, usar los campos legacy
+    const recolectasFinales = recolectas.length > 0 ? recolectas : [
+      {
+        direccion: (embarque as any).direccion_recolecta || "",
+        fecha: (embarque as any).fecha_recolecta || "",
+        hora: (embarque as any).hora_recolecta || "",
+      },
+    ];
+
+    const entregasFinales = entregas.length > 0 ? entregas : [
+      {
+        direccion: (embarque as any).direccion_entrega || "",
+        fecha: (embarque as any).fecha_entrega || "",
+        hora: (embarque as any).hora_entrega || "",
+      },
+    ];
+
     setFormData({
       folio: embarque.folio,
       cliente_id: embarque.cliente_id || "",
       camion_id: embarque.camion_id || "",
       remolque_id: embarque.remolque_id || "",
-      // Preserve legacy single fields by mapping into arrays for editing
-      recolectas: [
-        {
-          direccion: (embarque as any).direccion_recolecta || "",
-          fecha: (embarque as any).fecha_recolecta || "",
-          hora: (embarque as any).hora_recolecta || "",
-        },
-      ],
-      entregas: [
-        {
-          direccion: (embarque as any).direccion_entrega || "",
-          fecha: (embarque as any).fecha_entrega || "",
-          hora: (embarque as any).hora_entrega || "",
-        },
-      ],
+      // Usar las direcciones múltiples extraídas o las legacy
+      recolectas: recolectasFinales,
+      entregas: entregasFinales,
       contenido: embarque.contenido || "",
       peso: embarque.peso?.toString() || "",
-      observaciones: embarque.observaciones || "",
+      observaciones: observacionesLimpias || "", // Usar las observaciones limpias sin las direcciones
       load_number: embarque.load_number || "",
       patente_agente_aduanal: embarque.patente_agente_aduanal || "",
       aduana_cruce: embarque.aduana_cruce || "",
@@ -684,9 +1049,9 @@ export default function EmbarquesPage() {
           : false,
       remolque_numero_economico: embarque.remolque_numero_economico || "",
       remolque_placa: embarque.remolque_placa || "",
-  camion_manual: !(embarque as any).camion_id && ((embarque as any).camion_numero_economico || (embarque as any).camion_placa) ? true : false,
-  camion_numero_economico: (embarque as any).camion_numero_economico || "",
-  camion_placa: (embarque as any).camion_placa || "",
+      camion_manual: !(embarque as any).camion_id && ((embarque as any).camion_numero_economico || (embarque as any).camion_placa) ? true : false,
+      camion_numero_economico: (embarque as any).camion_numero_economico || "",
+      camion_placa: (embarque as any).camion_placa || "",
   // remolque_sello_fiscal removido (no se usa)
     });
 
@@ -895,13 +1260,13 @@ export default function EmbarquesPage() {
       };
 
       try {
-        // Persist ONLY the raw observaciones field from the form.
-        // Do NOT merge recolectas/entregas or add any 'puntos' to this column.
-        // This keeps the `observaciones` column in the `embarques` table equal
-        // to the user's input in the observaciones textbox.
-        embarqueData.observaciones = formData.observaciones
-          ? String(formData.observaciones)
-          : null;
+        // Mantener las observaciones del usuario tal como están
+        embarqueData.observaciones = formData.observaciones || null;
+        
+        // Guardar direcciones múltiples en campos JSON
+        embarqueData.recolectas_json = (formData.recolectas || []).length > 1 ? JSON.stringify(formData.recolectas || []) : null;
+        embarqueData.entregas_json = (formData.entregas || []).length > 1 ? JSON.stringify(formData.entregas || []) : null;
+        
       } catch (error) {
         console.warn("Campo observaciones no disponible en el esquema actual");
       }
@@ -934,76 +1299,174 @@ export default function EmbarquesPage() {
         }
         try { agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
       } else {
-        // Try insert and request select to get inserted row; improve logging on error
-        const { data: insertData, error } = await supabase.from("embarques").insert(payloadToSend).select();
-        if (error) {
-          // Log full error object and payload to help debugging (e.g., constraint violations when remolque manual)
-          try {
-            console.error("Error creando embarque:", error);
-            console.error("Error (stringified):", JSON.stringify(error, Object.getOwnPropertyNames(error)));
-            console.error("Payload used for insert:", JSON.stringify(embarqueData));
-          } catch (e) {
-            console.error("Error creando embarque (no se pudo serializar):", error);
-          }
-          const friendly = (error as any)?.message || (error as any)?.details || (error as any)?.hint || JSON.stringify(error) || "Error desconocido al crear embarque";
-          toast({ title: "Error al crear embarque", description: friendly, variant: "destructive" });
+        // ✅ CREAR EMBARQUE SOLO EN TABLA EMBARQUES LEGACY
+        console.log("🔧 Creando embarque en tabla embarques...", {folio, embarqueData});
+        
+        // Validación de campos críticos antes de insertar
+        if (!folio || folio.trim() === '') {
+          console.error("❌ Error: Folio vacío o undefined", folio);
+          toast({
+            title: "Error de validación",
+            description: "Folio es requerido",
+            variant: "destructive",
+          });
           return;
         }
-        try { agregarAuditLog("CREAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
-      }
-
-      // After insert/update, synchronize embarque_puntos table with the formData arrays
-      try {
-        // Try to derive the embarque id from the earlier responses: updateData (when editing) or insertData (when creating)
-        // Note: updateData / insertData variables are declared above in their respective branches; try to read them safely.
-        let embarqueId: string | null = null;
-        try {
-          // @ts-ignore - try to read updateData if present
-          if (typeof (updateData as any) !== 'undefined' && Array.isArray((updateData as any)) && (updateData as any)[0]?.id) embarqueId = (updateData as any)[0].id;
-        } catch {}
-        try {
-          // @ts-ignore - try to read insertData if present
-          if (!embarqueId && typeof (insertData as any) !== 'undefined' && Array.isArray((insertData as any)) && (insertData as any)[0]?.id) embarqueId = (insertData as any)[0].id;
-        } catch {}
-
-        // Fallback: query by folio (should be unique)
-        if (!embarqueId) {
-          try {
-            const { data: row } = await supabase.from('embarques').select('id').eq('folio', folio).limit(1).single();
-            embarqueId = row?.id || null;
-          } catch (e) {
-            embarqueId = null;
+        
+        // Función para validar UUIDs
+        const isValidUUID = (uuid: string | null | undefined): boolean => {
+          if (!uuid || uuid === 'none' || uuid === '') return true; // null/empty es válido
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          return uuidRegex.test(uuid);
+        };
+        
+        // Validar UUIDs críticos
+        const uuidsToValidate = [
+          { name: 'cliente_id', value: embarqueData.cliente_id },
+          { name: 'tipo_servicio_id', value: embarqueData.tipo_servicio_id },
+          { name: 'camion_id', value: embarqueData.camion_id },
+          { name: 'remolque_id', value: embarqueData.remolque_id },
+          { name: 'representante_cliente', value: embarqueData.representante_cliente }
+        ];
+        
+        for (const uuid of uuidsToValidate) {
+          if (!isValidUUID(uuid.value)) {
+            console.error(`❌ UUID inválido para ${uuid.name}:`, uuid.value);
+            toast({
+              title: "Error de validación",
+              description: `ID inválido para ${uuid.name}`,
+              variant: "destructive",
+            });
+            return;
           }
         }
+        
+        console.log("📋 Payload para crear_embarque_normalizado:", {
+          p_folio: folio,
+          p_cliente_id: embarqueData.cliente_id,
+          p_tipo_servicio_id: embarqueData.tipo_servicio_id,
+          p_contenido: embarqueData.contenido,
+          p_peso: embarqueData.peso,
+          p_load_number: embarqueData.load_number,
+          p_origen: embarqueData.origen,
+          p_destino: embarqueData.destino,
+          p_direccion_recolecta: embarqueData.direccion_recolecta,
+          p_direccion_entrega: embarqueData.direccion_entrega,
+          p_fecha_recolecta: embarqueData.fecha_recolecta,
+          p_hora_recolecta: embarqueData.hora_recolecta,
+          p_fecha_entrega: embarqueData.fecha_entrega,
+          p_hora_entrega: embarqueData.hora_entrega,
+          p_camion_id: embarqueData.camion_id,
+          p_remolque_id: embarqueData.remolque_id,
+          p_camion_numero_economico: embarqueData.camion_numero_economico,
+          p_camion_placa: embarqueData.camion_placa,
+          p_remolque_numero_economico: embarqueData.remolque_numero_economico,
+          p_remolque_placa: embarqueData.remolque_placa,
+          p_carta_porte: embarqueData.carta_porte,
+          p_patente_agente_aduanal: embarqueData.patente_agente_aduanal,
+          p_aduana_cruce: embarqueData.aduana_cruce,
+          p_dueno_mercancia: embarqueData.dueno_mercancia,
+          p_representante_cliente: embarqueData.representante_cliente,
+          p_info_representante: embarqueData.info_representante,
+          p_observaciones: embarqueData.observaciones
+        });
+        
+        // ✅ INSERCIÓN DIRECTA EN TABLA EMBARQUES (SIN API COMPLEJA)
+        console.log("🔧 Insertando embarque directamente en tabla embarques...");
+        
+        // Limpiar payload para inserción directa - SOLO COLUMNAS CONFIRMADAS
+        const embarqueParaInsertar = {
+          folio: folio,
+          cliente_id: embarqueData.cliente_id === 'none' || embarqueData.cliente_id === '' ? null : embarqueData.cliente_id,
+          operador_id: embarqueData.operador_id === 'none' || embarqueData.operador_id === '' ? null : embarqueData.operador_id,
+          camion_id: embarqueData.camion_id === 'none' || embarqueData.camion_id === '' ? null : embarqueData.camion_id,
+          remolque_id: embarqueData.remolque_id === 'none' || embarqueData.remolque_id === '' ? null : embarqueData.remolque_id,
+          tipo_servicio_id: embarqueData.tipo_servicio_id === 'none' || embarqueData.tipo_servicio_id === '' ? null : embarqueData.tipo_servicio_id,
+          origen: embarqueData.origen,
+          destino: embarqueData.destino,
+          lugar_recolecta: embarqueData.lugar_recolecta,
+          direccion_recolecta: embarqueData.direccion_recolecta,
+          direccion_entrega: embarqueData.direccion_entrega,
+          fecha_recolecta: embarqueData.fecha_recolecta,
+          hora_recolecta: embarqueData.hora_recolecta,
+          fecha_entrega: embarqueData.fecha_entrega,
+          hora_entrega: embarqueData.hora_entrega,
+          contenido: embarqueData.contenido,
+          peso: embarqueData.peso,
+          estado: 'creado',
+          estado_facturacion: 'pendiente_facturacion',
+          observaciones: embarqueData.observaciones,
+          carta_porte: embarqueData.carta_porte,
+          load_number: embarqueData.load_number,
+          patente_agente_aduanal: embarqueData.patente_agente_aduanal,
+          aduana_cruce: embarqueData.aduana_cruce,
+          dueno_mercancia: embarqueData.dueno_mercancia,
+          representante_cliente: embarqueData.representante_cliente,
+          info_representante: embarqueData.info_representante,
+          precio_flete: embarqueData.precio_flete,
+          moneda_flete: embarqueData.currency || 'MXN',
+          remolque_manual: embarqueData.remolque_manual || null,
+          remolque_numero_economico: embarqueData.remolque_numero_economico,
+          remolque_placa: embarqueData.remolque_placa,
+          fecha_creacion: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          // Guardar direcciones múltiples en campos JSON
+          recolectas_json: (formData.recolectas || []).length > 1 ? JSON.stringify(formData.recolectas || []) : null,
+          entregas_json: (formData.entregas || []).length > 1 ? JSON.stringify(formData.entregas || []) : null
+        };
 
-        if (embarqueId) {
-          // Delete existing points for this embarque (simple sync strategy)
-          await supabase.from('embarque_puntos').delete().eq('embarque_id', embarqueId);
+        console.log("📋 Datos para insertar:", embarqueParaInsertar);
+        console.log("🔍 Verificando conexión a Supabase...");
+        console.log("🔍 Cliente Supabase:", !!supabase);
+        console.log("🔍 Tabla destino: embarques");
 
-          const toInsert: any[] = [];
-          (formData.recolectas || []).forEach((r: any, i: number) => {
-            if ((r?.direccion || '').toString().trim() !== '') {
-              toInsert.push({ embarque_id: embarqueId, tipo: 'recolecta', orden: i + 1, direccion: r.direccion || null, fecha: r.fecha || null, hora: r.hora || null });
-            }
+        const { data: nuevoEmbarque, error: errorCrear } = await supabase
+          .from("embarques")
+          .insert(embarqueParaInsertar)
+          .select()
+          .single();
+
+        if (errorCrear) {
+          console.error("❌ Error creando embarque:", errorCrear);
+          console.error("❌ Error completo:", JSON.stringify(errorCrear, null, 2));
+          console.error("❌ Error details:", errorCrear.details);
+          console.error("❌ Error hint:", errorCrear.hint);
+          console.error("❌ Error code:", errorCrear.code);
+          
+          const errorMessage = errorCrear.message || errorCrear.details || errorCrear.hint || 'Error desconocido al crear embarque';
+          
+          toast({
+            title: "Error al crear embarque",
+            description: errorMessage,
+            variant: "destructive",
           });
-          (formData.entregas || []).forEach((e: any, i: number) => {
-            if ((e?.direccion || '').toString().trim() !== '') {
-              toInsert.push({ embarque_id: embarqueId, tipo: 'entrega', orden: i + 1, direccion: e.direccion || null, fecha: e.fecha || null, hora: e.hora || null });
-            }
-          });
-
-          if (toInsert.length > 0) {
-            const { error: insErr } = await supabase.from('embarque_puntos').insert(toInsert);
-            if (insErr) console.warn('No se pudieron insertar embarque_puntos:', insErr);
-          }
+          return;
         }
-      } catch (e) {
-        console.warn('Error sincronizando embarque_puntos:', e);
+
+        console.log("✅ Embarque creado exitosamente:", nuevoEmbarque);
+        
+        // Datos del embarque recién creado
+        const nuevoEmbarqueId = nuevoEmbarque.id;
+        const folioFinal = nuevoEmbarque.folio;
+        
+        console.log("✅ Embarque registrado:", { id: nuevoEmbarqueId, folio: folioFinal });
+        
+        // Simular insertData para compatibilidad con el código existente
+        const insertData = [{ id: nuevoEmbarqueId, folio: folioFinal }];
+        
+        // Actualizar folio si fuera necesario
+        folio = folioFinal;
+        
+        try { 
+          agregarAuditLog("CREAR", "Embarques", `Folio: ${folioFinal} | Usuario: ${getCurrentUser()?.nombre || ''} | Sistema: LEGACY`); 
+        } catch {}
       }
+      
+      // ✅ COMPLETAR GUARDADO
       if (embarqueEditando) {
-        toast({ title: "Embarque actualizado", description: `Folio: ${folio}` });
+        toast({ title: "Embarque actualizado", description: `Folio actualizado` });
       } else {
-        toast({ title: "Embarque creado exitosamente", description: `Folio: ${folio}`, variant: "success" });
+        toast({ title: "Embarque creado exitosamente", description: `Embarque registrado correctamente`, variant: "success" });
       }
       resetForm();
       setShowCreateModal(false);
@@ -1115,37 +1578,69 @@ export default function EmbarquesPage() {
       setEmbarqueFotos([]); // Clear if no embarque ID
     }
 
-    // Load persisted puntos (recolectas/entregas) if the new table exists
+    // Extraer direcciones múltiples desde campos JSON o observaciones para el modal de detalles
     if (embarque.id) {
       try {
-        const { data: puntosData, error: puntosError } = await supabase
-          .from("embarque_puntos")
-          .select("*")
-          .eq("embarque_id", embarque.id)
-          .order("orden", { ascending: true });
+        let recolectas: any[] = [];
+        let entregas: any[] = [];
+        
+        // Prioridad 1: Obtener desde campos JSON
+        try {
+          if ((embarque as any).recolectas_json) {
+            recolectas = JSON.parse((embarque as any).recolectas_json);
+          }
+          if ((embarque as any).entregas_json) {
+            entregas = JSON.parse((embarque as any).entregas_json);
+          }
+        } catch (jsonError) {
+          console.warn("Error parsing JSON direcciones:", jsonError);
+        }
+        
+        // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+        if (recolectas.length === 0 && entregas.length === 0) {
+          const extracted = extraerDireccionesMultiples(embarque.observaciones || null);
+          recolectas = extracted.recolectas;
+          entregas = extracted.entregas;
+        }
+        
+        // Si se encontraron direcciones múltiples, usarlas
+        if (recolectas.length > 0 || entregas.length > 0) {
+          // Usar las direcciones múltiples extraídas
+          const recolectasFinales = recolectas.length > 0 ? recolectas : [
+            { direccion: (embarque as any).direccion_recolecta || "", fecha: (embarque as any).fecha_recolecta || "", hora: (embarque as any).hora_recolecta || "" }
+          ];
+          
+          const entregasFinales = entregas.length > 0 ? entregas : [
+            { direccion: (embarque as any).direccion_entrega || "", fecha: (embarque as any).fecha_entrega || "", hora: (embarque as any).hora_entrega || "" }
+          ];
 
-        if (!puntosError && puntosData) {
-          const recolectas = (puntosData as any[])
-            .filter((p) => p.tipo === "recolecta")
-            .map((p) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora }));
-          const entregas = (puntosData as any[])
-            .filter((p) => p.tipo === "entrega")
-            .map((p) => ({ direccion: p.direccion, fecha: p.fecha, hora: p.hora }));
+          setEmbarqueDetalle((prev) => ({ ...(prev as any), recolectas: recolectasFinales, entregas: entregasFinales }));
+        } else {
+          // Usar direcciones legacy como fallback
+          const recolectasLegacy = [
+            { direccion: (embarque as any).direccion_recolecta || "", fecha: (embarque as any).fecha_recolecta || "", hora: (embarque as any).hora_recolecta || "" }
+          ].filter(r => r.direccion.trim());
+          
+          const entregasLegacy = [
+            { direccion: (embarque as any).direccion_entrega || "", fecha: (embarque as any).fecha_entrega || "", hora: (embarque as any).hora_entrega || "" }
+          ].filter(e => e.direccion.trim());
 
-          // Merge into the detalle so the modal and print/export flows use the persisted points
-          setEmbarqueDetalle((prev) => ({ ...(prev as any), recolectas, entregas }));
-        } else if (puntosError) {
-          // If the table doesn't exist or query fails, log but don't block the modal
-          console.warn("No se pudieron obtener puntos del embarque:", puntosError);
+          setEmbarqueDetalle((prev) => ({ ...(prev as any), recolectas: recolectasLegacy, entregas: entregasLegacy }));
         }
       } catch (e) {
-        console.warn("Error consultando embarque_puntos:", e);
+        console.warn("Error consultando direcciones múltiples:", e);
       }
     }
   };
 
   const cancelarEmbarque = async () => {
   if (cancelingEmbarque) {
+    console.log(`🔧 [CANCEL] Iniciando cancelación de embarque:`, {
+      folio: cancelingEmbarque.folio,
+      estadoActual: cancelingEmbarque.estado,
+      filtroActual: filtroEstado
+    });
+    
     agregarAuditLog(
       "ELIMINAR",
       "Embarques",
@@ -1211,11 +1706,47 @@ export default function EmbarquesPage() {
         console.warn("Excepción guardando metadata de cancelación:", e);
       }
 
+  // 🔧 FIX CRÍTICO: Actualizar estado local inmediatamente para reflejar cambios visuales
+  console.log(`� [CANCEL] Actualizando estado local de ${cancelingEmbarque.folio} a cancelado...`);
+  console.log(`🔧 [CANCEL] Filtro actual: '${filtroEstado}' - El embarque ${filtroEstado === 'activos' ? 'SE OCULTARÁ' : 'PERMANECERÁ VISIBLE'}`);
+  
+  setEmbarques(prevEmbarques => {
+    const updated = prevEmbarques.map(e => 
+      e.id === cancelingEmbarque.id 
+        ? { 
+            ...e, 
+            estado: 'cancelado', 
+            updated_at: new Date().toISOString(),
+            observaciones: `${e.observaciones || ""}
+
+[CANCELADO] ${cancelReason}`.trim(),
+            fecha_cancelacion: new Date().toISOString(),
+            cancelado_por: getCurrentUser()?.nombre || "Usuario",
+            motivo_cancelacion: cancelReason.trim()
+          }
+        : e
+    );
+    
+    const embarqueActualizado = updated.find(e => e.id === cancelingEmbarque.id);
+    console.log(`🔧 [CANCEL] Estado local actualizado:`, {
+      folio: embarqueActualizado?.folio,
+      nuevoEstado: embarqueActualizado?.estado,
+      fecha_cancelacion: embarqueActualizado?.fecha_cancelacion
+    });
+    
+    return updated;
+  });
+
   toast({ title: "Embarque cancelado exitosamente", variant: "destructive", className: "bg-red-600 text-white" });
       setShowCancelModal(false);
       setCancelingEmbarque(null);
       setCancelReason("");
-      await loadEmbarques();
+  
+  // 🔧 DIAGNÓSTICO: Verificar que la actualización local funcionó
+  console.log(`✅ [CANCELAR] Estado local actualizado. El embarque ${cancelingEmbarque.folio} ahora debería mostrar badge Cancelado y botón Archivar.`);
+  
+  // ❌ REMOVIDO: loadEmbarques() que causaba problemas de sincronización
+  // await loadEmbarques();
     } catch (error) {
       console.error("Error:", error);
       toast({ title: "Error al cancelar embarque", variant: "destructive" });
@@ -1312,24 +1843,89 @@ export default function EmbarquesPage() {
     try {
       setSaving(true);
       setShowCompletarDialog(false);
+      // OPTIMISTIC UPDATE: marcar localmente como listo-para-asignar
+      // antes de llamar al servidor para evitar que la UI vuelva a mostrar
+      // el botón "Completar y Enviar" si la sincronización tarda o falla.
+      setEmbarques(prevEmbarques =>
+        prevEmbarques.map(e =>
+          e.id === embarque.id
+            ? { ...e, estado: 'listo-para-asignar', _completadoLocal: true, updated_at: new Date().toISOString() }
+            : e
+        )
+      );
+      // Persistir en localStorage para que sobreviva a recargas
+      try {
+        addCompletedLocal(String(embarque.id));
+      } catch (e) {
+        console.warn('No se pudo persistir completado localmente', e);
+      }
       agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${embarque.folio} | Usuario: ${getCurrentUser()?.nombre || ''}`);
-      const { error } = await supabase
-        .from("embarques")
-        .update({
-          estado: "listo-para-asignar",
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", embarque.id);
+      // Usar API para centralizar lógica del servidor y permisos
+      const fuente = (embarque as any)?._fuente || 'legacy';
+      console.log(`🔧 [COMPLETAR] Cambiando estado de ${embarque.folio} (${embarque.id}) de ${embarque.estado} a listo-para-asignar`);
+      console.log(`📋 [COMPLETAR] Fuente detectada: ${fuente}`);
+      
+      // Llamada a API con manejo robusto de errores y 1 reintento
+      const callApi = async () => {
+        const r = await fetch('/api/embarques/estado', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: embarque.id, estado: 'listo-para-asignar', fuente })
+        });
+        let parsed: any = null;
+        try { parsed = await r.json(); } catch (e) {}
+        return { resp: r, body: parsed };
+      };
 
-      if (error) {
-        console.error("Error actualizando embarque:", error);
-        toast({ title: "Error al marcar como completado", description: error.message, variant: "destructive" });
+      let apiResult: any = null;
+      try {
+        apiResult = await callApi();
+      } catch (e) {
+        console.warn('Fetch /api/embarques/estado fallo en primer intento:', e);
+        // Reintentar una vez
+        try {
+          apiResult = await callApi();
+        } catch (e2) {
+          console.error('Fetch /api/embarques/estado fallo en reintento:', e2);
+          // Revertir la actualización optimista
+          try { removeCompletedLocal(String(embarque.id)); } catch (ee) {}
+          setEmbarques(prev => prev.map((p: any) => p.id === embarque.id ? { ...p, estado: embarque.estado, _completadoLocal: undefined } : p));
+          toast({ title: 'Error al marcar como completado', description: String(e2 || 'Error de red al contactar al servidor'), variant: 'destructive' });
+          setSaving(false);
+          return;
+        }
+      }
+
+      const { resp, body: js } = apiResult || {};
+      console.log(`📡 [COMPLETAR] API Response:`, { ok: resp?.ok, status: resp?.status, body: js });
+
+      if (!resp || !resp.ok || !(js?.ok)) {
+        const errMsg = String(js?.error?.message || 'Fallo actualizando estado');
+        console.warn('Error actualizando estado (API):', errMsg);
+        // Revertir la marca local
+        try { removeCompletedLocal(String(embarque.id)); } catch (e) {}
+        setEmbarques(prev => prev.map((p: any) => p.id === embarque.id ? { ...p, estado: embarque.estado, _completadoLocal: undefined } : p));
+        toast({ title: 'Error al marcar como completado', description: errMsg, variant: 'destructive' });
         return;
       }
 
-      toast({ title: "Embarque marcado como completado", description: `Folio: ${embarque.folio}`, variant: "success" });
+      // Nota: la actualización optimista ya marcó el embarque localmente.
+      console.log(`🔄 [COMPLETAR] Estado local (optimista) aplicado para ${embarque.folio}.`);
+
+      toast({ title: "Embarque marcado como Listo para Asignar", description: `Folio: ${embarque.folio} ahora visible en Asignación de Embarques`, variant: "success" });
       setEmbarqueACompletar(null);
-      await loadEmbarques();
+      
+      // Limpiar la marca local ya que se persistió en servidor
+      try { removeCompletedLocal(String(embarque.id)); } catch (e) {}
+      
+      // Actualizar el estado basado en la respuesta del servidor
+      setEmbarques(prev => prev.map((p: any) => 
+        p.id === embarque.id 
+          ? { ...p, estado: 'listo-para-asignar', _completadoLocal: undefined, updated_at: new Date().toISOString() }
+          : p
+      ));
+      
+      console.log(`✅ [COMPLETAR] Estado persistido en servidor. El embarque ${embarque.folio} ahora debería mostrar botón Archivar y badge verde.`);
     } catch (error) {
       console.error("Error:", error);
       toast({ title: "Error al marcar como completado", variant: "destructive" });
@@ -1826,7 +2422,24 @@ export default function EmbarquesPage() {
 
   // Filtrar embarques
   const embarquesFiltrados = embarques.filter((embarque) => {
-    if (embarque.estado === "archivado") return false;
+    // 🔧 Log detallado para debugging
+    const esEmbarquePrueba = embarque.folio?.includes('FLOW-1758831360353');
+    
+    if (esEmbarquePrueba) {
+      console.log(`🔧 [FILTRO] Evaluando embarque de prueba:`, {
+        folio: embarque.folio,
+        estado: embarque.estado,
+        filtroActual: filtroEstado,
+        fecha_cancelacion: embarque.fecha_cancelacion,
+        fecha_archivado: embarque.fecha_archivado
+      });
+    }
+    
+    if (embarque.estado === "archivado") {
+      if (esEmbarquePrueba) console.log(`🔧 [FILTRO] Embarque archivado → EXCLUIDO`);
+      return false;
+    }
+    
     const coincideBusqueda =
       embarque.folio.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (embarque.load_number &&
@@ -1854,7 +2467,18 @@ export default function EmbarquesPage() {
         embarque.estado !== "archivado" &&
         embarque.estado !== "finalizado");
 
-    return coincideBusqueda && coincideEstado;
+    const resultado = coincideBusqueda && coincideEstado;
+    
+    if (esEmbarquePrueba) {
+      console.log(`🔧 [FILTRO] Resultado filtrado:`, {
+        coincideBusqueda,
+        coincideEstado,
+        resultado: resultado ? 'INCLUIDO' : 'EXCLUIDO',
+        razon: !coincideEstado ? `estado '${embarque.estado}' no coincide con filtro '${filtroEstado}'` : 'OK'
+      });
+    }
+
+    return resultado;
   });
 
     // Derivados de paginación para la lista principal
@@ -2395,23 +3019,27 @@ export default function EmbarquesPage() {
     }
   };
 
-  const getEstadoBadge = (estado: string, embarque?: Embarque) => {
-    if (
-      estado === "creado" &&
-      embarque &&
-      embarque.updated_at &&
-      new Date(embarque.updated_at).getTime() >
-        new Date(embarque.fecha_creacion).getTime()
-    ) {
-      return (
-        <Badge className="bg-orange-100 text-orange-800 hover:bg-orange-100">
-          Modificado
-        </Badge>
-      );
+  const getEstadoBadge = (estado: string | any, embarque?: Embarque) => {
+    // Validación defensiva: si estado es un objeto, extraer el campo correcto
+    let estadoValue: string;
+    if (typeof estado === 'object' && estado !== null) {
+      console.warn('⚠️ Estado es objeto, extrayendo valor:', estado);
+      estadoValue = estado.estado || estado.estado_facturacion || 'creado';
+    } else {
+      estadoValue = String(estado || 'creado');
     }
-
-    // No mostrar badge para estado 'creado'
-    if (estado === "creado") {
+    
+    // 🔧 DEBUG: Logging para diagnosticar el badge
+    if (embarque?.folio) {
+      console.log(`🎯 [BADGE] ${embarque.folio}: estado='${estadoValue}' (tipo: ${typeof estado})`);
+    }
+    
+    // ❌ REMOVIDO: Lógica de globo "modificado" por generar falsos positivos
+    // Solo mostrar badges para estados que requieren atención o acción
+    
+    // No mostrar badge para estado 'creado' inicial - solo cuando hay cambios de estado
+    if (estadoValue === "creado") {
+      console.log(`🎯 [BADGE] ${embarque?.folio || 'unknown'}: Sin badge (estado creado)`);
       return null;
     }
 
@@ -2431,10 +3059,12 @@ export default function EmbarquesPage() {
       archivado: { color: "bg-purple-100 text-purple-800", label: "Archivado" },
     };
 
-    const estadoInfo = estados[estado as keyof typeof estados] || {
+    const estadoInfo = estados[estadoValue as keyof typeof estados] || {
       color: "bg-gray-100 text-gray-800",
-      label: estado,
+      label: estadoValue,
     };
+
+    console.log(`🎯 [BADGE] ${embarque?.folio || 'unknown'}: Mostrando badge '${estadoInfo.label}' con color '${estadoInfo.color}'`);
 
     return (
       <Badge className={`${estadoInfo.color} hover:${estadoInfo.color}`}>
@@ -2543,8 +3173,8 @@ export default function EmbarquesPage() {
           </div>
         </div>
         {/* Modal de Archivos (Embarques Archivados) */}
-        <Dialog open={showArchivosModal} onOpenChange={setShowArchivosModal}>
-    <DialogContent className="max-w-6xl max-h-[95vh] overflow-y-auto">
+    <Dialog open={showArchivosModal} onOpenChange={setShowArchivosModal}>
+  <DialogContent className="w-full max-w-7xl max-h-[95vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Consulta de Embarques Archivados</DialogTitle>
               <DialogDescription>
@@ -2587,6 +3217,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "todo" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "todo" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("todo")}
               >
                 Todo
@@ -2594,6 +3225,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "mes_actual" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "mes_actual" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("mes_actual")}
               >
                 Mes actual
@@ -2601,6 +3233,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "mes_anterior" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "mes_anterior" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("mes_anterior")}
               >
                 Mes anterior
@@ -2608,6 +3241,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "ultimos_3" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "ultimos_3" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("ultimos_3")}
               >
                 Últ. 3 meses
@@ -2615,6 +3249,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "ultimos_6" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "ultimos_6" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("ultimos_6")}
               >
                 Últ. 6 meses
@@ -2622,6 +3257,7 @@ export default function EmbarquesPage() {
               <Button
                 variant={archivosPeriodo === "este_anio" ? "default" : "outline"}
                 size="sm"
+                className={archivosPeriodo === "este_anio" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
                 onClick={() => setArchivosPeriodo("este_anio")}
               >
                 Este año
@@ -2651,13 +3287,119 @@ export default function EmbarquesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <Button
-                  variant="outline"
-                  className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                  onClick={exportarArchivadosAExcel}
-                >
-                  Descargar Excel
-                </Button>
+                <div className="flex items-center gap-2">
+                  {totalArchivadosPaginas > 1 && (
+                    <div className="flex items-center gap-1">
+                      {/* Botón Primera página */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setArchivosPage(1)}
+                        disabled={archivosPage <= 1}
+                        className="px-2"
+                      >
+                        ⏮
+                      </Button>
+                      {/* Botón Anterior */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setArchivosPage((p) => Math.max(1, p - 1))}
+                        disabled={archivosPage <= 1}
+                        className="px-2"
+                      >
+                        ◀
+                      </Button>
+                      
+                      {/* Números de página */}
+                      <div className="flex items-center gap-1">
+                        {(() => {
+                          const current = archivosPage;
+                          const total = totalArchivadosPaginas;
+                          const showPages = [];
+                          
+                          if (total <= 7) {
+                            // Mostrar todas las páginas si son pocas
+                            for (let i = 1; i <= total; i++) {
+                              showPages.push(i);
+                            }
+                          } else {
+                            // Lógica compleja para muchas páginas
+                            const pages = new Set<number>();
+                            
+                            // Siempre página 1
+                            pages.add(1);
+                            
+                            // Páginas alrededor de la actual
+                            for (let i = Math.max(1, current - 1); i <= Math.min(total, current + 1); i++) {
+                              pages.add(i);
+                            }
+                            
+                            // Siempre última página
+                            pages.add(total);
+                            
+                            // Convertir a array ordenado
+                            const sortedPages = Array.from(pages).sort((a, b) => a - b);
+                            
+                            // Agregar elipsis donde haya gaps
+                            for (let i = 0; i < sortedPages.length; i++) {
+                              if (i > 0 && sortedPages[i] - sortedPages[i - 1] > 1) {
+                                showPages.push('...');
+                              }
+                              showPages.push(sortedPages[i]);
+                            }
+                          }
+                          
+                          return showPages.map((page, idx) => 
+                            page === '...' ? (
+                              <span key={`ellipsis-${idx}`} className="px-2 py-1 text-gray-400 text-xs">...</span>
+                            ) : (
+                              <Button
+                                key={`page-${page}`}
+                                variant={page === current ? "default" : "outline"}
+                                size="sm"
+                                className={`px-2 min-w-8 text-xs ${page === current ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}`}
+                                onClick={() => setArchivosPage(Number(page))}
+                              >
+                                {page}
+                              </Button>
+                            )
+                          );
+                        })()}
+                      </div>
+                      
+                      {/* Botón Siguiente */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          setArchivosPage((p) => Math.min(totalArchivadosPaginas, p + 1))
+                        }
+                        disabled={archivosPage >= totalArchivadosPaginas}
+                        className="px-2"
+                      >
+                        ▶
+                      </Button>
+                      {/* Botón Última página */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => setArchivosPage(totalArchivadosPaginas)}
+                        disabled={archivosPage >= totalArchivadosPaginas}
+                        className="px-2"
+                      >
+                        ⏭
+                      </Button>
+                    </div>
+                  )}
+                  <Button
+                    variant="outline"
+                    className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                    onClick={exportarArchivadosAExcel}
+                  >
+                    Descargar Excel
+                  </Button>
+                </div>
               </div>
             </div>
 
@@ -2665,25 +3407,24 @@ export default function EmbarquesPage() {
               <table className="min-w-full text-sm">
                 <thead>
                   <tr className="bg-purple-50">
-                    <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-40 md:w-48 cursor-pointer select-none" onClick={() => handleSort("folio")}>Folio{sortIndicator("folio")}</th>
+                    <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-[150px] md:w-[182px] cursor-pointer select-none" onClick={() => handleSort("folio")}>Folio{sortIndicator("folio")}</th>
                     <th className="px-3 py-2 text-left font-semibold w-44 md:w-64 cursor-pointer select-none" onClick={() => handleSort("cliente")}>
                       Cliente{sortIndicator("cliente")}
                     </th>
                     <th className="px-3 py-2 text-center font-semibold w-14 md:w-16 cursor-pointer select-none" onClick={() => handleSort("load")}>Load{sortIndicator("load")}</th>
                     <th className="px-3 py-2 text-center font-semibold w-16 md:w-20 cursor-pointer select-none" onClick={() => handleSort("estatus")}>Estatus{sortIndicator("estatus")}</th>
-                    <th className="px-3 py-2 text-left font-semibold w-48 cursor-pointer select-none" onClick={() => handleSort("tipo")}>
+                    <th className="px-3 py-2 text-left font-semibold w-[132px] md:w-[196px] cursor-pointer select-none min-w-[232px] md:min-w-[296px]" onClick={() => handleSort("tipo")}>
                       Tipo de Servicio{sortIndicator("tipo")}
                     </th>
                     <th className="px-3 py-2 text-left font-semibold w-32 cursor-pointer select-none" onClick={() => handleSort("fecha")}>Fecha de creación{sortIndicator("fecha")}</th>
-                    <th className="px-3 py-2 text-center font-semibold">Acciones</th>
-                    <th className="px-3 py-2 text-center font-semibold">Eliminar</th>
+                    <th className="px-3 py-2 text-center font-semibold w-20">Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
                   {embarquesArchivadosFiltrados.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={8}
+                        colSpan={7}
                         className="text-center py-8 text-gray-500"
                       >
                         <Package className="h-10 w-10 mx-auto mb-2 text-purple-400" />
@@ -2693,10 +3434,10 @@ export default function EmbarquesPage() {
                   ) : (
                     embarquesArchivadosPaginados.map((embarque) => (
                       <tr
-                        key={embarque.id}
+                        key={`${(embarque as any)._fuente || 'unknown'}-${embarque.id}`}
                         className="border-b hover:bg-purple-50"
                       >
-                        <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">
+                        <td className="px-3 py-2 font-mono whitespace-nowrap w-[150px] md:w-[182px]">
                           {embarque.folio}
                         </td>
                         <td className="px-3 py-2 w-44 md:w-64 truncate">
@@ -2716,7 +3457,7 @@ export default function EmbarquesPage() {
                             </span>
                           )}
                         </td>
-                        <td className="px-3 py-2">
+                        <td className="px-3 py-2 w-[132px] md:w-[196px] min-w-[232px] md:min-w-[296px] truncate">
                           {getServiceDisplayName(embarque.tipo_servicio_id || "")}
                         </td>
                         <td className="px-3 py-2 w-32 whitespace-nowrap">
@@ -2724,62 +3465,36 @@ export default function EmbarquesPage() {
                             ? new Date(embarque.fecha_creacion).toLocaleDateString("es-MX")
                             : ""}
                         </td>
-                        <td className="px-3 py-2 text-center">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => handleViewDetails(embarque)}
-                            aria-label="Ver detalles"
-                          >
-              <Eye className="h-4 w-4" aria-hidden="true" />
-                          </Button>
-                        </td>
-                        <td className="px-3 py-2 text-center">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => eliminarArchivadoDefinitivo(embarque)}
-                            disabled={!puedeEliminarArchivado(embarque)}
-                            className={`border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black${
-                              !puedeEliminarArchivado(embarque) ? " opacity-50 cursor-not-allowed" : ""
-                            }`}
-                            aria-label="Eliminar definitivamente"
-                          >
-                            Eliminar
-                          </Button>
+                        <td className="px-3 py-2 text-center w-20">
+                          <div className="flex items-center justify-center gap-1">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleViewDetails(embarque)}
+                              aria-label="Ver detalles"
+                            >
+                              <Eye className="h-4 w-4" aria-hidden="true" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => eliminarArchivadoDefinitivo(embarque)}
+                              disabled={!puedeEliminarArchivado(embarque)}
+                              className={`text-red-600 hover:bg-red-50${
+                                !puedeEliminarArchivado(embarque) ? " opacity-50 cursor-not-allowed text-gray-400 hover:bg-transparent" : ""
+                              }`}
+                              aria-label="Eliminar definitivamente"
+                            >
+                              <Trash className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
-              {totalArchivadosPaginas > 1 && (
-                <div className="flex items-center justify-between p-3 text-sm">
-                  <div>
-                    Página {archivosPage} de {totalArchivadosPaginas}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setArchivosPage((p) => Math.max(1, p - 1))}
-                      disabled={archivosPage <= 1}
-                    >
-                      ◀ Anterior
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        setArchivosPage((p) => Math.min(totalArchivadosPaginas, p + 1))
-                      }
-                      disabled={archivosPage >= totalArchivadosPaginas}
-                    >
-                      Siguiente ▶
-                    </Button>
-                  </div>
-                </div>
-              )}
+              {/* Pagination moved to header next to 'Descargar Excel' */}
             </div>
           </DialogContent>
         </Dialog>
@@ -3042,7 +3757,7 @@ export default function EmbarquesPage() {
               <Select
                 value={filtroEstado}
                 onValueChange={(v) => {
-                  setFiltroEstado(v);
+                  cambiarFiltroEstado(v);
                   setListaPage(1);
                 }}
               >
@@ -3066,7 +3781,7 @@ export default function EmbarquesPage() {
         <div className="grid grid-cols-1 gap-4">
           {embarquesPaginados.map((embarque) => (
             <Card
-              key={embarque.id}
+              key={`${(embarque as any)._fuente || 'unknown'}-${embarque.id}`}
               className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
                 embarque.estado === "contingencia"
                   ? "border-red-500 bg-red-50"
@@ -3116,7 +3831,50 @@ export default function EmbarquesPage() {
                         </span>
                       </div>
                     )}
-                    <div className="flex space-x-1">
+                    <div className="flex space-x-1 items-center">
+                      {(() => {
+                        // Detectar múltiples direcciones para mostrar globo a la izquierda de "Ver detalles"
+                        const editandoEsteEmbarque = embarqueEditando?.id === embarque.id;
+                        let recolectasArray, entregasArray;
+                        
+                        if (editandoEsteEmbarque) {
+                          recolectasArray = formData.recolectas;
+                          entregasArray = formData.entregas;
+                        } else {
+                          // Prioridad 1: Obtener desde campos JSON
+                          try {
+                            recolectasArray = (embarque as any).recolectas_json ? JSON.parse((embarque as any).recolectas_json) : [];
+                            entregasArray = (embarque as any).entregas_json ? JSON.parse((embarque as any).entregas_json) : [];
+                          } catch (jsonError) {
+                            recolectasArray = [];
+                            entregasArray = [];
+                          }
+                          
+                          // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+                          if (recolectasArray.length === 0 && entregasArray.length === 0) {
+                            const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                            recolectasArray = recolectas.length > 0 ? recolectas : [{ direccion: embarque.direccion_recolecta }];
+                            entregasArray = entregas.length > 0 ? entregas : [{ direccion: embarque.direccion_entrega }];
+                          } else {
+                            // Si tenemos datos JSON pero están vacíos, usar datos principales
+                            if (recolectasArray.length === 0) recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+                            if (entregasArray.length === 0) entregasArray = [{ direccion: embarque.direccion_entrega }];
+                          }
+                        }
+                        
+                        if (tieneMultiplesDirecciones(recolectasArray, entregasArray)) {
+                          return (
+                            <span 
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                              title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                            >
+                              D. Múltiples
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+                      
                       <Button
                         variant="outline"
                         size="sm"
@@ -3151,42 +3909,164 @@ export default function EmbarquesPage() {
                         Publicacion
                       </Button>
 
-                      {embarque.estado === "creado" && (
-                        <Button
-                          variant="default"
-                          size="sm"
-                          className="bg-blue-600 hover:bg-blue-700 text-white"
-                          onClick={() => marcarComoCompletado(embarque)}
-                        >
-                          <Package className="h-4 w-4 mr-1" />
-                          Completar y Enviar
-                        </Button>
-                      )}
+                      {/* 🔧 Renderizado condicional de botones según estado */}
+                      {(() => {
+                        // Debug logging para diagnosticar renderizado
+                        console.log(`🎯 [RENDER] ${embarque.folio}: estado='${embarque.estado}' → ${
+                          embarque.estado === "creado" ? "Botón Completar y Enviar" :
+                          embarque.estado === "listo-para-asignar" ? "Badge Verde + Botón Archivar" :
+                          embarque.estado === "cancelado" ? "Badge Rojo + Botón Archivar" :
+                          "Otro estado: " + embarque.estado
+                        }`);
+                        
+                        if (embarque.estado === "creado" && !(embarque as any)._completadoLocal) {
+                          return (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-700 text-white"
+                              onClick={() => marcarComoCompletado(embarque)}
+                              disabled={saving || (embarque as any)._completadoLocal}
+                            >
+                              <Package className="h-4 w-4 mr-1" />
+                              Completar y Enviar
+                            </Button>
+                          );
+                        }
+                        
+                        return null;
+                      })()}
 
-                      {embarque.estado === "listo-para-asignar" && (
-                        <Badge className="bg-green-100 text-green-800">
-                          Listo para Asignar
-                        </Badge>
-                      )}
-                      {embarque.estado === "cancelado" && (
-                        <Badge className="bg-red-100 text-red-800">Cancelado</Badge>
-                      )}
+                      {/* Embarques listos para asignar (incluyendo los cancelados en esta fase) */}
+                      {(embarque.estado === "listo-para-asignar" || 
+                        (embarque.estado === "cancelado" && (embarque.cancelado_por || embarque.motivo_cancelacion || embarque.fecha_cancelacion))) && (() => {
+                        console.log(`🎯 [RENDER] ${embarque.folio}: Renderizando estado ${embarque.estado} en sección de asignación`);
+                        
+                        const esCancelado = embarque.estado === "cancelado" || 
+                                           embarque.cancelado_por || 
+                                           embarque.motivo_cancelacion || 
+                                           embarque.fecha_cancelacion;
+                        
+                        return (
+                          <div className="flex items-center gap-2">
+                            {/* Badge D. Múltiples para embarques listos para asignar */}
+                            {(() => {
+                              const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                              
+                              if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                                return (
+                                  <span 
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                    title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                  >
+                                    D. Múltiples
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+                            
+                            {/* Solo mostrar botón Archivar para embarques cancelados, otros botones para embarques normales */}
+                            {esCancelado ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEmbarqueAArchivar(embarque);
+                                  setShowArchivarDialog(true);
+                                }}
+                              >
+                                Archivar
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEmbarqueAArchivar(embarque);
+                                  setShowArchivarDialog(true);
+                                }}
+                              >
+                                Archivar
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      {/* Embarques asignados (incluyendo los cancelados en esta fase) */}
+                      {(embarque.estado === "asignado" || 
+                        (embarque.estado === "cancelado" && (embarque.cancelado_por || embarque.motivo_cancelacion) && (embarque.operador_id || embarque.camion_id))) && (() => {
+                        
+                        const esCancelado = embarque.estado === "cancelado" || 
+                                           embarque.cancelado_por || 
+                                           embarque.motivo_cancelacion || 
+                                           embarque.fecha_cancelacion;
+                        
+                        return (
+                          <div className="flex items-center gap-2">
+                            {/* Badge D. Múltiples para embarques asignados */}
+                            {(() => {
+                              const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                              
+                              if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                                return (
+                                  <span 
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                    title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                  >
+                                    D. Múltiples
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+                            
+                            {/* Solo mostrar botón Archivar para embarques cancelados */}
+                            {esCancelado ? (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEmbarqueAArchivar(embarque);
+                                  setShowArchivarDialog(true);
+                                }}
+                              >
+                                Archivar
+                              </Button>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setEmbarqueAArchivar(embarque);
+                                  setShowArchivarDialog(true);
+                                }}
+                              >
+                                Archivar
+                              </Button>
+                            )}
+                          </div>
+                        );
+                      })()}
 
                       {/* Botón Enviar Link oculto por requerimiento */}
 
                       {(embarque.estado === "finalizado" ||
-                        embarque.estado === "cancelado") && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            setEmbarqueAArchivar(embarque);
-                            setShowArchivarDialog(true);
-                          }}
-                        >
-                          Archivar
-                        </Button>
-                      )}
+                        embarque.estado === "cancelado") && (() => {
+                        console.log(`🎯 [RENDER] ${embarque.folio}: Renderizando botón Archivar para estado ${embarque.estado}`);
+                        return (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              setEmbarqueAArchivar(embarque);
+                              setShowArchivarDialog(true);
+                            }}
+                          >
+                            Archivar
+                          </Button>
+                        );
+                      })()}
 
                       {/* Botón Cancelar: oculto si el embarque ya fue cancelado */}
                       {embarque.estado !== "cancelado" && (
@@ -3210,8 +4090,10 @@ export default function EmbarquesPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                   <div className="flex items-center space-x-2">
                     <MapPin className="h-4 w-4 text-gray-400" />
-                    <div>
-                      <p className="font-medium">Recolecta</p>
+                    <div className="flex-1">
+                      <div className="flex items-center space-x-2">
+                        <p className="font-medium">Recolecta</p>
+                      </div>
                       {embarque.direccion_recolecta && (
                         <p className="text-xs text-gray-500">
                           {embarque.direccion_recolecta}
@@ -3286,17 +4168,13 @@ export default function EmbarquesPage() {
                               {(() => {
                                 const t = tiposServicio.find((x) => x.id === (embarque.tipo_servicio_id as any));
                                 if (!t) return null;
-                                const monto = obtenerMontoTipoServicio(t);
-                                const flagged = esTipoServicioFleteFalso(t);
-                                const base = parseMonto((t as any)?.precio_base);
-                                if (flagged) {
-                                  const detalleBase =
-                                    base !== undefined && base !== monto
-                                      ? ` (Base: $${base.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`
-                                      : "";
-                                  return `Pago flete en falso: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${detalleBase}`;
-                                }
-                                return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                const monto = obtenerMontoTipoServicio(t, precioGlobalFleteFalso, embarque);
+                                
+                                // Mostrar contexto adicional si es flete falso
+                                const esFleteFalso = embarque?.flete_falso === true;
+                                const sufijo = esFleteFalso ? " (flete falso)" : "";
+                                
+                                return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sufijo}`;
                               })()}
                             </p>
                           </div>
@@ -3471,7 +4349,7 @@ export default function EmbarquesPage() {
                 <Select
                   value={filtroEstado}
                   onValueChange={(v) => {
-                    setFiltroEstado(v);
+                    cambiarFiltroEstado(v);
                     setListaPage(1);
                   }}
                 >
@@ -4570,7 +5448,7 @@ export default function EmbarquesPage() {
                   <TabsContent value="facturacion" className="space-y-4 mt-6">
                     <div className="space-y-6">
                       <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div>
                             <Label className="text-sm font-medium text-gray-700">
                               Empresa Facturadora
@@ -4582,6 +5460,16 @@ export default function EmbarquesPage() {
                                   (embarqueDetalle.cliente as any)?.nombre_comercial ||
                                   embarqueDetalle.cliente?.nombre
                               )}
+                            </p>
+                          </div>
+                          <div>
+                            <Label className="text-sm font-medium text-gray-700">
+                              Forma de Facturación
+                            </Label>
+                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                              {embarqueDetalle.cliente?.forma_facturacion ||
+                                (embarqueDetalle.cliente as any)?.tipo_facturacion ||
+                                "No especificado"}
                             </p>
                           </div>
                           <div>

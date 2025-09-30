@@ -68,7 +68,7 @@ export default function ConfiguracionPage() {
     blobStorageUsagePercent: 0,
         formatoFecha: "",
     });
-    const currentUser = getCurrentUser();
+    const [currentUser, setCurrentUser] = useState<any>(null);
     const [showPasswordDialog, setShowPasswordDialog] = useState(false);
     const [passwordInput, setPasswordInput] = useState("");
     // Alert thresholds state
@@ -104,6 +104,12 @@ export default function ConfiguracionPage() {
     const [auditLimpiezaResult, setAuditLimpiezaResult] = useState<string | null>(null)
     const [auditLimpiezaError, setAuditLimpiezaError] = useState<string | null>(null)
     const [auditStats, setAuditStats] = useState<{ totalRegistros: number; registrosAntiguos: number; registrosActivos: number } | null>(null)
+    // Doble confirmación y contraseña para limpieza de Audit Logs
+    const [auditDialog1Open, setAuditDialog1Open] = useState(false)
+    const [auditDialog2Open, setAuditDialog2Open] = useState(false)
+    const [auditPwd1, setAuditPwd1] = useState("")
+    const [auditPwd2, setAuditPwd2] = useState("")
+    const [auditErr, setAuditErr] = useState<string | null>(null)
     const [limpiezaFinalOpen, setLimpiezaFinalOpen] = useState(false)
     const [limpiezaRunning, setLimpiezaRunning] = useState(false)
     const [limpiezaMsg, setLimpiezaMsg] = useState<string | null>(null)
@@ -164,6 +170,9 @@ export default function ConfiguracionPage() {
     }
 
     useEffect(() => {
+        // Set current user on client side only
+        setCurrentUser(getCurrentUser());
+        
         cargarUsuarios()
         cargarSeguridad()
         // Cargar configuración general persistida
@@ -769,7 +778,7 @@ export default function ConfiguracionPage() {
                                 {/* Descargar fotografías (ZIP) */}
                                 <div className="space-y-2">
                                     <Label className="block">Descargar fotografías (ZIP) — opcional rango de fechas</Label>
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
                                         <div className="space-y-1">
                                             <Label>Rango de fechas</Label>
                                             <div className="grid grid-cols-2 gap-2">
@@ -779,8 +788,9 @@ export default function ConfiguracionPage() {
                                             <p className="text-xs text-gray-500">Si está vacío, se descargarán todas las fotos.</p>
                                         </div>
                                         <div className="space-y-1 md:col-span-2">
-                                            <Label>Acción</Label>
-                                            <div className="flex flex-wrap gap-2">
+                                            {/* ✅ Label "Acción" eliminado - Botón alineado con inputs de fecha */}
+                                            <Label className="invisible">Acción</Label>
+                                            <div className="flex flex-wrap gap-2 items-center">
                                                 <Button
                                                     className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
                                                     disabled={zipDownloading}
@@ -869,9 +879,13 @@ export default function ConfiguracionPage() {
                                             </Button>
 
                                             <div className="ml-2">
-                                                <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" />
+                                                {/* ✅ Input file estilizado como botón similar a "Exportar datos ahora" */}
+                                                <label htmlFor="importFile" className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-blue-600 hover:bg-blue-700 text-white border-blue-700 h-10 px-4 py-2 cursor-pointer">
+                                                    Seleccionar archivos
+                                                </label>
+                                                <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" className="hidden" />
                                                 <Button
-                                                    className="ml-2"
+                                                    className="ml-2 bg-green-600 hover:bg-green-700 text-white border-green-700"
                                                     onClick={async () => {
                                                         const input = document.getElementById('importFile') as HTMLInputElement | null
                                                         if (!input || !input.files || input.files.length === 0) { alert('Selecciona un archivo exportado primero'); return }
@@ -1155,7 +1169,7 @@ export default function ConfiguracionPage() {
                                                             await agregarAuditLog('ACTUALIZAR', 'Seguridad', 'Políticas actualizadas')
                                                             // Apply new session timeout to current client so it takes effect immediately
                                                             try {
-                                                                const u = getCurrentUser()
+                                                                const u = currentUser
                                                                 if (u) {
                                                                     const minutes = Number(secSettings.session_timeout_minutes) || 30
                                                                     const expiresAt = new Date(Date.now() + minutes * 60_000).toISOString()
@@ -1343,38 +1357,128 @@ export default function ConfiguracionPage() {
                                 <Button
                                     className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700"
                                     disabled={auditLimpiezaRunning}
-                                    onClick={async () => {
+                                    onClick={() => {
                                         if (!currentUser || currentUser.role !== 'admin') {
                                             setAuditLimpiezaError('Solo el administrador puede ejecutar esta limpieza.');
                                             return;
                                         }
                                         setAuditLimpiezaError(null);
                                         setAuditLimpiezaResult(null);
-                                        setAuditLimpiezaRunning(true);
-                                        try {
-                                            const response = await fetch('/api/limpiar-audit-logs', {
-                                                method: 'POST',
-                                                headers: { 'Content-Type': 'application/json' },
-                                                body: JSON.stringify({ confirm: true })
-                                            });
-                                            const data = await response.json();
-                                            if (!response.ok || data.error) {
-                                                throw new Error(data.error || 'Error al limpiar audit logs');
-                                            }
-                                            setAuditLimpiezaResult(`Limpieza completada exitosamente:\n• Registros eliminados: ${data.eliminados}\n• Registros restantes: ${data.registrosRestantes || 'N/A'}`);
-                                            // Recargar los logs después de la limpieza
-                                            await cargarAuditLogs();
-                                        } catch (error: any) {
-                                            setAuditLimpiezaError(error.message || 'Error desconocido');
-                                        } finally {
-                                            setAuditLimpiezaRunning(false);
-                                        }
+                                        setAuditErr(null);
+                                        setAuditPwd1("");
+                                        setAuditDialog1Open(true);
                                     }}
                                 >
                                     {auditLimpiezaRunning ? 'Ejecutando limpieza...' : 'Limpiar Audit Logs antiguos (>6 meses)'}
                                 </Button>
                             </CardContent>
                         </Card>
+
+                        {/* Limpieza de Audit Logs — Confirmación 1/2 con contraseña */}
+                        <Dialog open={auditDialog1Open} onOpenChange={setAuditDialog1Open}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle className="text-orange-700 flex items-center gap-2">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        Confirmar identidad de administrador (1/2)
+                                    </DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-3 text-sm">
+                                    <div className="p-2 border border-orange-200 bg-orange-50 text-orange-800 rounded text-xs">
+                                        Esta acción eliminará todos los registros de auditoría con más de 6 meses de antigüedad. Verifica tu identidad para continuar.
+                                    </div>
+                                    <Label>Contraseña administrador</Label>
+                                    <Input type="password" value={auditPwd1} onChange={e => setAuditPwd1(e.target.value)} placeholder="••••••••" />
+                                    {auditErr && <div className="text-orange-700 bg-orange-50 border border-orange-200 rounded p-2">{auditErr}</div>}
+                                </div>
+                                <DialogFooter>
+                                    <Button variant="outline" onClick={() => setAuditDialog1Open(false)}>Cancelar</Button>
+                                    <Button className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700" onClick={async () => {
+                                        setAuditErr(null)
+                                        if (!auditPwd1) { setAuditErr('Ingresa tu contraseña.'); return }
+                                        const ok = await verifyCurrentUserPassword(auditPwd1)
+                                        if (!ok) { setAuditErr('Contraseña incorrecta.'); return }
+                                        setAuditDialog1Open(false)
+                                        setAuditPwd2("")
+                                        setAuditDialog2Open(true)
+                                    }}>Continuar</Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
+
+                        {/* Limpieza de Audit Logs — Confirmación 2/2 con contraseña */}
+                        <Dialog open={auditDialog2Open} onOpenChange={setAuditDialog2Open}>
+                            <DialogContent>
+                                <DialogHeader>
+                                    <DialogTitle className="text-orange-700 flex items-center gap-2">
+                                        <AlertTriangle className="h-4 w-4" />
+                                        Confirmar nuevamente (2/2)
+                                    </DialogTitle>
+                                </DialogHeader>
+                                <div className="space-y-3 text-sm">
+                                    <div className="p-2 border border-orange-200 bg-orange-50 text-orange-800 rounded text-xs">
+                                        Por seguridad, ingresa nuevamente tu contraseña de administrador para confirmar la eliminación de audit logs antiguos.
+                                    </div>
+                                    <Label>Contraseña administrador</Label>
+                                    <Input type="password" value={auditPwd2} onChange={e => setAuditPwd2(e.target.value)} placeholder="••••••••" />
+                                    {auditErr && <div className="text-orange-700 bg-orange-50 border border-orange-200 rounded p-2">{auditErr}</div>}
+                                </div>
+                                <DialogFooter>
+                                    <Button variant="outline" onClick={() => setAuditDialog2Open(false)}>Cancelar</Button>
+                                    <Button className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700" 
+                                        disabled={auditLimpiezaRunning}
+                                        onClick={async () => {
+                                            setAuditErr(null)
+                                            if (!auditPwd2) { setAuditErr('Ingresa tu contraseña.'); return }
+                                            const ok = await verifyCurrentUserPassword(auditPwd2)
+                                            if (!ok) { setAuditErr('Contraseña incorrecta.'); return }
+                                            
+                                            setAuditDialog2Open(false)
+                                            setAuditLimpiezaRunning(true)
+                                            
+                                            console.log('🧹 Iniciando limpieza de audit logs...')
+                                            
+                                            try {
+                                                const response = await fetch('/api/limpiar-audit-logs', {
+                                                    method: 'POST',
+                                                    headers: { 'Content-Type': 'application/json' },
+                                                    body: JSON.stringify({ confirm: true })
+                                                })
+                                                
+                                                console.log('📡 Respuesta del servidor:', response.status, response.statusText)
+                                                
+                                                let data
+                                                try {
+                                                    data = await response.json()
+                                                    console.log('📋 Datos de respuesta:', data)
+                                                } catch (parseError) {
+                                                    console.error('❌ Error parseando JSON:', parseError)
+                                                    throw new Error(`Error de comunicación con el servidor (Status: ${response.status})`)
+                                                }
+                                                
+                                                if (!response.ok || data.error) {
+                                                    const errorMsg = data.error || `Error HTTP ${response.status}: ${response.statusText}`
+                                                    console.error('❌ Error del servidor:', errorMsg)
+                                                    throw new Error(errorMsg)
+                                                }
+                                                
+                                                console.log('✅ Limpieza completada exitosamente')
+                                                setAuditLimpiezaResult(`Limpieza completada exitosamente:\n• Registros eliminados: ${data.eliminados || 0}\n• Registros restantes: ${data.registrosRestantes || 'N/A'}\n• Período: ${data.mesesRetencion || 6} meses`)
+                                                
+                                                // Recargar los logs después de la limpieza
+                                                await cargarAuditLogs()
+                                            } catch (error: any) {
+                                                setAuditLimpiezaError(error.message || 'Error desconocido')
+                                            } finally {
+                                                setAuditLimpiezaRunning(false)
+                                            }
+                                        }}
+                                    >
+                                        {auditLimpiezaRunning ? 'Ejecutando limpieza...' : 'Confirmar limpieza'}
+                                    </Button>
+                                </DialogFooter>
+                            </DialogContent>
+                        </Dialog>
 
                         {/* 2) Limpieza manual de archivos en Blob */}
                         <Card>
@@ -1391,8 +1495,8 @@ export default function ConfiguracionPage() {
                                 {blobResult && (
                                     <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm whitespace-pre-wrap">{blobResult}</div>
                                 )}
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start md:items-end">
-                                    <div className="space-y-1 md:self-end">
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-start">
+                                    <div className="space-y-1">
                                         <Label>Rango de fechas (opcional)</Label>
                                         <div className="grid grid-cols-2 gap-2">
                                             <Input type="date" value={blobStart} onChange={(e) => setBlobStart(e.target.value)} />
@@ -1401,7 +1505,8 @@ export default function ConfiguracionPage() {
                                         <p className="text-xs text-gray-500">Si dejas vacío, se limpia sin filtrar por fecha.</p>
                                     </div>
                                     <div className="space-y-1">
-                                        <Label>Acción</Label>
+                                        {/* ✅ Label "Acción" eliminado - Botón alineado con inputs de fecha */}
+                                        <Label className="invisible">Acción</Label>
                                         <Button
                                             className="w-full bg-red-600 hover:bg-red-700 text-white border-red-700"
                                             disabled={blobRunning}

@@ -1,0 +1,199 @@
+import { createClient } from '@supabase/supabase-js'
+import { NextResponse } from 'next/server'
+
+// API Route para manejar transiciones de estado en arquitectura desacoplada
+// GET: obtener estado actual, POST: cambiar estado
+
+export async function GET(request: Request) {
+  const { searchParams } = new URL(request.url)
+  const folio = searchParams.get('folio')
+  
+  if (!folio) {
+    return NextResponse.json({ error: 'Folio requerido' }, { status: 400 })
+  }
+
+  const supabase = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE!
+  )
+
+  try {
+    // Buscar en la vista unificada para obtener estado actual
+    const { data: embarque, error } = await supabase
+      .from('embarques')
+      .select('*')
+      .eq('folio', folio)
+      .single()
+
+    if (error || !embarque) {
+      return NextResponse.json({ 
+        error: 'Embarque no encontrado',
+        details: error?.message 
+      }, { status: 404 })
+    }
+
+    return NextResponse.json({
+      success: true,
+      embarque: {
+        folio: embarque.folio,
+        estado: embarque.estado,
+        estado_facturacion: embarque.estado_facturacion,
+        tabla_origen: embarque.tabla_origen,
+        operador_asignado: embarque.operador_asignado,
+        fecha_asignacion: embarque.fecha_asignacion,
+        fecha_inicio_transito: embarque.fecha_inicio_transito,
+        fecha_finalizacion: embarque.fecha_finalizacion
+      }
+    })
+
+  } catch (error) {
+    console.error('Error en GET /api/embarques/estado-desacoplado:', error)
+    return NextResponse.json({ 
+      error: 'Error interno del servidor' 
+    }, { status: 500 })
+  }
+}
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { folio, accion, operador, motivo } = body
+
+    if (!folio || !accion) {
+      return NextResponse.json({ 
+        error: 'Folio y acción requeridos' 
+      }, { status: 400 })
+    }
+
+    const supabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE!
+    )
+
+    let resultado: any
+
+    // Ejecutar la acción correspondiente usando las funciones SQL
+    switch (accion) {
+      case 'completar':
+        // creado -> asignado
+        const { data: completarData, error: completarError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'completar_embarque', { p_folio: folio })
+        
+        if (completarError) {
+          throw completarError
+        }
+        resultado = completarData
+        break
+
+      case 'asignar_operador':
+        if (!operador) {
+          return NextResponse.json({ 
+            error: 'Operador requerido para asignación' 
+          }, { status: 400 })
+        }
+        
+        const { data: asignarData, error: asignarError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'asignar_operador', { 
+            p_folio: folio, 
+            p_operador: operador 
+          })
+        
+        if (asignarError) {
+          throw asignarError
+        }
+        resultado = asignarData
+        break
+
+      case 'iniciar_transito':
+        // asignado -> en_transito
+        const { data: transitoData, error: transitoError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'iniciar_transito', { p_folio: folio })
+        
+        if (transitoError) {
+          throw transitoError
+        }
+        resultado = transitoData
+        break
+
+      case 'finalizar':
+        // en_transito -> finalizado
+        const { data: finalizarData, error: finalizarError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'finalizar_embarque', { p_folio: folio })
+        
+        if (finalizarError) {
+          throw finalizarError
+        }
+        resultado = finalizarData
+        break
+
+      case 'archivar':
+        // finalizado -> archivado
+        const { data: archivarData, error: archivarError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'archivar_embarque', { 
+            p_folio: folio, 
+            p_motivo: motivo || 'Archivado desde interfaz'
+          })
+        
+        if (archivarError) {
+          throw archivarError
+        }
+        resultado = archivarData
+        break
+
+      case 'cancelar':
+        // cualquier_estado -> cancelado
+        if (!motivo) {
+          return NextResponse.json({ 
+            error: 'Motivo requerido para cancelación' 
+          }, { status: 400 })
+        }
+        
+        // Obtener usuario actual para auditoría (simplificado)
+        // En producción, implementar autenticación adecuada
+        const userId = request.headers.get('user-id') // Ejemplo
+        
+        const { data: cancelarData, error: cancelarError } = await supabase
+          // .rpc( // FUNCIÓN ELIMINADA:'cancelar_embarque', { 
+            p_folio: folio, 
+            p_motivo: motivo,
+            p_cancelado_por: userId || null
+          })
+        
+        if (cancelarError) {
+          throw cancelarError
+        }
+        resultado = cancelarData
+        break
+
+      default:
+        return NextResponse.json({ 
+          error: `Acción no válida: ${accion}` 
+        }, { status: 400 })
+    }
+
+    // Verificar si la función retornó error
+    if (!resultado.success) {
+      return NextResponse.json({ 
+        error: resultado.error || 'Error en la operación',
+        details: resultado 
+      }, { status: 400 })
+    }
+
+    // Respuesta exitosa
+    return NextResponse.json({
+      success: true,
+      message: `Embarque ${folio} - ${accion} ejecutado correctamente`,
+      data: resultado,
+      timestamp: new Date().toISOString()
+    })
+
+  } catch (error: any) {
+    console.error('Error en POST /api/embarques/estado-desacoplado:', error)
+    
+    return NextResponse.json({ 
+      error: 'Error interno del servidor',
+      details: error.message || 'Error desconocido',
+      timestamp: new Date().toISOString()
+    }, { status: 500 })
+  }
+}

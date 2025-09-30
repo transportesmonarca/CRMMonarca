@@ -131,6 +131,78 @@ export default function ClientesPage() {
     });
   };
 
+  // 🎲 Función para generar datos aleatorios de cliente
+  const generarDatosAleatorios = () => {
+    const empresas = [
+      "Logística Express", "Transportes del Norte", "Comercial Pacífico", 
+      "Distribuidora Central", "Grupo Monterrey", "Servicios Industriales",
+      "Exportadora Frontera", "Importadora Global", "Manufactura Moderna",
+      "Soluciones Logísticas", "Corporativo Bajío", "Empresas Unidas"
+    ];
+    
+    const rfcs = [
+      "XAXX010101000", "XEXX010101001", "XOXX010101002", "XIXX010101003",
+      "XUXX010101004", "XMXX010101005", "XNXX010101006", "XPXX010101007",
+      "XQXX010101008", "XRXX010101009", "XSXX010101010", "XTXX010101011"
+    ];
+
+    const ciudades = [
+      "Reynosa, Tamaulipas", "Matamoros, Tamaulipas", "Monterrey, Nuevo León",
+      "Ciudad de México", "Guadalajara, Jalisco", "Tijuana, Baja California",
+      "Nuevo Laredo, Tamaulipas", "Cd. Juárez, Chihuahua", "Mérida, Yucatán",
+      "Puebla, Puebla", "León, Guanajuato", "Torreón, Coahuila"
+    ];
+
+    const calles = [
+      "Av. Principal", "Calle Industrial", "Blvd. Comercial", "Av. Central",
+      "Calle Norte", "Av. Sur", "Blvd. Oriente", "Calle Poniente"
+    ];
+
+    const empresaRandom = empresas[Math.floor(Math.random() * empresas.length)];
+    const rfcRandom = rfcs[Math.floor(Math.random() * rfcs.length)];
+    const ciudadRandom = ciudades[Math.floor(Math.random() * ciudades.length)];
+    const calleRandom = calles[Math.floor(Math.random() * calles.length)];
+    const numeroRandom = Math.floor(Math.random() * 9999) + 1;
+    const telefonoRandom = `+52 ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 9000) + 1000}`;
+    const emailRandom = empresaRandom.toLowerCase().replace(/\s/g, '').replace(/ñ/g, 'n') + Math.floor(Math.random() * 99) + '@empresa.com';
+
+    setFormData({
+      nombre_comercial: empresaRandom,
+      rfc: rfcRandom,
+      direccion: `${calleRandom} ${numeroRandom}, ${ciudadRandom}`,
+      correo_contacto: emailRandom,
+      telefono: telefonoRandom,
+      forma_facturacion: formasFacturacion.length > 0 ? formasFacturacion[0].id : "",
+      divisa_pago: "MXN",
+      empresa_facturadora: empresaRandom,
+    });
+
+    // También generar contactos aleatorios
+    const nombresContactos = ["Juan Pérez", "María García", "Carlos López", "Ana Martínez", "Roberto Silva"];
+    const puestos = ["Gerente", "Coordinador", "Supervisor", "Asistente", "Director"];
+    
+    const contactosAleatorios = Array.from({ length: Math.floor(Math.random() * 3) + 1 }, (_, i) => ({
+      id: uuidv4(),
+      nombre: nombresContactos[Math.floor(Math.random() * nombresContactos.length)],
+      puesto: puestos[Math.floor(Math.random() * puestos.length)],
+      telefono: `+52 ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 900) + 100} ${Math.floor(Math.random() * 9000) + 1000}`,
+      email: `contacto${i + 1}@${empresaRandom.toLowerCase().replace(/\s/g, '').replace(/ñ/g, 'n')}.com`,
+      notas: `Contacto de ${puestos[Math.floor(Math.random() * puestos.length)]}`,
+      cliente_id: "",
+      es_principal: i === 0, // El primer contacto es principal
+      activo: true,
+      fecha_creacion: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }));
+
+    setContactos(contactosAleatorios);
+    
+    toast({
+      title: "Datos generados",
+      description: `Se generaron datos aleatorios para ${empresaRandom}`,
+    });
+  };
+
   // Estados temporales para edición de formas de facturación desde el modal
   const [editingFormas, setEditingFormas] = useState<FormaFacturacion[]>([]);
   useEffect(() => {
@@ -402,7 +474,7 @@ export default function ClientesPage() {
         c.nombre.trim() ||
   (c.telefono?.trim?.() || "") ||
   (c.email?.trim?.() || "") ||
-        c.notas?.trim()
+        (c.puesto && c.puesto.trim())
     );
     if (contactosValidos.length === 0) {
       toast({ title: "Por favor agrega al menos un contacto con información", variant: "destructive" });
@@ -441,7 +513,16 @@ export default function ClientesPage() {
 
         if (error) {
           console.error("Error actualizando cliente:", error);
-          toast({ title: "Error al actualizar cliente", variant: "destructive" });
+          console.error("Datos que se intentaron actualizar:", clienteData);
+          console.error("ID del cliente:", editingClient?.id);
+          console.error("Error message:", error.message);
+          console.error("Error details:", error.details);
+          
+          toast({ 
+            title: "Error al actualizar cliente", 
+            description: error.message || error.details || "Error desconocido",
+            variant: "destructive" 
+          });
           return;
         }
 
@@ -455,11 +536,17 @@ export default function ClientesPage() {
         } catch {}
 
         // Guardar contactos en la nueva tabla
-        const contactosGuardados = await guardarContactosCliente(
-          editingClient.id,
-          contactos
-        );
-        if (!contactosGuardados) {
+        try {
+          const contactosGuardados = await guardarContactosCliente(
+            editingClient.id,
+            contactos
+          );
+          if (!contactosGuardados) {
+            console.warn("No se pudieron guardar los contactos, pero el cliente se actualizó correctamente");
+            toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "default" });
+          }
+        } catch (errorContactos) {
+          console.error("Error guardando contactos durante actualización:", errorContactos);
           toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "default" });
         }
       } else {
@@ -475,7 +562,15 @@ export default function ClientesPage() {
 
         if (error) {
           console.error("Error creando cliente:", error);
-          toast({ title: "Error al crear cliente", variant: "destructive" });
+          console.error("Datos que se intentaron insertar:", clienteData);
+          console.error("Error message:", error.message);
+          console.error("Error details:", error.details);
+          
+          toast({ 
+            title: "Error al crear cliente", 
+            description: error.message || error.details || "Error desconocido",
+            variant: "destructive" 
+          });
           return;
         }
 
@@ -489,11 +584,17 @@ export default function ClientesPage() {
         } catch {}
 
         // Guardar contactos en la nueva tabla
-        const contactosGuardados = await guardarContactosCliente(
-          nuevoCliente.id,
-          contactos
-        );
-        if (!contactosGuardados) {
+        try {
+          const contactosGuardados = await guardarContactosCliente(
+            nuevoCliente.id,
+            contactos
+          );
+          if (!contactosGuardados) {
+            console.warn("No se pudieron guardar los contactos, pero el cliente se creó correctamente");
+            toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "default" });
+          }
+        } catch (errorContactos) {
+          console.error("Error guardando contactos:", errorContactos);
           toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "default" });
         }
       }
@@ -504,7 +605,21 @@ export default function ClientesPage() {
       await cargarClientes();
     } catch (error) {
       console.error("Error guardando cliente:", error);
-  toast({ title: "Error al guardar cliente", variant: "destructive" });
+      console.error("Tipo de error:", typeof error);
+      console.error("Detalles del error:", JSON.stringify(error, null, 2));
+      console.error("Stack trace:", (error as any)?.stack);
+      console.error("Message:", (error as any)?.message);
+      
+      const errorMessage = (error as any)?.message || 
+                          (error as any)?.details || 
+                          JSON.stringify(error) || 
+                          "Error desconocido";
+      
+      toast({ 
+        title: "Error al guardar cliente", 
+        description: errorMessage,
+        variant: "destructive" 
+      });
     } finally {
       setSaving(false);
     }
@@ -1094,23 +1209,53 @@ export default function ClientesPage() {
                   } md:rounded-lg md:mx-auto flex flex-col overflow-hidden`}
                 >
                   {/* Mobile compact header: visible only on small screens */}
-                  <div className="md:hidden flex items-center justify-between px-4 py-3 border-b bg-white">
-                    <h2 className="text-lg font-semibold">
-                      {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
-                    </h2>
-                    <Button variant="ghost" size="icon" onClick={() => setShowForm(false)}>
-                      <X className="h-4 w-4" />
-                    </Button>
+                  <div className="md:hidden px-4 py-3 border-b bg-white">
+                    <div className="flex items-center justify-between">
+                      <h2 className="text-lg font-semibold">
+                        {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
+                      </h2>
+                      <Button variant="ghost" size="icon" onClick={() => setShowForm(false)}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    {!editingClient && (
+                      <div className="mt-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={generarDatosAleatorios}
+                          className="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+                        >
+                          🎲 Generar Datos Aleatorios
+                        </Button>
+                      </div>
+                    )}
                   </div>
 
                   {/* Desktop header: keep original header for md+ */}
                   <DialogHeader className="hidden md:block">
-                    <DialogTitle>
-                      {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
-                    </DialogTitle>
-                    <DialogDescription>
-                      Completa la información del cliente
-                    </DialogDescription>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <DialogTitle>
+                          {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
+                        </DialogTitle>
+                        <DialogDescription>
+                          Completa la información del cliente
+                        </DialogDescription>
+                      </div>
+                      {!editingClient && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={generarDatosAleatorios}
+                          className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
+                        >
+                          🎲 Datos Aleatorios
+                        </Button>
+                      )}
+                    </div>
                   </DialogHeader>
 
                 

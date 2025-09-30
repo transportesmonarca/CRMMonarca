@@ -219,6 +219,8 @@ export interface Embarque {
   precio_quickpaid?: number;
   modificado?: boolean;
   flete_falso?: boolean;
+  // Pagos al operador
+  pago_operador?: number;
   // Facturación/envíos al cliente y referencias de pago
   fecha_envio_cliente?: string;
   referencia_pago?: string;
@@ -234,6 +236,10 @@ export interface Embarque {
   referencia_pago_2?: string;
   referencia_pago_3?: string;
   referencia_pago_4?: string;
+  // Nuevos campos JSON para facturación consolidada
+  facturas_json?: FacturaData[];
+  envios_cliente_json?: any[]; // deprecated
+  pagos_cliente_json?: any[];  // deprecated
   fecha_finalizacion?: string;
   // Relaciones
   cliente?: Cliente;
@@ -264,6 +270,13 @@ export interface Recordatorio {
   // Relaciones
   operador?: Operador;
   camion?: Camion;
+}
+
+export interface FacturaData {
+  numero: string;
+  fecha_envio?: string | null;
+  fecha_pago?: string | null;
+  referencia?: string | null;
 }
 
 export interface FotoEmbarque {
@@ -548,6 +561,8 @@ export const guardarContactosCliente = async (
   contactos: any[]
 ): Promise<boolean> => {
   try {
+    console.log("Iniciando guardarContactosCliente con:", { clienteId, contactos });
+    
     // Primero, desactivar todos los contactos existentes
     const { error: updateError } = await supabase
       .from("contactos_clientes")
@@ -556,31 +571,34 @@ export const guardarContactosCliente = async (
 
     if (updateError) {
       console.error("Error desactivando contactos:", updateError);
+      console.error("Cliente ID:", clienteId);
+      console.error("Error message:", updateError.message);
+      console.error("Error details:", updateError.details);
       return false;
     }
 
     // Luego, insertar los nuevos contactos
-    // Considerar puesto y notas como datos válidos para insertar
+    // IMPORTANTE: nombre es requerido (NOT NULL), así que necesitamos que cada contacto tenga un nombre válido
     const contactosParaInsertar = contactos
       .filter(
         (c) =>
           c.nombre.trim() ||
           c.telefono.trim() ||
           c.email.trim() ||
-          (c.puesto && c.puesto.trim()) ||
-          (c.notas && c.notas.trim())
+          (c.puesto && c.puesto.trim())
       )
       .map((contacto, index) => ({
         cliente_id: clienteId,
-        nombre: contacto.nombre.trim(),
+        nombre: contacto.nombre.trim() || "Sin nombre", // Asegurar que siempre haya un nombre válido
         telefono: contacto.telefono.trim() || null,
         email: contacto.email.trim() || null,
         puesto: contacto.puesto?.trim() || null,
-        notas: contacto.notas?.trim() || null,
         es_principal: index === 0, // El primer contacto es principal
         activo: true,
       }));
 
+    console.log("Contactos para insertar:", contactosParaInsertar);
+    
     if (contactosParaInsertar.length > 0) {
       const { error: insertError } = await supabase
         .from("contactos_clientes")
@@ -588,13 +606,21 @@ export const guardarContactosCliente = async (
 
       if (insertError) {
         console.error("Error insertando contactos:", insertError);
+        console.error("Datos que se intentaron insertar:", contactosParaInsertar);
+        console.error("Error message:", insertError.message);
+        console.error("Error details:", insertError.details);
         return false;
       }
     }
 
+    console.log("Contactos guardados exitosamente");
     return true;
   } catch (error) {
     console.error("Error guardando contactos:", error);
+    console.error("Tipo de error:", typeof error);
+    console.error("Stack trace:", (error as any)?.stack);
+    console.error("Cliente ID:", clienteId);
+    console.error("Contactos recibidos:", contactos);
     return false;
   }
 };
@@ -875,7 +901,17 @@ export const obtenerEmbarquesModificadosIds = async (): Promise<string[]> => {
       .select("embarque_id");
 
     if (error) {
-      console.error("Error al obtener IDs de embarques modificados:", error);
+      console.error("Error al obtener IDs de embarques modificados:", {
+        message: error.message,
+        details: error.details,
+        hint: error.hint,
+        code: error.code
+      });
+      return [];
+    }
+
+    if (!data) {
+      console.warn("No se encontraron datos en embarque_modificaciones");
       return [];
     }
 
@@ -883,7 +919,11 @@ export const obtenerEmbarquesModificadosIds = async (): Promise<string[]> => {
     const ids = data.map((row) => row.embarque_id);
     return Array.from(new Set(ids));
   } catch (error) {
-    console.error("Excepción al obtener IDs de embarques modificados:", error);
+    console.error("Excepción al obtener IDs de embarques modificados:", {
+      name: error instanceof Error ? error.name : "Unknown",
+      message: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined
+    });
     return [];
   }
 };
@@ -1104,6 +1144,349 @@ export const corregirFotosHuerfanas = async (
     return true;
   } catch (error) {
     console.error("Excepción al corregir fotos huérfanas:", error);
+    return false;
+  }
+};
+
+// =============================
+// FUNCIÓN CENTRALIZADA PARA CALCULAR PAGO AL OPERADOR
+// =============================
+
+/**
+ * Calcula el pago al operador siguiendo esta lógica de prioridades:
+ * 1. Si tiene pago_operador (valor específico del embarque) → usar ese valor  
+ * 2. Si es flete falso → buscar tipo de servicio "Flete en Falso" y usar su pago
+ * 3. Si tiene tipo de servicio → calcular desde tipo de servicio
+ * 4. Fallback → 0
+ * 
+ * NOTA: El campo pago_operador_flete_falso no existe en la tabla embarques,
+ * solo en tipos_servicio. Cuando se marca un embarque como flete falso, 
+ * el valor se guarda en embarques.pago_operador
+ */
+export const calcularPagoOperador = (
+  embarque: Partial<Embarque>, 
+  tipoServicio?: Partial<TipoServicio> | null,
+  tiposServicio?: TipoServicio[]
+): number => {
+  try {
+    console.log(`🔍 [DEBUG] Calculando pago para embarque:`, {
+      folio: embarque.folio,
+      flete_falso: embarque.flete_falso,
+      pago_operador: embarque.pago_operador,
+      tipo_servicio_id: embarque.tipo_servicio_id,
+      tipoServicio: tipoServicio ? { id: tipoServicio.id, nombre: tipoServicio.nombre } : null,
+      tiposServicioCount: tiposServicio?.length || 0
+    });
+
+    // 1. PRIORIDAD MÁXIMA: Pago específico del embarque (incluye fletes falsos)
+    if (embarque.pago_operador != null) {
+      const pago = Number(embarque.pago_operador);
+      if (!isNaN(pago)) {
+        console.log(`💰 [DEBUG] Pago calculado (específico embarque): ${pago}`);
+        return pago;
+      }
+    }
+
+    // 2. SEGUNDA PRIORIDAD: Si es flete falso, usar precio fallback (se recomienda usar calcularPagoOperadorAsync)
+    if (embarque.flete_falso) {
+      console.log(`� [DEBUG] Es flete falso, usando precio fallback 800`);
+      return 800.00; // Precio fallback para función síncrona
+    }
+
+    // 3. TERCERA PRIORIDAD: Usar el tipo de servicio del embarque
+    if (tipoServicio) {
+      const pagoTipoServicio = calcularMontoTipoServicio(tipoServicio);
+      console.log(`💰 [DEBUG] Pago calculado (tipo servicio): ${pagoTipoServicio}`);
+      return pagoTipoServicio;
+    }
+
+    // 4. FALLBACK: 0
+    console.log("💰 [DEBUG] Pago calculado (fallback): 0");
+    return 0;
+
+  } catch (error) {
+    console.error("❌ [DEBUG] Error calculando pago operador:", error);
+    return 0;
+  }
+};
+
+/**
+ * Versión asíncrona de calcularPagoOperador que maneja el precio global de flete falso
+ */
+export const calcularPagoOperadorAsync = async (
+  embarque: Partial<Embarque>, 
+  tipoServicio?: Partial<TipoServicio> | null,
+  tiposServicio?: TipoServicio[]
+): Promise<number> => {
+  try {
+    console.log(`🔍 [DEBUG] Calculando pago ASYNC para embarque (FUENTE ÚNICA):`, {
+      folio: embarque.folio,
+      pago_operador: embarque.pago_operador,
+    });
+
+    // 🎯 FUENTE ÚNICA: SIEMPRE usar embarques.pago_operador
+    // Esta es la ÚNICA fuente de verdad para el pago del operador
+    if (embarque.pago_operador != null) {
+      const pago = Number(embarque.pago_operador);
+      if (!isNaN(pago)) {
+        console.log(`💰 [DEBUG] Pago calculado (desde embarques.pago_operador): ${pago}`);
+        return pago;
+      }
+    }
+
+    // Si no hay embarque.pago_operador definido, retornar 0
+    console.log(`💰 [DEBUG] Embarque sin pago_operador definido, retornando 0`);
+    return 0;
+  } catch (error) {
+    console.error(`❌ [ERROR] Error en calcularPagoOperadorAsync:`, error);
+    return 0;
+  }
+};
+
+/**
+ * Función auxiliar para calcular el monto desde un tipo de servicio
+ * Maneja los diferentes campos que puede tener un tipo de servicio
+ */
+const calcularMontoTipoServicio = (tipo: Partial<TipoServicio>): number => {
+  if (!tipo) {
+    console.log(`⚠️ [DEBUG] calcularMontoTipoServicio: tipo es null/undefined`);
+    return 0;
+  }
+
+  console.log(`🔧 [DEBUG] calcularMontoTipoServicio para tipo:`, {
+    nombre: tipo.nombre,
+    es_flete_falso: tipo.es_flete_falso,
+    pago_operador_flete_falso: tipo.pago_operador_flete_falso,
+    pago_operador: (tipo as any).pago_operador,
+    precio_base: (tipo as any).precio_base
+  });
+
+  // Para tipos de servicio que son flete falso, usar su campo específico
+  if (tipo.es_flete_falso && tipo.pago_operador_flete_falso != null) {
+    const pago = Number(tipo.pago_operador_flete_falso);
+    if (!isNaN(pago)) {
+      console.log(`💰 [DEBUG] Usando pago_operador_flete_falso: ${pago}`);
+      return pago;
+    }
+  }
+
+  // Buscar en los campos estándar por orden de prioridad
+  const candidatos = [
+    (tipo as any).pago_operador,
+    (tipo as any).precio_base,
+    (tipo as any).pagoOperador, // Campo legacy
+  ];
+
+  console.log(`🔍 [DEBUG] Candidatos de pago:`, candidatos);
+
+  for (const candidato of candidatos) {
+    if (candidato != null) {
+      const parsed = Number(candidato);
+      if (!isNaN(parsed)) {
+        console.log(`💰 [DEBUG] Usando candidato: ${parsed}`);
+        return parsed;
+      }
+    }
+  }
+
+  console.log(`💰 [DEBUG] Ningún candidato válido, retornando 0`);
+  return 0;
+};
+
+// =======================
+// CONFIGURACIÓN DEL SISTEMA
+// =======================
+
+// Interfaz para la configuración del sistema
+export interface ConfiguracionSistema {
+  id: string;
+  clave: string;
+  valor: string;
+  descripcion?: string;
+  tipo_dato: 'texto' | 'numero' | 'booleano' | 'json';
+  categoria: string;
+  activo: boolean;
+  usuario_creacion?: string;
+  usuario_modificacion?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Obtener una configuración específica del sistema por su clave
+ */
+export const obtenerConfiguracion = async (clave: string): Promise<string | null> => {
+  try {
+    const { data, error } = await supabase
+      .from('configuracion_sistema')
+      .select('valor')
+      .eq('clave', clave)
+      .eq('activo', true)
+      .single();
+
+    if (error) {
+      // Si la tabla no existe, es normal al principio
+      if (error.code === 'PGRST116' || error.message?.includes('does not exist')) {
+        console.warn(`Tabla configuracion_sistema no existe. Ejecutar script 107-crear-configuracion-sistema.sql`);
+        return null;
+      }
+      console.error(`Error obteniendo configuración ${clave}:`, error);
+      return null;
+    }
+
+    return data?.valor || null;
+  } catch (error) {
+    console.error(`Error obteniendo configuración ${clave}:`, error);
+    return null;
+  }
+};
+
+/**
+ * Obtener el precio global único de flete falso
+ * Versión temporal con fallback hasta que se ejecute el script SQL
+ */
+export const obtenerPrecioFleteFalso = async (): Promise<number> => {
+  try {
+    const valor = await obtenerConfiguracion('flete_falso_precio_global');
+    if (valor) {
+      const precio = Number(valor);
+      if (!isNaN(precio)) {
+        return precio;
+      }
+    }
+    // Valor por defecto si no existe configuración
+    return 800.00;
+  } catch (error) {
+    console.warn('Tabla configuracion_sistema no existe aún. Usando precio fallback 800.00');
+    return 800.00;
+  }
+};
+
+/**
+ * Actualizar una configuración del sistema
+ */
+export const actualizarConfiguracion = async (
+  clave: string, 
+  valor: string, 
+  usuario?: string
+): Promise<boolean> => {
+  try {
+    const { error } = await supabase
+      .from('configuracion_sistema')
+      .update({
+        valor,
+        usuario_modificacion: usuario || 'sistema',
+        updated_at: new Date().toISOString()
+      })
+      .eq('clave', clave);
+
+    if (error) {
+      console.error(`Error actualizando configuración ${clave}:`, error);
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    console.error(`Error actualizando configuración ${clave}:`, error);
+    return false;
+  }
+};
+
+/**
+ * Actualizar el precio global único de flete falso
+ */
+export const actualizarPrecioFleteFalso = async (
+  nuevoPrecio: number, 
+  usuario?: string
+): Promise<boolean> => {
+  return await actualizarConfiguracion(
+    'flete_falso_precio_global', 
+    nuevoPrecio.toString(), 
+    usuario
+  );
+};
+
+/**
+ * Actualizar el estado de flete falso de un embarque en las tablas normalizadas
+ * IMPORTANTE: Solo actualiza el PAGO DEL OPERADOR, no el precio del flete del embarque
+ */
+export const actualizarFleteFalsoEmbarque = async (
+  embarqueId: string, 
+  esFleteFalso: boolean, 
+  precioFleteFalso?: number
+): Promise<boolean> => {
+  // Obtener el precio global si no se proporciona uno específico
+  let precioFinal = precioFleteFalso;
+  
+  try {
+    if (esFleteFalso && !precioFinal) {
+      precioFinal = await obtenerPrecioFleteFalso();
+    }
+
+    // Verificar si la función RPC existe, si no, usar actualización directa
+    console.log(`🔄 Actualizando flete falso para embarque ${embarqueId}:`, {
+      esFleteFalso,
+      precioFinal
+    });
+
+    // Intentar usar la función RPC primero
+    const { data, error } = await supabase
+      .rpc('actualizar_flete_falso', {
+        p_embarque_id: embarqueId,
+        p_es_flete_falso: esFleteFalso,
+        p_precio_flete_falso: precioFinal
+      });
+
+    if (error) {
+      console.warn('⚠️ Función RPC actualizar_flete_falso falló, usando fallback:', error?.message || 'Sin mensaje');
+      console.log('📋 Detalles del error RPC:', {
+        message: error?.message || 'Sin mensaje específico',
+        details: error?.details || 'Sin detalles',
+        hint: error?.hint || 'Sin hint',
+        code: error?.code || 'Sin código',
+        embarqueId: embarqueId,
+        esFleteFalso: esFleteFalso,
+        precioFinal: precioFinal
+      });
+      
+      // SIEMPRE intentar actualización directa como fallback cuando RPC falla
+      console.log('🔄 RPC falló, usando actualización directa como fallback...');
+      
+      try {
+        // Actualizar directamente la tabla embarques
+        const updateData: any = {
+          flete_falso: esFleteFalso
+        };
+        
+        if (esFleteFalso && precioFinal) {
+          updateData.pago_operador = precioFinal;
+        }
+        
+        const { error: updateError } = await supabase
+          .from('embarques')
+          .update(updateData)
+          .eq('id', embarqueId);
+          
+        if (updateError) {
+          console.warn('⚠️ Error en actualización directa también falló:', updateError?.message || updateError);
+          return false;
+        }
+        
+        console.log('✅ Flete falso actualizado mediante actualización directa (fallback)');
+        return true;
+        
+      } catch (fallbackError) {
+        console.warn('⚠️ Error crítico en fallback:', fallbackError);
+        return false;
+      }
+    }
+
+    console.log(`✅ Flete falso actualizado para embarque ${embarqueId}: ${esFleteFalso ? 'Pago operador = $' + precioFinal : 'Pago operador = precio original'}`);
+    return true;
+
+  } catch (error) {
+    console.warn('⚠️ Error crítico en actualizarFleteFalsoEmbarque:', error instanceof Error ? error.message : String(error));
+    console.log('📋 Stack trace completo:', error instanceof Error ? error.stack : undefined);
     return false;
   }
 };

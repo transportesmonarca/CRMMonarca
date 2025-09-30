@@ -34,6 +34,8 @@ import {
   Camera,
   X,
   ArrowLeft,
+  MapPin,
+  HelpCircle,
 } from "lucide-react"
 import {
   supabase,
@@ -47,6 +49,51 @@ import {
 } from "@/lib/supabase"
 import { subirFotoEmbarque, eliminarFotoEmbarque } from "@/lib/blob"
 import { agregarAuditLog } from "@/lib/audit"
+
+// Función para extraer direcciones múltiples de las observaciones
+const extraerDireccionesMultiples = (observaciones: string) => {
+  const recolectas: Array<{direccion: string, fecha: string, hora: string}> = [];
+  const entregas: Array<{direccion: string, fecha: string, hora: string}> = [];
+  
+  if (!observaciones) return { recolectas, entregas };
+  
+  try {
+    // Buscar patrones de múltiples direcciones en las observaciones
+    const lineas = observaciones.split('\n').map(l => l.trim()).filter(Boolean);
+    
+    let currentSection = '';
+    
+    for (const linea of lineas) {
+      if (linea.toLowerCase().includes('recolecta') || linea.toLowerCase().includes('pickup')) {
+        currentSection = 'recolecta';
+        continue;
+      }
+      if (linea.toLowerCase().includes('entrega') || linea.toLowerCase().includes('delivery')) {
+        currentSection = 'entrega';
+        continue;
+      }
+      
+      // Intentar extraer direcciones con fechas/horas
+      const addressMatch = linea.match(/^(.+?)(?:\s*-\s*(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}))?(?:\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?))?\s*$/i);
+      
+      if (addressMatch && addressMatch[1].length > 10) {
+        const direccion = addressMatch[1].trim();
+        const fecha = addressMatch[2] || '';
+        const hora = addressMatch[3] || '';
+        
+        if (currentSection === 'recolecta') {
+          recolectas.push({ direccion, fecha, hora });
+        } else if (currentSection === 'entrega') {
+          entregas.push({ direccion, fecha, hora });
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Error extrayendo direcciones múltiples:', error);
+  }
+  
+  return { recolectas, entregas };
+};
 
 export default function SubirFotosEmbarquePage() {
   const params = useParams()
@@ -69,10 +116,13 @@ export default function SubirFotosEmbarquePage() {
   const [successType, setSuccessType] = useState<"upload" | "delete">("upload")
   const [generatingLink, setGeneratingLink] = useState(false)
 
-  // Geolocalización
+    // Geolocalización
   const [latitud, setLatitud] = useState<number | null>(null)
   const [longitud, setLongitud] = useState<number | null>(null)
-  const [geoStatus, setGeoStatus] = useState<"idle" | "solicitando" | "ok" | "error">("idle")
+  const [geoStatus, setGeoStatus] = useState<"solicitando" | "ok" | "error" | null>(null)
+  
+  // Estado para el popup de ayuda
+  const [showHelpPopup, setShowHelpPopup] = useState(false)
 
   // Permitir desactivar el requisito de ubicación si hay problemas (iOS/Safari)
   const [requerirUbicacion, setRequerirUbicacion] = useState<boolean>(true)
@@ -99,12 +149,37 @@ export default function SubirFotosEmbarquePage() {
 
   // Intentar solicitar ubicación al cargar (si el navegador lo permite)
   useEffect(() => {
-    // No forzar en desktop; el operador normalmente abrirá desde el móvil
+    // Solo en dispositivos móviles y no forzar inmediatamente
+    const esMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+    
     if (typeof window === "undefined" || !("geolocation" in navigator)) return
-    // Solicitar sólo una vez automáticamente; si falla, el usuario puede reintentar con el botón
-    solicitarUbicacion(false)
+    
+    // Esperar un momento antes de solicitar para que la UI se cargue
+    const timer = setTimeout(() => {
+      if (esMobile) {
+        // En móviles, solicitar sin mostrar errores inmediatamente
+        solicitarUbicacion(false)
+      }
+    }, 1000)
+
+    return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Cerrar popup de ayuda al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (showHelpPopup) {
+        const target = event.target as Element
+        if (!target.closest('.help-popup') && !target.closest('button')) {
+          setShowHelpPopup(false)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [showHelpPopup])
 
   const cargarDatos = async () => {
     try {
@@ -160,27 +235,69 @@ export default function SubirFotosEmbarquePage() {
   }
 
   const solicitarUbicacion = (mostrarErrores = true) => {
+    // Verificar soporte de geolocalización
     if (!("geolocation" in navigator)) {
       if (mostrarErrores) setError("Este dispositivo/navegador no soporta geolocalización")
       setGeoStatus("error")
       return
     }
+
+    // Verificar si estamos en HTTPS o localhost (requerido en iOS)
+    const esSeguro = window.location.protocol === 'https:' || window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    
+    if (!esSeguro && /iPad|iPhone|iPod/.test(navigator.userAgent)) {
+      if (mostrarErrores) {
+        setError("⚠️ iOS requiere HTTPS para geolocalización. Usa localhost o configura HTTPS.")
+      }
+      setGeoStatus("error")
+      return
+    }
+
     setGeoStatus("solicitando")
+
+    // Configuración optimizada para móviles
+    const opciones: PositionOptions = {
+      enableHighAccuracy: false, // Cambiar a false para mejor compatibilidad en iOS
+      timeout: 15000, // Aumentar timeout para conexiones lentas
+      maximumAge: 300000 // Permitir ubicación de hasta 5 minutos (300 segundos)
+    }
+
     navigator.geolocation.getCurrentPosition(
       (pos) => {
+        console.log("Ubicación obtenida:", { lat: pos.coords.latitude, lng: pos.coords.longitude })
         setLatitud(pos.coords.latitude)
         setLongitud(pos.coords.longitude)
         setGeoStatus("ok")
+        if (mostrarErrores) {
+          setError("") // Limpiar errores previos
+        }
       },
       (err) => {
-        console.error("Geolocalización denegada o con error:", err)
-        if (mostrarErrores)
-          setError(
-            "No se pudo obtener tu ubicación. Actívala en Safari: Ajustes > Privacidad > Localización y vuelve a intentar."
-          )
+        console.error("Error de geolocalización:", err)
+        let mensajeError = ""
+        
+        switch (err.code) {
+          case err.PERMISSION_DENIED:
+            mensajeError = /iPad|iPhone|iPod/.test(navigator.userAgent)
+              ? "📍 Permiso denegado. Ve a Ajustes > Privacidad y Seguridad > Servicios de Ubicación y actívalos para Safari."
+              : "📍 Permiso denegado. Permite el acceso a ubicación en tu navegador."
+            break
+          case err.POSITION_UNAVAILABLE:
+            mensajeError = "📍 Ubicación no disponible. Verifica tu GPS o conexión a internet."
+            break
+          case err.TIMEOUT:
+            mensajeError = "📍 Tiempo agotado obteniendo ubicación. Intenta de nuevo."
+            break
+          default:
+            mensajeError = `📍 Error de ubicación: ${err.message || 'Error desconocido'}`
+        }
+
+        if (mostrarErrores) {
+          setError(mensajeError)
+        }
         setGeoStatus("error")
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+      opciones
     )
   }
 
@@ -472,8 +589,9 @@ export default function SubirFotosEmbarquePage() {
               </span>
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <CardContent className="space-y-6">
+            {/* Información básica */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <div>
                 <Label className="text-sm font-medium text-gray-600">Cliente</Label>
                 <p className="text-sm">{embarque.cliente?.nombre || "No especificado"}</p>
@@ -485,20 +603,8 @@ export default function SubirFotosEmbarquePage() {
                 </p>
               </div>
               <div>
-                <Label className="text-sm font-medium text-gray-600">Origen</Label>
-                <p className="text-sm">{embarque.origen || "—"}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Destino</Label>
-                <p className="text-sm">{embarque.destino || "—"}</p>
-              </div>
-              <div>
                 <Label className="text-sm font-medium text-gray-600">No. Tractocamión</Label>
                 <p className="text-sm">{embarque.camion?.numero_economico || "No asignado"}</p>
-              </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Recolecta</Label>
-                <p className="text-sm">{embarque.fecha_recolecta ? new Date(embarque.fecha_recolecta).toLocaleDateString() : '—'}{embarque.hora_recolecta ? ` ${embarque.hora_recolecta}` : ''}</p>
               </div>
               <div>
                 <Label className="text-sm font-medium text-gray-600">No. Remolque</Label>
@@ -506,10 +612,129 @@ export default function SubirFotosEmbarquePage() {
                   {embarque.remolque?.numero_economico || (embarque as any).remolque_numero_economico || embarque.remolque?.placas || (embarque as any).remolque_placa || "No asignado"}
                 </p>
               </div>
-              <div>
-                <Label className="text-sm font-medium text-gray-600">Fecha / Hora Entrega</Label>
-                <p className="text-sm">{embarque.fecha_entrega ? new Date(embarque.fecha_entrega).toLocaleDateString() : '—'}{embarque.hora_entrega ? ` ${embarque.hora_entrega}` : ''}</p>
-              </div>
+            </div>
+
+            {/* Direcciones - Adaptativo móvil/escritorio */}
+            <div className="space-y-4">
+              {(() => {
+                // Usar la misma lógica que en asignar-operadores para extraer direcciones múltiples
+                let recolectasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                let entregasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                
+                try {
+                  // Prioridad 1: Intentar extraer de campos JSON 
+                  if ((embarque as any).recolectas_json) {
+                    recolectasFinales = JSON.parse((embarque as any).recolectas_json);
+                  }
+                  if ((embarque as any).entregas_json) {
+                    entregasFinales = JSON.parse((embarque as any).entregas_json);
+                  }
+                } catch (jsonError) {
+                  console.warn("Error parsing JSON direcciones:", jsonError);
+                }
+                
+                // Prioridad 2: Si no hay datos JSON, extraer de observaciones
+                if (recolectasFinales.length === 0 && entregasFinales.length === 0) {
+                  try {
+                    const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
+                    recolectasFinales = extracted.recolectas;
+                    entregasFinales = extracted.entregas;
+                  } catch (e) {
+                    console.warn('Error parseando direcciones múltiples:', e);
+                  }
+                }
+                
+                // Prioridad 3: Si aún no hay direcciones múltiples, usar campos legacy como fallback
+                if (recolectasFinales.length === 0) {
+                  const recolectaIndividual = (embarque as any).direccion_recolecta || embarque.origen;
+                  if (recolectaIndividual) {
+                    recolectasFinales = [{
+                      direccion: recolectaIndividual,
+                      fecha: (embarque as any).fecha_recolecta || "",
+                      hora: (embarque as any).hora_recolecta || ""
+                    }];
+                  }
+                }
+                
+                if (entregasFinales.length === 0) {
+                  const entregaIndividual = (embarque as any).direccion_entrega || embarque.destino;
+                  if (entregaIndividual) {
+                    entregasFinales = [{
+                      direccion: entregaIndividual,
+                      fecha: (embarque as any).fecha_entrega || "",
+                      hora: (embarque as any).hora_entrega || ""
+                    }];
+                  }
+                }
+
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Recolectas */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-green-600" />
+                        <Label className="text-sm font-medium text-gray-900">Recolecta(s)</Label>
+                      </div>
+                      <div className="space-y-2">
+                        {recolectasFinales.length > 0 ? recolectasFinales.map((r, i) => (
+                          <div key={i} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                            <div className="space-y-1">
+                              {recolectasFinales.length > 1 && (
+                                <div className="text-xs font-medium text-green-700 mb-1">
+                                  {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                </div>
+                              )}
+                              <p className="text-sm text-gray-900 break-words">{r.direccion}</p>
+                              {(r.fecha || r.hora) && (
+                                <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
+                                  {r.fecha && <span>📅 {r.fecha}</span>}
+                                  {r.hora && <span>🕐 {r.hora}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                            <p className="text-sm text-gray-500">Sin dirección de recolecta</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Entregas */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <MapPin className="h-4 w-4 text-blue-600" />
+                        <Label className="text-sm font-medium text-gray-900">Entrega(s)</Label>
+                      </div>
+                      <div className="space-y-2">
+                        {entregasFinales.length > 0 ? entregasFinales.map((e, i) => (
+                          <div key={i} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="space-y-1">
+                              {entregasFinales.length > 1 && (
+                                <div className="text-xs font-medium text-blue-700 mb-1">
+                                  {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                </div>
+                              )}
+                              <p className="text-sm text-gray-900 break-words">{e.direccion}</p>
+                              {(e.fecha || e.hora) && (
+                                <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
+                                  {e.fecha && <span>📅 {e.fecha}</span>}
+                                  {e.hora && <span>🕐 {e.hora}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                            <p className="text-sm text-gray-500">Sin dirección de entrega</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </CardContent>
         </Card>
@@ -535,7 +760,59 @@ export default function SubirFotosEmbarquePage() {
         {/* Formulario de subida */}
         <Card>
           <CardHeader>
-            <CardTitle>Subir Fotos</CardTitle>
+            <div className="flex items-center justify-between">
+              <CardTitle>Subir Fotos</CardTitle>
+              <div className="relative">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 w-8 rounded-full p-0"
+                  onClick={() => setShowHelpPopup(!showHelpPopup)}
+                >
+                  <HelpCircle className="h-4 w-4" />
+                </Button>
+                
+                {/* Popup de ayuda */}
+                {showHelpPopup && (
+                  <div className="help-popup absolute right-0 top-10 w-80 bg-white border rounded-lg shadow-lg p-4 z-50">
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="font-medium text-sm">📱 Ayuda para GPS</h4>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0"
+                          onClick={() => setShowHelpPopup(false)}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      
+                      {/iPad|iPhone|iPod/.test(navigator.userAgent) ? (
+                        <div className="text-xs text-gray-700 space-y-2">
+                          <p className="font-medium">Para activar GPS en iPhone/iPad:</p>
+                          <ol className="list-decimal list-inside space-y-1 ml-2">
+                            <li>Ve a <strong>Ajustes → Privacidad y Seguridad → Servicios de Ubicación</strong></li>
+                            <li>Activa <strong>Servicios de Ubicación</strong></li>
+                            <li>Busca <strong>Safari</strong> y selecciona <strong>"Al usar la app"</strong></li>
+                            <li>Recarga esta página para aplicar cambios</li>
+                          </ol>
+                          {window.location.protocol !== 'https:' && !window.location.hostname.includes('localhost') && (
+                            <p className="text-blue-600 mt-2">
+                              🔒 <strong>Nota:</strong> iOS requiere HTTPS para geolocalización.
+                            </p>
+                          )}
+                        </div>
+                      ) : (
+                        <div className="text-xs text-gray-700">
+                          <p>💡 <strong>Tip:</strong> Permite la ubicación cuando el navegador te lo solicite para agregar coordenadas GPS a tus fotos.</p>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
             <CardDescription>Selecciona las fotos o documentos relacionados con este embarque</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
@@ -547,7 +824,8 @@ export default function SubirFotosEmbarquePage() {
                 id="operador"
                 value={operadorNombre}
                 onChange={(e) => setOperadorNombre(e.target.value)}
-                placeholder="Ingresa tu nombre completo"
+                placeholder="Operador Captura Aquí tu Nombre"
+                className="placeholder:italic placeholder:text-gray-500"
                 disabled={confirmacionGuardada}
               />
               {confirmacionGuardada && (
@@ -579,7 +857,6 @@ export default function SubirFotosEmbarquePage() {
                         )}
                         <div>
                           <p className="text-sm font-medium truncate max-w-48">{file.name}</p>
-                          <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
                         </div>
                       </div>
                       <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(index)} disabled={uploading}>
@@ -615,13 +892,7 @@ export default function SubirFotosEmbarquePage() {
         {/* Galería de fotos existentes */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center justify-between">
-              <span>Fotos del Embarque ({fotos.filter(f => f.tipo_mime?.startsWith("image/")).length})</span>
-              <Badge variant="outline">
-                {fotos.reduce((total, foto) => total + (foto.tamano_bytes || 0), 0) > 0 &&
-                  formatFileSize(fotos.reduce((total, foto) => total + (foto.tamano_bytes || 0), 0))}
-              </Badge>
-            </CardTitle>
+            <CardTitle>Fotos del Embarque ({fotos.filter(f => f.tipo_mime?.startsWith("image/")).length})</CardTitle>
             <CardDescription>Todas las fotos y documentos asociados a este embarque</CardDescription>
           </CardHeader>
           <CardContent>
@@ -675,9 +946,6 @@ export default function SubirFotosEmbarquePage() {
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
                         <p className="text-sm font-medium truncate">{foto.nombre_archivo}</p>
-                        <span className="text-xs text-gray-500">
-                          {foto.tamano_bytes && formatFileSize(foto.tamano_bytes)}
-                        </span>
                       </div>
 
                       {foto.subido_por && <p className="text-xs text-gray-600">Por: {foto.subido_por}</p>}
@@ -798,9 +1066,6 @@ export default function SubirFotosEmbarquePage() {
                       <div className="space-y-2">
                         <div className="flex items-center justify-between">
                           <p className="text-sm font-medium truncate">{foto.nombre_archivo}</p>
-                          <span className="text-xs text-gray-500">
-                            {foto.tamano_bytes && formatFileSize(foto.tamano_bytes)}
-                          </span>
                         </div>
 
                         {foto.subido_por && (
@@ -879,40 +1144,6 @@ export default function SubirFotosEmbarquePage() {
 
   {/* (Botón de reporte para cliente eliminado; ahora se usa el botón del card principal en Asignar Operadores) */}
         
-        {/* Estadísticas */}
-        {fotos.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Estadísticas</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-blue-600">{fotos.length}</p>
-                  <p className="text-sm text-gray-600">Total de archivos</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-green-600">
-                    {fotos.filter((f) => f.tipo_mime?.startsWith("image/")).length}
-                  </p>
-                  <p className="text-sm text-gray-600">Imágenes</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-red-600">
-                    {fotos.filter((f) => f.tipo_mime?.includes("pdf")).length}
-                  </p>
-                  <p className="text-sm text-gray-600">Documentos PDF</p>
-                </div>
-                <div className="text-center">
-                  <p className="text-2xl font-bold text-purple-600">
-                    {formatFileSize(fotos.reduce((total, foto) => total + (foto.tamano_bytes || 0), 0))}
-                  </p>
-                  <p className="text-sm text-gray-600">Tamaño total</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
       </div>
       <AlertDialog open={openSuccessDialog} onOpenChange={setOpenSuccessDialog}>
         <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
