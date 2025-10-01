@@ -1290,11 +1290,9 @@ export default function FacturacionCobranzaPage() {
       const fechaFmt = e.fechaAsignacion
         ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
         : "";
-      // 🎯 LÓGICA ACTUALIZADA: Embarques de contingencia muestran $0.00 automáticamente
-      const esContingencia = e.estado === 'asignado_contingencia' || e.modificadoPorEmergencia;
-      const pago = esContingencia
+      const pago = e.modificadoPorEmergencia
         ? (e.rolContingencia === "original"
-            ? (((operadoresContingencia as any)[e.id]?.original) ?? 0) // Cambio de operador = $0.00
+            ? (((operadoresContingencia as any)[e.id]?.original) ?? (e.pagoOperador ?? 0))
             : (((operadoresContingencia as any)[e.id]?.reemplazo) || 0))
         : (e.pagoOperador || 0);
       const pagoFmt = `$${Number(pago).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -5739,16 +5737,7 @@ export default function FacturacionCobranzaPage() {
                                         )}
                                         <div>
                                           <div className="text-xs text-gray-500">Pago Base</div>
-                                          <div className="font-medium">
-                                            {`$${Number(
-                                              (embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) 
-                                                ? 0 
-                                                : (embarque.pagoOperador || 0)
-                                            ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                            {(embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) && (
-                                              <span className="text-xs text-red-600 ml-1">(Contingencia)</span>
-                                            )}
-                                          </div>
+                                          <div className="font-medium">{`$${Number(embarque.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
                                         </div>
                                         {embarque.motivoModificacion && (
                                           <div className="md:col-span-3 text-sm text-gray-600">
@@ -6079,15 +6068,7 @@ export default function FacturacionCobranzaPage() {
                                     ).toLocaleDateString()}
                                   </td>
                                   <td className="px-2 py-1">
-                                    $
-                                    {(
-                                      (embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) 
-                                        ? 0 
-                                        : (embarque.pagoOperador || 0)
-                                    ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    {(embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) && (
-                                      <span className="text-xs text-red-600 ml-1">(Contingencia)</span>
-                                    )}
+                                    ${embarque.pagoOperador?.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </td>
                                   <td className="px-2 py-1">
                                     {embarque.modificadoPorEmergencia ? (

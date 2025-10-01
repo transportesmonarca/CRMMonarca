@@ -47,6 +47,7 @@ import {
   HelpCircle,
   CheckCircle,
   XCircle,
+  UserX,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from 'next/navigation';
@@ -216,6 +217,99 @@ const encontrarTipoFleteFalso = (
   tipos?: Array<Partial<TipoServicio>> | null,
 ): Partial<TipoServicio> | undefined => {
   return (tipos || []).find((tipo) => esTipoServicioFleteFalso(tipo));
+};
+
+// Función para obtener pago manual por contingencia
+const obtenerPagoContingencia = async (embarqueId: string, operadorId: string): Promise<number> => {
+  try {
+    const { data, error } = await supabase
+      .from("embarque_modificaciones")
+      .select("sueldo_operador_original, sueldo_operador_nuevo, operador_original_id, operador_nuevo_id")
+      .eq("embarque_id", embarqueId)
+      .in("tipo_modificacion", ["cambio_operador_contingencia", "cambio_operador_dual"])
+      .order("fecha_modificacion", { ascending: false })
+      .limit(1);
+
+    if (error || !data || data.length === 0) {
+      return 0; // No hay contingencia registrada
+    }
+
+    const modificacion = data[0];
+    
+    // Determinar si es operador original o nuevo
+    if (modificacion.operador_original_id === operadorId) {
+      return Number(modificacion.sueldo_operador_original) || 0;
+    } else if (modificacion.operador_nuevo_id === operadorId) {
+      return Number(modificacion.sueldo_operador_nuevo) || 0;
+    }
+    
+    return 0;
+  } catch (error) {
+    console.warn("Error obteniendo pago de contingencia:", error);
+    return 0;
+  }
+};
+
+// Función mejorada para obtener el pago real del operador considerando contingencia
+const obtenerPagoOperadorConContingencia = async (embarque: any, operadorId?: string): Promise<number> => {
+  // Si hay cambio de operador registrado, buscar pago manual
+  if (embarque?.operador_original_id || embarque?.operador_reemplazo_id) {
+    const operadorActual = operadorId || embarque?.operador_asignado_id;
+    if (operadorActual && embarque.id) {
+      const pagoManual = await obtenerPagoContingencia(embarque.id, operadorActual);
+      if (pagoManual > 0) {
+        return pagoManual;
+      }
+    }
+  }
+  
+  // Fallback al sistema normal de pago por tipo de servicio
+  return Number(embarque?.pago_operador) || 0;
+};
+
+// Función para verificar si existe cambio de operador en la tabla embarque_modificaciones
+const verificarCambioOperador = async (embarqueId: string): Promise<boolean> => {
+  try {
+    const { data, error } = await supabase
+      .from("embarque_modificaciones")
+      .select("id")
+      .eq("embarque_id", embarqueId)
+      .not("operador_original_id", "is", null)
+      .not("operador_nuevo_id", "is", null)
+      .limit(1);
+
+    if (error) {
+      console.warn("Error verificando cambio de operador:", error);
+      return false;
+    }
+
+    return data && data.length > 0;
+  } catch (error) {
+    console.warn("Error en verificarCambioOperador:", error);
+    return false;
+  }
+};
+
+// Función para obtener todos los embarques que tienen cambio de operador
+const obtenerEmbarquesConCambioOperador = async (): Promise<Set<string>> => {
+  try {
+    const { data, error } = await supabase
+      .from("embarque_modificaciones")
+      .select("embarque_id")
+      .not("operador_original_id", "is", null)
+      .not("operador_nuevo_id", "is", null);
+
+    if (error) {
+      console.warn("Error obteniendo embarques con cambio de operador:", error);
+      return new Set();
+    }
+
+    const embarqueIds = data?.map(mod => mod.embarque_id) || [];
+    return new Set(embarqueIds);
+  } catch (error) {
+    console.warn("Error en obtenerEmbarquesConCambioOperador:", error);
+    return new Set();
+  }
 };
 
 const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
@@ -673,6 +767,9 @@ export default function FacturacionCobranzaPage() {
   // IDs de embarques archivados para ocultarlos en la lista principal
   const [archivadosIds, setArchivadosIds] = useState<string[]>([]);
 
+  // IDs de embarques que tienen cambio de operador registrado en embarque_modificaciones
+  const [embarquesConCambioOperador, setEmbarquesConCambioOperador] = useState<Set<string>>(new Set());
+
   // Confirmation dialog for archiving an embarque (replace window.confirm)
   const [embarqueAArchivar, setEmbarqueAArchivar] = useState<EmbarqueAsignado | null>(null);
   const [showConfirmArchivarDialog, setShowConfirmArchivarDialog] = useState(false);
@@ -688,6 +785,12 @@ export default function FacturacionCobranzaPage() {
     obtenerEmbarquesModificadosIds().then((ids) => {
       if (mounted.current) setEmbarquesModificadosIds(ids);
     });
+    
+    // Cargar embarques que tienen cambio de operador
+    obtenerEmbarquesConCambioOperador().then((embarquesIds) => {
+      if (mounted.current) setEmbarquesConCambioOperador(embarquesIds);
+    });
+    
     // Cargar IDs archivados para excluirlos
     (async () => {
       try {
@@ -1042,17 +1145,25 @@ export default function FacturacionCobranzaPage() {
           };
         }
         
-        // Calcular un pago por defecto para el operador usando la función centralizada ASÍNCRONA
-        let precioPorTipoRaw_Cont = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+        // Considerar contingencia solo si hubo cambio de operador; flete_en_falso por sí solo no es contingencia
+        const huboCambioOperador = !!(base.operadorOriginalId || base.operadorReemplazoId);
+        
+        // Calcular pago: Si hay cambio de operador por contingencia, el pago debe ser 0 hasta que el usuario lo defina manualmente
+        let precioPorTipoRaw_Cont = 0;
+        if (!huboCambioOperador) {
+          // Solo calcular pago automático si NO hay cambio de operador
+          precioPorTipoRaw_Cont = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+        } else {
+          // Si hay cambio de operador, buscar pago manual registrado en modificaciones
+          const pagoManual = await obtenerPagoContingencia(embarque.id, embarque.operadorAsignado?.id || '');
+          precioPorTipoRaw_Cont = pagoManual;
+        }
         
         // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
         if (esCancelado(embarque)) {
           precioPorTipoRaw_Cont = 0;
         }
         const precioPorTipo_Cont = typeof precioPorTipoRaw_Cont === 'number' ? precioPorTipoRaw_Cont : Number(precioPorTipoRaw_Cont) || 0;
-
-        // Considerar contingencia solo si hubo cambio de operador; flete_en_falso por sí solo no es contingencia
-        const huboCambioOperador = !!(base.operadorOriginalId || base.operadorReemplazoId);
         const esContingencia = huboCambioOperador && (
           (embarque as any).modificadoPorEmergencia || embarquesModificadosIds.includes(embarque.id)
         );
@@ -1094,8 +1205,17 @@ export default function FacturacionCobranzaPage() {
             ? duplicados 
             : [{ ...base, pagoOperador: 0, modificadoPorEmergencia: true }]));
         } else {
-          // Caso normal: usar la función centralizada ASÍNCRONA para calcular el pago al operador
-          let precioPorTipoRaw = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+          // Caso normal: verificar si hay cambio de operador registrado
+          let precioPorTipoRaw = 0;
+          
+          if (!huboCambioOperador) {
+            // Sin cambio de operador: usar la función centralizada ASÍNCRONA para calcular el pago al operador
+            precioPorTipoRaw = await calcularPagoOperadorAsync(embarque, tipoServicio, tiposServicio);
+          } else {
+            // Con cambio de operador: buscar pago manual registrado en modificaciones, default 0
+            const pagoManual = await obtenerPagoContingencia(embarque.id, embarque.operadorAsignado?.id || '');
+            precioPorTipoRaw = pagoManual;
+          }
 
           // Si el embarque está cancelado, para efectos del análisis debe mostrarse pago 0
           if (esCancelado(embarque)) {
@@ -1290,11 +1410,9 @@ export default function FacturacionCobranzaPage() {
       const fechaFmt = e.fechaAsignacion
         ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
         : "";
-      // 🎯 LÓGICA ACTUALIZADA: Embarques de contingencia muestran $0.00 automáticamente
-      const esContingencia = e.estado === 'asignado_contingencia' || e.modificadoPorEmergencia;
-      const pago = esContingencia
+      const pago = e.modificadoPorEmergencia
         ? (e.rolContingencia === "original"
-            ? (((operadoresContingencia as any)[e.id]?.original) ?? 0) // Cambio de operador = $0.00
+            ? (((operadoresContingencia as any)[e.id]?.original) ?? (e.pagoOperador ?? 0))
             : (((operadoresContingencia as any)[e.id]?.reemplazo) || 0))
         : (e.pagoOperador || 0);
       const pagoFmt = `$${Number(pago).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -1791,6 +1909,12 @@ export default function FacturacionCobranzaPage() {
     numeroFactura3: "",
     fechaEnvioCliente: "",
     referenciaPago: "",
+    // Campos para cambio de operador y pago dual
+    cambiarOperador: false,
+    nuevoOperadorId: "",
+    pagoOperadorOriginal: 0,
+    pagoOperadorNuevo: 0,
+    razonCambioOperador: "",
   });
 
   const [showCreditModal, setShowCreditModal] = useState(false);
@@ -1850,6 +1974,8 @@ export default function FacturacionCobranzaPage() {
   // Usos de tipos de servicio (¿qué embarques lo usan?)
   const [showUsosModal, setShowUsosModal] = useState(false);
   const [usosTipo, setUsosTipo] = useState<TipoServicio | null>(null);
+
+
   const [usosLoading, setUsosLoading] = useState(false);
   const [usosEmbarques, setUsosEmbarques] = useState<Array<{ id: string; folio: string; estado?: string | null; estado_facturacion?: string | null; bloquea?: boolean }>>([]);
   const [editarTipo, setEditarTipo] = useState({
@@ -3357,16 +3483,25 @@ export default function FacturacionCobranzaPage() {
   const editarEmbarque = (embarque: EmbarqueAsignado) => {
     setEmbarqueEditando(embarque);
     setFormData({
-  montoFacturado: getMontoContable(embarque) || 0,
+      montoFacturado: getMontoContable(embarque) || 0,
       fechaEntrega: embarque.fechaEntrega || "",
       observacionesFacturacion: embarque.observacionesFacturacion || "",
       pagado: embarque.pagado || false,
       fechaPago: embarque.fechaPago || "",
       estado_facturacion:
         embarque.estado_facturacion || "pendiente_facturacion",
+      numeroFactura1: embarque.foliosFactura?.folio1 || "",
+      numeroFactura2: embarque.foliosFactura?.folio2 || "",
+      numeroFactura3: embarque.foliosFactura?.folio3 || "",
       // Legacy: usar facturas_json en su lugar
       fechaEnvioCliente: embarque.fechaEnvioCliente || "",
       referenciaPago: embarque.referenciaPago || "",
+      // Campos para cambio de operador
+      cambiarOperador: false,
+      nuevoOperadorId: "",
+      pagoOperadorOriginal: embarque.pagoOperador || 0,
+      pagoOperadorNuevo: 0,
+      razonCambioOperador: "",
     });
     setShowEditDialog(true);
   };
@@ -3382,20 +3517,62 @@ export default function FacturacionCobranzaPage() {
     } catch {}
 
     try {
+      // Validaciones para cambio de operador
+      if (formData.cambiarOperador) {
+        if (!formData.nuevoOperadorId || !formData.razonCambioOperador.trim()) {
+          toast({ 
+            title: 'Datos incompletos', 
+            description: 'Seleccione un nuevo operador y proporcione una razón para el cambio.', 
+            variant: 'destructive' 
+          });
+          return;
+        }
+        if (formData.pagoOperadorOriginal <= 0 && formData.pagoOperadorNuevo <= 0) {
+          toast({ 
+            title: 'Asignar monto requerido', 
+            description: 'Debe asignar un monto mayor a 0 para al menos uno de los operadores.', 
+            variant: 'destructive' 
+          });
+          return;
+        }
+      }
+
+      // Preparar datos base de actualización
+      const updateData: any = {
+        precio_flete: formData.montoFacturado,
+        fecha_entrega: formData.fechaEntrega || null,
+        observaciones_facturacion: formData.observacionesFacturacion || null,
+        pagado: formData.pagado,
+        fecha_pago: formData.fechaPago || null,
+        estado_facturacion: formData.estado_facturacion,
+        fecha_envio_cliente: formData.fechaEnvioCliente || null,
+        referencia_pago: formData.referenciaPago || null,
+        updated_at: new Date().toISOString(),
+      };
+
+      // Agregar datos de cambio de operador si aplica
+      if (formData.cambiarOperador) {
+        const nuevoOperador = todosOperadores.find(op => 
+          op.id === formData.nuevoOperadorId || 
+          `nombre:${op.nombre} ${op.apellidos}`.trim() === formData.nuevoOperadorId
+        );
+        
+        if (nuevoOperador) {
+          const operadorOriginalNombre = embarqueEditando.operadorAsignado?.nombre || 'Operador no identificado';
+          const nuevoOperadorNombre = `${nuevoOperador.nombre || ''} ${nuevoOperador.apellidos || ''}`.trim();
+
+          updateData.operador_asignado_id = nuevoOperador.id;
+          updateData.operador_original_id = embarqueEditando.operadorAsignado?.id || null;
+          updateData.operador_original_nombre = operadorOriginalNombre;
+          updateData.operador_reemplazo_id = nuevoOperador.id;
+          updateData.operador_reemplazo_nombre = nuevoOperadorNombre;
+          updateData.pago_operador = formData.pagoOperadorNuevo;
+        }
+      }
+
       const { error } = await supabase
         .from("embarques")
-        .update({
-          precio_flete: formData.montoFacturado,
-          fecha_entrega: formData.fechaEntrega || null,
-          observaciones_facturacion: formData.observacionesFacturacion || null,
-          pagado: formData.pagado,
-          fecha_pago: formData.fechaPago || null,
-          estado_facturacion: formData.estado_facturacion,
-          // Legacy columns removed - usar facturas_json
-          fecha_envio_cliente: formData.fechaEnvioCliente || null,
-          referencia_pago: formData.referenciaPago || null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(updateData)
         .eq("id", embarqueEditando.id);
 
       if (error) {
@@ -3403,24 +3580,95 @@ export default function FacturacionCobranzaPage() {
         toast({ title: 'Error al guardar los cambios', description: String((error as any)?.message || ''), variant: 'destructive' });
         return;
       }
-      // Notificar éxito
-      toast({ title: 'Cambios guardados exitosamente', variant: 'default' });
 
-      const embarquesActualizados = embarquesAsignados.map((embarque) =>
-        embarque.id === embarqueEditando.id
-          ? {
-              ...embarque,
-              montoFacturado: formData.montoFacturado,
-              precioFlete: formData.montoFacturado,
-              fechaEntrega: formData.fechaEntrega,
-              observacionesFacturacion: formData.observacionesFacturacion,
-              pagado: formData.pagado,
-              fechaPago: formData.fechaPago,
-              estado_facturacion:
-                formData.estado_facturacion as EmbarqueAsignado["estado_facturacion"],
+      // Registrar cambio de operador en historial si aplica
+      if (formData.cambiarOperador) {
+        const nuevoOperador = todosOperadores.find(op => 
+          op.id === formData.nuevoOperadorId || 
+          `nombre:${op.nombre} ${op.apellidos}`.trim() === formData.nuevoOperadorId
+        );
+        
+        if (nuevoOperador) {
+          const operadorOriginalNombre = embarqueEditando.operadorAsignado?.nombre || 'Operador no identificado';
+          const nuevoOperadorNombre = `${nuevoOperador.nombre || ''} ${nuevoOperador.apellidos || ''}`.trim();
+
+          try {
+            const { error: historialError } = await supabase
+              .from("embarque_modificaciones")
+              .insert({
+                embarque_id: embarqueEditando.id,
+                operador_original_id: embarqueEditando.operadorAsignado?.id || null,
+                operador_original_nombre: operadorOriginalNombre,
+                operador_nuevo_id: nuevoOperador.id,
+                operador_nuevo_nombre: nuevoOperadorNombre,
+                sueldo_operador_original: formData.pagoOperadorOriginal,
+                sueldo_operador_nuevo: formData.pagoOperadorNuevo,
+                moneda_sueldo_operador_original: 'MXN',
+                moneda_sueldo_operador_nuevo: 'MXN',
+                razon: formData.razonCambioOperador.trim(),
+                fecha_modificacion: new Date().toISOString(),
+                usuario_modificacion: usuarioActual,
+                tipo_modificacion: 'cambio_operador_contingencia'
+              });
+
+            if (historialError) {
+              console.warn("Error registrando en historial:", historialError);
+            } else {
+              // Actualizar el estado local para reflejar que este embarque ahora tiene cambio de operador
+              setEmbarquesConCambioOperador(prev => new Set(prev).add(embarqueEditando.id));
             }
-          : embarque
-      );
+          } catch (histError) {
+            console.warn("Error en registro de historial:", histError);
+          }
+        }
+      }
+
+      // Notificar éxito
+      toast({ 
+        title: formData.cambiarOperador ? 'Embarque actualizado y operador cambiado' : 'Cambios guardados exitosamente',
+        variant: 'default' 
+      });
+
+      const embarquesActualizados = embarquesAsignados.map((embarque) => {
+        if (embarque.id === embarqueEditando.id) {
+          const embarqueActualizado = {
+            ...embarque,
+            montoFacturado: formData.montoFacturado,
+            precioFlete: formData.montoFacturado,
+            fechaEntrega: formData.fechaEntrega,
+            observacionesFacturacion: formData.observacionesFacturacion,
+            pagado: formData.pagado,
+            fechaPago: formData.fechaPago,
+            estado_facturacion:
+              formData.estado_facturacion as EmbarqueAsignado["estado_facturacion"],
+          };
+
+          // Si hubo cambio de operador, actualizar información de operador y pagos
+          if (formData.cambiarOperador) {
+            const nuevoOperador = todosOperadores.find(op => 
+              op.id === formData.nuevoOperadorId || 
+              `nombre:${op.nombre} ${op.apellidos}`.trim() === formData.nuevoOperadorId
+            );
+            
+            if (nuevoOperador) {
+              const nuevoOperadorNombre = `${nuevoOperador.nombre || ''} ${nuevoOperador.apellidos || ''}`.trim();
+              
+              embarqueActualizado.operadorAsignado = {
+                id: nuevoOperador.id,
+                nombre: nuevoOperadorNombre
+              };
+              embarqueActualizado.operadorOriginalId = embarqueEditando.operadorAsignado?.id;
+              embarqueActualizado.operadorOriginalNombre = embarqueEditando.operadorAsignado?.nombre || 'Operador no identificado';
+              embarqueActualizado.operadorReemplazoId = nuevoOperador.id;
+              embarqueActualizado.operadorReemplazoNombre = nuevoOperadorNombre;
+              embarqueActualizado.pagoOperador = formData.pagoOperadorNuevo; // El pago principal es del nuevo operador
+            }
+          }
+
+          return embarqueActualizado;
+        }
+        return embarque;
+      });
 
       if (mounted.current) {
         setEmbarquesAsignados(embarquesActualizados);
@@ -5528,9 +5776,6 @@ export default function FacturacionCobranzaPage() {
                                   <th className="px-2 py-1 text-center w-40">
                                     Contingencia/Cancelado
                                   </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Acciones
-                                  </th>
                                 </tr>
                               </thead>
                               <tbody>
@@ -5570,6 +5815,12 @@ export default function FacturacionCobranzaPage() {
                                         {(() => {
                                           const monto = Number(e.pago_operador ?? 0);
                                           const seguro = Number.isFinite(monto) ? monto : 0;
+                                          
+                                          // Si hay cambio de operador registrado y no hay pago definido, mostrar 0
+                                          if (embarquesConCambioOperador.has(e.id) && seguro === 0) {
+                                            return `$0.00`;
+                                          }
+                                          
                                           return `$${seguro.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
                                         })()}
                                       </td>
@@ -5593,18 +5844,6 @@ export default function FacturacionCobranzaPage() {
 
                                           return (<div className="flex items-center justify-center gap-2">{elementos}</div>);
                                         })()}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">
-                                        <div className="flex items-center gap-2">
-                                          <Button
-                                            variant="outline"
-                                            size="sm"
-                                            onClick={() => verDetallesEmbarque(e)}
-                                            aria-label="Ver detalles"
-                                          >
-                                            <Eye className="h-4 w-4" aria-hidden="true" />
-                                          </Button>
-                                        </div>
                                       </td>
                                     </tr>
                                   ));
@@ -5739,16 +5978,7 @@ export default function FacturacionCobranzaPage() {
                                         )}
                                         <div>
                                           <div className="text-xs text-gray-500">Pago Base</div>
-                                          <div className="font-medium">
-                                            {`$${Number(
-                                              (embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) 
-                                                ? 0 
-                                                : (embarque.pagoOperador || 0)
-                                            ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                                            {(embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) && (
-                                              <span className="text-xs text-red-600 ml-1">(Contingencia)</span>
-                                            )}
-                                          </div>
+                                          <div className="font-medium">{`$${Number(embarque.pagoOperador || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</div>
                                         </div>
                                         {embarque.motivoModificacion && (
                                           <div className="md:col-span-3 text-sm text-gray-600">
@@ -5758,66 +5988,19 @@ export default function FacturacionCobranzaPage() {
                                         )}
                                       </div>
 
-                                      {/* División de Pago compacta */}
-                                      <div className="flex flex-col md:flex-row md:items-center gap-3 mt-4">
-                                        <div className="flex items-center gap-3">
-                                          <div className="text-xs text-gray-500">Original</div>
-                                          <Input
-                                            type="number"
-                                            id={`pago-original-${embarque.id}`}
-                                            aria-label="Pago operador original"
-                                            placeholder="$"
-                                            value={operadoresContingencia[embarque.id]?.original || 0}
-                                            onChange={(e) => {
-                                              const valor = Number(e.target.value);
-                                              if (!isNaN(valor)) {
-                                                handleContingencyPaymentChange(embarque.id, "original", valor);
-                                              }
-                                            }}
-                                            className="w-24 text-right text-sm"
-                                          />
+                                      {/* Información de Estado - Solo Visualización */}
+                                      <div className="mt-4 p-3 bg-gray-50 rounded-lg">
+                                        <div className="text-xs text-gray-600 mb-2 font-medium uppercase tracking-wide">
+                                          Estado del Caso
                                         </div>
-
-                                        {embarque.operadorReemplazoNombre && (
-                                          <div className="flex items-center gap-3">
-                                            <div className="text-xs text-gray-500">Reemplazo</div>
-                                            <Input
-                                              type="number"
-                                              id={`pago-reemplazo-${embarque.id}`}
-                                              aria-label="Pago operador de reemplazo"
-                                              placeholder="$"
-                                              value={operadoresContingencia[embarque.id]?.reemplazo || 0}
-                                              onChange={(e) => {
-                                                const valor = Number(e.target.value);
-                                                if (!isNaN(valor)) {
-                                                  handleContingencyPaymentChange(embarque.id, "reemplazo", valor);
-                                                }
-                                              }}
-                                              className="w-24 text-right text-sm"
-                                            />
-                                          </div>
-                                        )}
-
-                                        <div className="ml-auto text-right">
-                                          <div className="text-sm font-medium">
-                                            {(() => {
-                                              const orig = operadoresContingencia[embarque.id]?.original || 0;
-                                              const repl = embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) : 0;
-                                              const total = orig + repl;
-                                              return `Total: $${Number(total).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                                            })()}
-                                          </div>
-                                          <div className="mt-2">
-                                            <Button
-                                              size="sm"
-                                              onClick={() => saveContingencyPayment(embarque)}
-                                              disabled={(operadoresContingencia[embarque.id]?.original || 0) <= 0 && (!!embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) <= 0 : true)}
-                                              className="bg-green-600 hover:bg-green-700 text-white"
-                                            >
-                                              <Save className="h-4 w-4 mr-2" />
-                                              Guardar
-                                            </Button>
-                                          </div>
+                                        <div className="text-sm text-gray-700">
+                                          {embarque.operadorReemplazoNombre 
+                                            ? `Cambio registrado: ${embarque.operadorOriginalNombre || 'Operador original'} → ${embarque.operadorReemplazoNombre}`
+                                            : 'Caso de contingencia identificado'
+                                          }
+                                        </div>
+                                        <div className="text-xs text-gray-500 mt-1">
+                                          Para configurar pagos, use el botón de edición en la pestaña "Detalle"
                                         </div>
                                       </div>
                                     </CardContent>
@@ -6079,15 +6262,7 @@ export default function FacturacionCobranzaPage() {
                                     ).toLocaleDateString()}
                                   </td>
                                   <td className="px-2 py-1">
-                                    $
-                                    {(
-                                      (embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) 
-                                        ? 0 
-                                        : (embarque.pagoOperador || 0)
-                                    ).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                    {(embarque.estado === 'asignado_contingencia' || embarque.modificadoPorEmergencia) && (
-                                      <span className="text-xs text-red-600 ml-1">(Contingencia)</span>
-                                    )}
+                                    ${embarque.pagoOperador?.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                                   </td>
                                   <td className="px-2 py-1">
                                     {embarque.modificadoPorEmergencia ? (
@@ -9641,6 +9816,182 @@ export default function FacturacionCobranzaPage() {
                   }
                 />
               </div>
+
+              {/* Sección de Cambio de Operador y Pago Manual por Contingencia */}
+              {embarqueEditando && (embarqueEditando.operadorOriginalId || embarqueEditando.operadorReemplazoId) && (
+                <div className="border-t pt-4 mt-4">
+                  <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <AlertTriangle className="h-5 w-5 text-orange-600" />
+                      <h3 className="font-semibold text-orange-900">Contingencia - Cambio de Operador</h3>
+                    </div>
+                    
+                    <div className="text-sm text-orange-700 mb-4">
+                      <p><strong>Operador Original:</strong> {embarqueEditando.operadorOriginalNombre || 'No especificado'}</p>
+                      <p><strong>Operador Reemplazo:</strong> {embarqueEditando.operadorReemplazoNombre || embarqueEditando.operadorAsignado?.nombre}</p>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <Label htmlFor="pagoOperadorOriginal">Pago Operador Original</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          id="pagoOperadorOriginal"
+                          value={formData.pagoOperadorOriginal}
+                          onChange={(e) =>
+                            setFormData({ ...formData, pagoOperadorOriginal: Number(e.target.value) || 0 })
+                          }
+                          placeholder="0.00"
+                          className="bg-orange-50 border-orange-300"
+                        />
+                      </div>
+                      <div>
+                        <Label htmlFor="pagoOperadorNuevo">Pago Operador Reemplazo</Label>
+                        <Input
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          id="pagoOperadorNuevo"
+                          value={formData.pagoOperadorNuevo}
+                          onChange={(e) =>
+                            setFormData({ ...formData, pagoOperadorNuevo: Number(e.target.value) || 0 })
+                          }
+                          placeholder="0.00"
+                          className="bg-orange-50 border-orange-300"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="mt-3 p-2 bg-orange-100 rounded border-orange-300 border">
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-orange-700">Total Pagos:</span>
+                        <span className="font-bold text-orange-900">
+                          ${(formData.pagoOperadorOriginal + formData.pagoOperadorNuevo).toLocaleString('es-MX', { 
+                            minimumFractionDigits: 2, 
+                            maximumFractionDigits: 2 
+                          })}
+                        </span>
+                      </div>
+                    </div>
+
+                    {formData.cambiarOperador && (
+                      <div className="mt-3">
+                        <Label htmlFor="razonCambioOperador">Razón del Cambio</Label>
+                        <Textarea
+                          id="razonCambioOperador"
+                          value={formData.razonCambioOperador}
+                          onChange={(e) =>
+                            setFormData({ ...formData, razonCambioOperador: e.target.value })
+                          }
+                          placeholder="Describa el motivo del cambio de operador..."
+                          rows={2}
+                          className="bg-orange-50 border-orange-300 mt-1"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Checkbox para activar cambio de operador si no existe contingencia */}
+              {embarqueEditando && !embarqueEditando.operadorOriginalId && !embarqueEditando.operadorReemplazoId && (
+                <div className="border-t pt-4 mt-4">
+                  <div className="flex items-center space-x-2">
+                    <input
+                      type="checkbox"
+                      id="cambiarOperador"
+                      checked={formData.cambiarOperador}
+                      onChange={(e) =>
+                        setFormData({ ...formData, cambiarOperador: e.target.checked })
+                      }
+                      className="rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                    />
+                    <Label htmlFor="cambiarOperador" className="text-sm font-medium text-gray-700">
+                      Cambiar operador por contingencia
+                    </Label>
+                  </div>
+
+                  {formData.cambiarOperador && (
+                    <div className="mt-3 bg-orange-50 border border-orange-200 rounded-lg p-4">
+                      <div className="grid grid-cols-1 gap-4">
+                        <div>
+                          <Label htmlFor="nuevoOperadorId">Nuevo Operador</Label>
+                          <select
+                            id="nuevoOperadorId"
+                            value={formData.nuevoOperadorId}
+                            onChange={(e) =>
+                              setFormData({ ...formData, nuevoOperadorId: e.target.value })
+                            }
+                            className="w-full mt-1 px-3 py-2 border border-orange-300 rounded-md bg-orange-50 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                          >
+                            <option value="">Seleccione un operador...</option>
+                            {todosOperadores
+                              .filter(op => op.id !== embarqueEditando?.operadorAsignado?.id)
+                              .map((op) => {
+                                const fullName = `${(op.nombre||'').toString().trim()} ${(op.apellidos||'').toString().trim()}`.trim();
+                                const value = op.id || `nombre:${fullName}`;
+                                return (
+                                  <option key={op.id || fullName} value={value}>
+                                    {fullName}{op.estado ? ` (${op.estado})` : ''}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+                        
+                        <div className="grid grid-cols-2 gap-4">
+                          <div>
+                            <Label htmlFor="pagoOriginalNuevo">Pago Operador Original</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              id="pagoOriginalNuevo"
+                              value={formData.pagoOperadorOriginal}
+                              onChange={(e) =>
+                                setFormData({ ...formData, pagoOperadorOriginal: Number(e.target.value) || 0 })
+                              }
+                              placeholder="0.00"
+                              className="bg-orange-50 border-orange-300"
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="pagoNuevoOperador">Pago Nuevo Operador</Label>
+                            <Input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              id="pagoNuevoOperador"
+                              value={formData.pagoOperadorNuevo}
+                              onChange={(e) =>
+                                setFormData({ ...formData, pagoOperadorNuevo: Number(e.target.value) || 0 })
+                              }
+                              placeholder="0.00"
+                              className="bg-orange-50 border-orange-300"
+                            />
+                          </div>
+                        </div>
+
+                        <div>
+                          <Label htmlFor="razonCambio">Razón del Cambio *</Label>
+                          <Textarea
+                            id="razonCambio"
+                            value={formData.razonCambioOperador}
+                            onChange={(e) =>
+                              setFormData({ ...formData, razonCambioOperador: e.target.value })
+                            }
+                            placeholder="Describa el motivo del cambio de operador..."
+                            rows={2}
+                            className="bg-orange-50 border-orange-300 mt-1"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
             <DialogFooter>
               <Button
@@ -9781,6 +10132,144 @@ export default function FacturacionCobranzaPage() {
               </Button>
               <Button type="button" onClick={guardarDatosFacturacion} disabled={savingFacturacion} className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50">
                 {savingFacturacion ? "Guardando..." : "Guardar"}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <UserX className="h-5 w-5 text-orange-600" />
+                Pago Operador Backup Contingencia
+              </DialogTitle>
+              <DialogDescription>
+                Ajuste los pagos manuales para los operadores en caso de contingencia o cambio de operador.
+              </DialogDescription>
+            </DialogHeader>
+
+            {embarqueCambioOperador && (
+              <div className="space-y-6">
+                {/* Información del embarque */}
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h3 className="font-semibold text-gray-900 mb-2">Embarque: {embarqueCambioOperador.folio}</h3>
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="text-gray-600">Cliente:</span>
+                      <span className="ml-2 font-medium">{embarqueCambioOperador.clienteNombre}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-600">Fecha:</span>
+                      <span className="ml-2 font-medium">
+                        {embarqueCambioOperador.fechaAsignacion 
+                          ? new Date(embarqueCambioOperador.fechaAsignacion).toLocaleDateString("es-MX")
+                          : "Sin fecha"
+                        }
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Configuración de operadores y pagos */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Operador Original */}
+                  <div className="space-y-3">
+                    <h4 className="font-semibold text-gray-900 border-b pb-1">Operador Original</h4>
+                    <div className="bg-blue-50 p-3 rounded-lg">
+                      <p className="font-medium text-blue-900">
+                        {embarqueCambioOperador.operadorOriginalNombre || embarqueCambioOperador.operadorAsignado?.nombre || 'Operador no identificado'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="pagoOperadorOriginal">Pago Operador Original</Label>
+                      <Input
+                        id="pagoOperadorOriginal"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={pagoOperadorOriginal}
+                        onChange={(e) => setPagoOperadorOriginal(Number(e.target.value) || 0)}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Operador Reemplazo */}
+                  <div className="space-y-3">
+                    <h4 className="font-semibold text-gray-900 border-b pb-1">Operador Reemplazo</h4>
+                    <div className="bg-green-50 p-3 rounded-lg">
+                      <p className="font-medium text-green-900">
+                        {embarqueCambioOperador.operadorReemplazoNombre || embarqueCambioOperador.operadorAsignado?.nombre || 'Operador no identificado'}
+                      </p>
+                    </div>
+                    <div>
+                      <Label htmlFor="pagoOperadorNuevo">Pago Operador Reemplazo</Label>
+                      <Input
+                        id="pagoOperadorNuevo"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={pagoOperadorNuevo}
+                        onChange={(e) => setPagoOperadorNuevo(Number(e.target.value) || 0)}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                {/* Total de pagos */}
+                <div className="bg-yellow-50 border border-yellow-200 p-4 rounded-lg">
+                  <div className="flex justify-between items-center">
+                    <span className="font-semibold text-yellow-900">Total de Pagos:</span>
+                    <span className="text-lg font-bold text-yellow-900">
+                      ${(pagoOperadorOriginal + pagoOperadorNuevo).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </span>
+                  </div>
+                  <p className="text-sm text-yellow-700 mt-1">
+                    Distribución: Original ${pagoOperadorOriginal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} + 
+                    Reemplazo ${pagoOperadorNuevo.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+
+                {/* Observaciones adicionales (opcional) */}
+                <div>
+                  <Label htmlFor="razonCambio">Observaciones Adicionales</Label>
+                  <Textarea
+                    id="razonCambio"
+                    value={razonCambio}
+                    onChange={(e) => setRazonCambio(e.target.value)}
+                    placeholder="Observaciones adicionales sobre los pagos de contingencia (opcional)..."
+                    className="mt-1"
+                    rows={2}
+                  />
+                </div>
+              </div>
+            )}
+
+            <DialogFooter className="gap-2">
+              <Button
+                variant="outline"
+                onClick={() => setShowCambioOperadorModal(false)}
+                disabled={guardandoCambioOperador}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={guardarCambioOperador}
+                disabled={guardandoCambioOperador || (pagoOperadorOriginal <= 0 && pagoOperadorNuevo <= 0)}
+                className="bg-orange-600 hover:bg-orange-700 text-white"
+              >
+                {guardandoCambioOperador ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Guardando...
+                  </>
+                ) : (
+                  'Guardar Pagos'
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>

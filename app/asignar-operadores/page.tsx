@@ -1617,6 +1617,10 @@ export default function AsignarOperadoresPage() {
         modificacionData.nuevo_operador_id !== "no-change"
       ) {
         updateData.operador_id = modificacionData.nuevo_operador_id;
+        // 🎯 IMPORTANTE: Al cambiar operador por contingencia, establecer pago en $0.00
+        // Los pagos deben ser configurados manualmente después
+        updateData.pago_operador = 0;
+        console.log('🔄 Cambio de operador por contingencia: pago_operador establecido en $0.00');
       }
 
       if (
