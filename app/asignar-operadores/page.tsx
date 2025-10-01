@@ -196,22 +196,51 @@ const extraerDireccionesMultiples = (observaciones: string | null) => {
 
 // Función para determinar si un embarque tiene múltiples direcciones (versión simplificada)
 const embarqueTieneMultiplesDirecciones = (embarque: any) => {
-  // 1. Verificar observaciones (método principal para embarques con múltiples direcciones)
-  if (embarque.observaciones && embarque.observaciones.includes('DIRECCIONES MÚLTIPLES')) {
-    try {
-      const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones);
-      if (tieneMultiplesDirecciones(recolectas, entregas)) {
-        return true;
-      }
-    } catch (e) {
-      console.warn('Error parseando direcciones múltiples desde observaciones:', e);
-    }
+  let recolectasArray, entregasArray;
+  
+  // Prioridad 1: Obtener desde campos JSON (método principal)
+  try {
+    recolectasArray = embarque.recolectas_json ? JSON.parse(embarque.recolectas_json) : [];
+    entregasArray = embarque.entregas_json ? JSON.parse(embarque.entregas_json) : [];
+  } catch (jsonError) {
+    recolectasArray = [];
+    entregasArray = [];
   }
-
-  // 2. Para este sistema, la mayoría de embarques solo tienen direcciones individuales
-  // en los campos legacy, por lo que retornamos false si no hay marcador en observaciones
-  return false;
+  
+  // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+  if (recolectasArray.length === 0 && entregasArray.length === 0) {
+    if (embarque.observaciones && embarque.observaciones.includes('DIRECCIONES MÚLTIPLES')) {
+      try {
+        const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones);
+        recolectasArray = recolectas.length > 0 ? recolectas : [{ direccion: embarque.direccion_recolecta }];
+        entregasArray = entregas.length > 0 ? entregas : [{ direccion: embarque.direccion_entrega }];
+      } catch (e) {
+        console.warn('Error parseando direcciones múltiples desde observaciones:', e);
+        recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+        entregasArray = [{ direccion: embarque.direccion_entrega }];
+      }
+    } else {
+      // Sin múltiples direcciones, usar campos individuales
+      recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+      entregasArray = [{ direccion: embarque.direccion_entrega }];
+    }
+  } else {
+    // Si tenemos datos JSON pero están vacíos, usar datos principales
+    if (recolectasArray.length === 0) recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+    if (entregasArray.length === 0) entregasArray = [{ direccion: embarque.direccion_entrega }];
+  }
+  
+  return tieneMultiplesDirecciones(recolectasArray, entregasArray);
 };
+
+// Función para detectar si un embarque es flete falso (contingencia FF)
+const embarqueEsFleteFalso = (embarque: any) => {
+  // Solo mostrar F. Falso cuando el embarque tiene estado modificado FF (contingencia)
+  return embarque?.estado?.includes('_contingencia_FF') || false;
+};
+
+// Alias para compatibilidad con la nomenclatura de otros archivos
+const esFleteFalso = embarqueEsFleteFalso;
 
 export default function AsignarOperadoresPage() {
   const searchParams = useSearchParams();
@@ -3481,6 +3510,7 @@ export default function AsignarOperadoresPage() {
                     {/* Badge de Direcciones Múltiples ahora está junto al botón Detalles */}
                     {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1">
+                      
                         <Button
                         variant="outline"
                         size="sm"
@@ -3555,15 +3585,6 @@ export default function AsignarOperadoresPage() {
                         <Eye className="h-4 w-4 mr-1" />
                         Detalles
                       </Button>
-                      {/* Badge D. Múltiples junto al botón Detalles */}
-                      {embarqueTieneMultiplesDirecciones(embarque) && (
-                        <Badge 
-                          className="bg-blue-100 text-blue-800 hover:bg-blue-200 ml-2"
-                          title="Este embarque tiene múltiples direcciones de recolecta o entrega"
-                        >
-                          D. Múltiples
-                        </Badge>
-                      )}
                       {(embarque.estado?.startsWith("listo-para-asignar") ||
                         embarque.estado?.startsWith("asignado") ||
                         embarque.estado?.startsWith("en-transito")) && (
@@ -6339,7 +6360,17 @@ export default function AsignarOperadoresPage() {
                               } : undefined;
                             })()}
                           >
-                            <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">{embarque.folio}</td>
+                            <td className="px-3 py-2 font-mono whitespace-nowrap w-40 md:w-48">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span>{embarque.folio}</span>
+                                {/* Badges para registros completados */}
+                                {embarqueTieneMultiplesDirecciones(embarque) && (
+                                  <Badge className="bg-blue-100 text-blue-800 hover:bg-blue-200 text-xs">
+                                    D. Múltiples
+                                  </Badge>
+                                )}
+                              </div>
+                            </td>
                             <td className="px-3 py-2 w-48 md:w-64 truncate">{embarque.cliente?.nombre || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-14 md:w-16 truncate">{embarque.load_number || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-[100px] truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
@@ -6351,7 +6382,7 @@ export default function AsignarOperadoresPage() {
                                     : embarque.precio_flete || 0;
                                 const moneda = embarque.moneda_flete || "MXN";
                                 return monto
-                                  ? `$${monto.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${moneda}`
+                                  ? `$${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${moneda}`
                                   : "Sin definir";
                               })()}
                             </td>

@@ -45,6 +45,7 @@ import {
   Eye,
   Trash,
   HelpCircle,
+  X,
   CheckCircle,
   XCircle,
 } from "lucide-react";
@@ -676,6 +677,8 @@ export default function FacturacionCobranzaPage() {
   // Confirmation dialog for archiving an embarque (replace window.confirm)
   const [embarqueAArchivar, setEmbarqueAArchivar] = useState<EmbarqueAsignado | null>(null);
   const [showConfirmArchivarDialog, setShowConfirmArchivarDialog] = useState(false);
+  const [embarqueACancelar, setEmbarqueACancelar] = useState<EmbarqueAsignado | null>(null);
+  const [showConfirmCancelarDialog, setShowConfirmCancelarDialog] = useState(false);
   // Confirmation dialog for permanent deletion of an archived embarque
   const [embarqueAEliminar, setEmbarqueAEliminar] = useState<EmbarqueAsignado | null>(null);
   const [showConfirmDeleteDialog, setShowConfirmDeleteDialog] = useState(false);
@@ -1764,6 +1767,75 @@ export default function FacturacionCobranzaPage() {
         `Archivo de embarque folio ${embarque.folio} por usuario ${usuarioArchivo}`
       );
     } catch {}
+  }
+
+  async function cancelarEmbarque(embarque: EmbarqueAsignado) {
+    const fechaCancelacion = new Date().toISOString();
+    
+    // Obtener usuario actual
+    let usuarioCancelacion = "Usuario Actual";
+    try {
+      const { getCurrentUser } = await import("../../lib/auth");
+      const user = getCurrentUser && getCurrentUser();
+      if (user && user.nombre) usuarioCancelacion = user.nombre;
+    } catch {}
+
+    try {
+      // Actualizar el estado del embarque a cancelado
+      const { error } = await supabase
+        .from("embarques")
+        .update({
+          estado: "cancelado",
+          estado_facturacion: "archivado", // También archivamos en facturación
+          fecha_cancelacion: fechaCancelacion,
+          usuario_cancelacion: usuarioCancelacion,
+          motivo_cancelacion: "Cancelado desde facturación y cobranza",
+          updated_at: fechaCancelacion,
+        })
+        .eq("id", embarque.id);
+
+      if (error) {
+        toast({ 
+          title: 'Error al cancelar embarque', 
+          description: error.message || String(error), 
+          variant: 'destructive' 
+        });
+        throw error;
+      }
+
+      // Actualizar estado local - remover de la lista activa
+      const actualizados = embarquesAsignados.filter((e) => e.id !== embarque.id);
+      if (mounted.current) {
+        setEmbarquesAsignados(actualizados);
+      }
+
+      // También actualizar embarques analíticos si existen
+      if (mounted.current) {
+        setEmbarquesAnaliticos((prev) => 
+          prev.filter((e) => e.id !== embarque.id)
+        );
+      }
+
+      // Audit log: cancelar embarque
+      try {
+        const { agregarAuditLog } = await import("../../lib/audit");
+        agregarAuditLog(
+          "CANCELAR",
+          "Facturación/Cobranza",
+          `Cancelación de embarque folio ${embarque.folio} por usuario ${usuarioCancelacion}`
+        );
+      } catch {}
+
+      toast({ 
+        title: 'Embarque cancelado exitosamente', 
+        description: `El embarque ${embarque.folio} ha sido cancelado y removido de todas las secciones.`,
+        variant: 'default' 
+      });
+
+    } catch (error) {
+      console.error("Error cancelando embarque:", error);
+      throw error;
+    }
   }
   const [embarquesAsignados, setEmbarquesAsignados] = useState<
     EmbarqueAsignado[]
@@ -7318,6 +7390,24 @@ export default function FacturacionCobranzaPage() {
                             Detalles
                           </Button>
                           {/* Botón Modificar oculto según requerimiento */}
+                          {/* Botón Cancelar - disponible para embarques finalizados que no estén ya cancelados */}
+                          {(embarque.estado?.startsWith("finalizado") || 
+                            embarque.estado === "asignado" || 
+                            embarque.estado === "en-transito") && 
+                            !esCancelado(embarque) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEmbarqueACancelar(embarque);
+                                setShowConfirmCancelarDialog(true);
+                              }}
+                              className="text-red-600 border-red-200 hover:bg-red-50"
+                            >
+                              <X className="h-4 w-4 mr-1" />
+                              Cancelar
+                            </Button>
+                          )}
                           {(embarque.estado_facturacion === "pagado" ||
                             (embarque.pagado &&
                               (embarque as any).estado_facturacion == null) ||
@@ -8143,6 +8233,51 @@ export default function FacturacionCobranzaPage() {
                     setEmbarqueAArchivar(null);
                   }
                 }}>Confirmar</Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+
+          {/* Confirmar cancelación: dialog para cancelar embarques */}
+          <Dialog open={showConfirmCancelarDialog} onOpenChange={(v) => { if(!v) { setShowConfirmCancelarDialog(false); setEmbarqueACancelar(null); } }}>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Confirmar cancelación</DialogTitle>
+                <DialogDescription>
+                  ¿Seguro que deseas cancelar este embarque? Esta acción cancelará el embarque en todas las secciones del sistema y no se puede deshacer.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-2">
+                <p className="font-medium">Folio: {embarqueACancelar?.folio || "-"}</p>
+                <p className="text-sm text-gray-600">Cliente: {embarqueACancelar?.clienteNombre || embarqueACancelar?.cliente_id || '-'}</p>
+                <p className="text-sm text-gray-600">Operador: {embarqueACancelar?.operadorAsignado?.nombre || '-'}</p>
+                <p className="text-sm text-gray-600">Estado actual: {embarqueACancelar?.estado || '-'}</p>
+              </div>
+              <div className="bg-red-50 border border-red-200 rounded p-3 my-3">
+                <p className="text-sm text-red-800 font-medium">⚠️ Advertencia:</p>
+                <p className="text-sm text-red-700">El embarque será cancelado y removido de las secciones de Asignación, Crear Embarque y Facturación/Cobranza.</p>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => { setShowConfirmCancelarDialog(false); setEmbarqueACancelar(null); }}>
+                  No, mantener
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  onClick={async () => {
+                    const emb = embarqueACancelar;
+                    if (!emb) return;
+                    setShowConfirmCancelarDialog(false);
+                    try {
+                      await cancelarEmbarque(emb);
+                    } catch (err: any) {
+                      console.error('Error cancelando embarque:', err);
+                      toast({ title: 'Error al cancelar', description: err?.message || String(err), variant: 'destructive' });
+                    } finally {
+                      setEmbarqueACancelar(null);
+                    }
+                  }}
+                >
+                  Sí, cancelar embarque
+                </Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
