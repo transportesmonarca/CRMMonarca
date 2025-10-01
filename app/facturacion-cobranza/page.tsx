@@ -86,6 +86,7 @@ interface EmbarqueAsignado {
   fechaEnganche: string;
   horaEnganche: string;
   comentarios: string;
+  observaciones?: string | null;
   operadorAsignado: { id: string; nombre: string };
   camionAsignado?: { id?: string; marca?: string; modelo?: string; numeroEconomico?: string };
   // Remolque relacionado (si existe) o captura manual
@@ -490,6 +491,7 @@ const UpdatePriceModal = ({
   initialRazon?: string | null;
 }) => {
   const [precio, setPrecio] = useState<string>("");
+  const [moneda, setMoneda] = useState<string>("MXN");
   const [razon, setRazon] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -498,34 +500,53 @@ const UpdatePriceModal = ({
     if (embarque) {
       // Prefer mostrar/editar el precio_flete. Si no existe, caer a precio_quickpaid como respaldo.
       const base = embarque.precio_flete ?? embarque.precio_quickpaid ?? '';
+      const currentMoneda = embarque.moneda_flete || 'MXN';
+      
       setPrecio(base !== null && base !== undefined ? String(base) : '');
+      setMoneda(currentMoneda);
       setRazon(initialRazon ?? '');
     }
   }, [embarque, initialRazon]);
 
   const submit = async () => {
     if (!embarque) return;
-      if (!precio || isNaN(Number(precio))) {
-  toast({ title: 'Ingresa un precio válido', variant: 'default' });
+    
+    if (!precio || isNaN(Number(precio)) || Number(precio) <= 0) {
+      toast({ title: 'Ingresa un precio válido mayor a 0', variant: 'default' });
       return;
     }
-      // La justificación ya fue ingresada en el prompt previo; no es obligatoria aquí
+    
+    if (!moneda || !['MXN', 'USD'].includes(moneda)) {
+      toast({ title: 'Selecciona una moneda válida', variant: 'default' });
+      return;
+    }
+    
     setLoading(true);
     try {
       const res = await fetch('/api/embarques/actualizar-precio', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ embarque_id: embarque.id, precio: Number(precio), razon }),
+        body: JSON.stringify({ 
+          embarque_id: embarque.id, 
+          precio: Number(precio), 
+          moneda: moneda,
+          razon 
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || data?.message || 'Error');
-  onOpenChange(false);
-  // refrescar la página o datos locales
-  try { router.refresh(); } catch {}
-  toast({ title: 'Precio actualizado exitosamente', variant: 'default' });
+      
+      onOpenChange(false);
+      // refrescar la página o datos locales
+      try { router.refresh(); } catch {}
+      toast({ 
+        title: 'Precio y moneda actualizados exitosamente', 
+        description: `Nuevo precio: $${Number(precio).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${moneda}`,
+        variant: 'default' 
+      });
     } catch (error: any) {
       console.error('Error actualizando precio:', error);
-  toast({ title: 'Error actualizando precio', description: error?.message || String(error), variant: 'default' });
+      toast({ title: 'Error actualizando precio', description: error?.message || String(error), variant: 'default' });
     } finally {
       setLoading(false);
     }
@@ -535,21 +556,90 @@ const UpdatePriceModal = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
         <DialogHeader>
-          <DialogTitle>Actualizar Precio</DialogTitle>
+          <DialogTitle>Actualizar Precio y Moneda del Flete</DialogTitle>
           <DialogDescription>
-            Captura un nuevo precio. La justificación ya fue registrada en el paso anterior.
+            Modifica el monto del flete y selecciona la moneda. Esta acción quedará registrada en el historial del embarque.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-3">
-          <div>
-            <Label>Precio</Label>
-            <Input type="number" value={precio} onChange={(e) => setPrecio(e.target.value)} />
+        <div className="space-y-4">
+          {embarque && (
+            <div className="bg-gray-50 p-3 rounded-lg border">
+              <h4 className="font-medium text-sm text-gray-700 mb-2">Embarque: {embarque.folio}</h4>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-600">
+                <div>Cliente: {embarque.clienteNombre || 'N/A'}</div>
+                <div>Load: {embarque.load_number || 'N/A'}</div>
+                <div>Precio actual: ${Number(embarque.precio_flete || embarque.precio_quickpaid || 0).toLocaleString('es-MX', { minimumFractionDigits: 2 })} {embarque.moneda_flete || 'MXN'}</div>
+                <div>Fecha: {embarque.fechaAsignacion ? new Date(embarque.fechaAsignacion).toLocaleDateString('es-MX') : 'N/A'}</div>
+              </div>
+            </div>
+          )}
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <Label htmlFor="precio" className="text-sm font-medium">Nuevo Monto</Label>
+              <Input 
+                id="precio"
+                type="number" 
+                placeholder="0.00"
+                min="0"
+                step="0.01"
+                value={precio} 
+                onChange={(e) => setPrecio(e.target.value)}
+                className="mt-1"
+              />
+            </div>
+            
+            <div>
+              <Label htmlFor="moneda" className="text-sm font-medium">Moneda</Label>
+              <select
+                id="moneda"
+                value={moneda}
+                onChange={(e) => setMoneda(e.target.value)}
+                className="mt-1 w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              >
+                <option value="MXN">MXN - Pesos Mexicanos</option>
+                <option value="USD">USD - Dólares Americanos</option>
+              </select>
+            </div>
           </div>
+
+          <div>
+            <Label htmlFor="razon" className="text-sm font-medium">Justificación (opcional)</Label>
+            <textarea
+              id="razon"
+              value={razon}
+              onChange={(e) => setRazon(e.target.value)}
+              placeholder="Describe el motivo del cambio de precio..."
+              className="mt-1 w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[80px]"
+              rows={3}
+            />
+          </div>
+          
+          {precio && moneda && (
+            <div className="bg-blue-50 p-3 rounded-lg border border-blue-200">
+              <div className="text-sm font-medium text-blue-800">Vista previa:</div>
+              <div className="text-lg font-bold text-blue-900">
+                ${Number(precio || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {moneda}
+              </div>
+            </div>
+          )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>Cancelar</Button>
-          <Button variant="destructive" onClick={submit} disabled={loading}>
-            {loading ? 'Guardando...' : 'Guardar actualización'}
+          <Button variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button onClick={submit} disabled={loading || !precio || isNaN(Number(precio))}>
+            {loading ? (
+              <>
+                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                Guardando...
+              </>
+            ) : (
+              <>
+                <DollarSign className="h-4 w-4 mr-2" />
+                Actualizar Precio
+              </>
+            )}
           </Button>
         </DialogFooter>
       </DialogContent>
@@ -679,6 +769,8 @@ export default function FacturacionCobranzaPage() {
   const [showConfirmArchivarDialog, setShowConfirmArchivarDialog] = useState(false);
   const [embarqueACancelar, setEmbarqueACancelar] = useState<EmbarqueAsignado | null>(null);
   const [showConfirmCancelarDialog, setShowConfirmCancelarDialog] = useState(false);
+  const [cancelReason, setCancelReason] = useState("");
+  const [cancelingEmbarque, setCancelingEmbarque] = useState(false);
   // Confirmation dialog for permanent deletion of an archived embarque
   const [embarqueAEliminar, setEmbarqueAEliminar] = useState<EmbarqueAsignado | null>(null);
   const [showConfirmDeleteDialog, setShowConfirmDeleteDialog] = useState(false);
@@ -841,35 +933,18 @@ export default function FacturacionCobranzaPage() {
     setFechaFinAnalisis(fin.toISOString().slice(0, 10));
   };
 
-  // UX: Prefijar rango de fechas y generar análisis automáticamente cuando se abre el modal
+  // UX: Prefijar rango de fechas al abrir el modal (sin generar análisis automáticamente)
   useEffect(() => {
     if (showAnalisisOperadoresModal) {
       if (!fechaInicioAnalisis || !fechaFinAnalisis) {
         setPeriodoActual(periodoAnalisis || "mes");
-      } else {
-        // Si las fechas ya están configuradas, generar análisis automáticamente
-        setTimeout(() => {
-          if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
-            generarAnalisisOperadores();
-          }
-        }, 500);
       }
+      // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [showAnalisisOperadoresModal]);
 
-  // Auto-generar análisis cuando las fechas cambien (por periodo seleccionado)
-  useEffect(() => {
-    if (showAnalisisOperadoresModal && fechaInicioAnalisis && fechaFinAnalisis) {
-      if (new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
-        const timer = setTimeout(() => {
-          generarAnalisisOperadores();
-        }, 300);
-        return () => clearTimeout(timer);
-      }
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaInicioAnalisis, fechaFinAnalisis, showAnalisisOperadoresModal]);
+  // useEffect eliminado - no generar análisis automáticamente, esperar a que el usuario presione "Analizar"
 
   const generarAnalisisOperadores = async () => {
     // Validación: exigir rango de fechas para evitar consultas demasiado amplias
@@ -1039,8 +1114,14 @@ export default function FacturacionCobranzaPage() {
 
         // Si no existe operadorAsignado en el objeto base, rellenarlo con el nombre detectado
         if (operadorNombreParaAnalisis && (!base.operadorAsignado || !base.operadorAsignado.nombre)) {
+          // Buscar el ID correcto del operador por nombre
+          const operadorEncontrado = todosOperadores.find(op => {
+            const nombreCompleto = `${(op.nombre||'').toString().trim()} ${(op.apellidos||'').toString().trim()}`.trim();
+            return normalizeName(nombreCompleto) === normalizeName(operadorNombreParaAnalisis);
+          });
+          
           base.operadorAsignado = {
-            id: mod?.operador_original_id || base.operadorOriginalId || "",
+            id: operadorEncontrado?.id || mod?.operador_original_id || base.operadorOriginalId || "",
             nombre: operadorNombreParaAnalisis,
           };
         }
@@ -1066,11 +1147,17 @@ export default function FacturacionCobranzaPage() {
             base.operadorOriginalNombre ||
             embarque.operadorAsignado?.nombre;
           if (nombreOriginal) {
+            // Buscar el ID correcto del operador original
+            const operadorOriginalEncontrado = todosOperadores.find(op => {
+              const nombreCompleto = `${(op.nombre||'').toString().trim()} ${(op.apellidos||'').toString().trim()}`.trim();
+              return normalizeName(nombreCompleto) === normalizeName(nombreOriginal);
+            });
+            
             duplicados.push({
               ...base,
               modificadoPorEmergencia: true,
               operadorAsignado: {
-                ...embarque.operadorAsignado,
+                id: operadorOriginalEncontrado?.id || base.operadorOriginalId || "",
                 nombre: nombreOriginal,
               },
               // Usar el pago por defecto calculado para el operador original cuando no exista división capturada
@@ -1079,11 +1166,17 @@ export default function FacturacionCobranzaPage() {
             });
           }
           if (base.operadorReemplazoNombre) {
+            // Buscar el ID correcto del operador de reemplazo
+            const operadorReemplazoEncontrado = todosOperadores.find(op => {
+              const nombreCompleto = `${(op.nombre||'').toString().trim()} ${(op.apellidos||'').toString().trim()}`.trim();
+              return normalizeName(nombreCompleto) === normalizeName(base.operadorReemplazoNombre);
+            });
+            
             duplicados.push({
               ...base,
               modificadoPorEmergencia: true,
               operadorAsignado: {
-                ...embarque.operadorAsignado,
+                id: operadorReemplazoEncontrado?.id || base.operadorReemplazoId || "",
                 nombre: base.operadorReemplazoNombre,
               },
               // Por defecto, el reemplazo inicia con 0 hasta que se asigne manualmente su parte
@@ -1114,44 +1207,108 @@ export default function FacturacionCobranzaPage() {
       // Filtro por operador después de duplicar por contingencia
       if (filtroAnalisisOperador !== "todos") {
         const filtroRaw = (filtroAnalisisOperador || "").toString().trim();
-        // Si el value comienza con 'nombre:' entonces usamos el resto como nombre
-        let filtroIsNombre = false;
-        let filtroNombreRaw = filtroRaw;
+        
+        // Determinar si es filtro por nombre o por ID
         if (filtroRaw.startsWith('nombre:')) {
-          filtroIsNombre = true;
-          filtroNombreRaw = filtroRaw.replace(/^nombre:/, '');
-        }
-        // Si el value es un id de operador, intentar resolver el nombre desde todosOperadores
-        const filtroIsId = /^[0-9a-fA-F-]{8,}$/i.test(filtroRaw);
-        if (!filtroIsNombre && filtroIsId) {
-          const opMatch = (todosOperadores || []).find((o: any) => String(o.id) === String(filtroRaw));
-          if (opMatch) {
-            filtroIsNombre = true;
-            filtroNombreRaw = `${(opMatch.nombre||'').toString().trim()} ${(opMatch.apellidos||'').toString().trim()}`.trim();
+          // Filtro por nombre
+          const nombreBuscado = filtroRaw.replace(/^nombre:/, '').trim();
+          const filtroNorm = normalizeName(nombreBuscado);
+          
+          embarquesParaAnalisis = (embarquesParaAnalisis as any[]).filter((e: any) => {
+            const asignadoRaw = e.operadorAsignado?.nombre || "";
+            const originalRaw = e.operadorOriginalNombre || e.operadorOriginal || "";
+            const asignadoNorm = normalizeName(asignadoRaw);
+            const originalNorm = normalizeName(originalRaw);
+            
+            return asignadoNorm === filtroNorm || originalNorm === filtroNorm;
+          });
+        } else {
+          // Filtro por ID - buscar el operador para obtener su nombre
+          const operadorSeleccionado = todosOperadores.find(op => op.id === filtroRaw);
+          
+          if (operadorSeleccionado) {
+            const nombreCompleto = `${(operadorSeleccionado.nombre||'').toString().trim()} ${(operadorSeleccionado.apellidos||'').toString().trim()}`.trim();
+            const filtroNorm = normalizeName(nombreCompleto);
+            
+            console.log('🔍 Filtrando por operador seleccionado:', { 
+              id: filtroRaw, 
+              nombreCompleto, 
+              filtroNorm,
+              totalEmbarquesAntesFiltro: embarquesParaAnalisis.length 
+            });
+            
+            // Mostrar algunos embarques de ejemplo antes del filtrado
+            console.log('📋 Ejemplo de embarques antes del filtrado:', 
+              embarquesParaAnalisis.slice(0, 5).map(e => ({
+                folio: e.folio,
+                operadorId: e.operadorAsignado?.id,
+                operadorNombre: e.operadorAsignado?.nombre,
+                operadorOriginalId: e.operadorOriginalId,
+                operadorOriginalNombre: e.operadorOriginalNombre
+              }))
+            );
+            
+            embarquesParaAnalisis = (embarquesParaAnalisis as any[]).filter((e: any) => {
+              // Comparar por ID primero (más preciso)
+              const coincideId = (
+                e.operadorAsignado?.id === filtroRaw || 
+                e.operadorOriginalId === filtroRaw ||
+                e.operadorReemplazoId === filtroRaw
+              );
+              
+              if (coincideId) {
+                console.log('✅ Coincidencia por ID:', e.folio, {
+                  operadorAsignadoId: e.operadorAsignado?.id,
+                  operadorOriginalId: e.operadorOriginalId,
+                  operadorReemplazoId: e.operadorReemplazoId,
+                  filtroId: filtroRaw
+                });
+                return true;
+              }
+              
+              // Fallback a comparación por nombre (normalizado)
+              const asignadoNorm = normalizeName(e.operadorAsignado?.nombre || "");
+              const originalNorm = normalizeName(e.operadorOriginalNombre || e.operadorOriginal || "");
+              const reemplazoNorm = normalizeName(e.operadorReemplazoNombre || "");
+              
+              const coincideNombre = (
+                asignadoNorm === filtroNorm || 
+                originalNorm === filtroNorm || 
+                reemplazoNorm === filtroNorm
+              );
+              
+              if (coincideNombre) {
+                console.log('✅ Coincidencia por nombre:', e.folio, { 
+                  asignadoNorm, 
+                  originalNorm, 
+                  reemplazoNorm, 
+                  filtroNorm 
+                });
+                return true;
+              }
+              
+              return false;
+            });
+            
+            console.log('🎯 Resultado del filtrado:', {
+              embarquesFiltrados: embarquesParaAnalisis.length,
+              ejemplos: embarquesParaAnalisis.slice(0, 3).map(e => ({
+                folio: e.folio,
+                operadorNombre: e.operadorAsignado?.nombre,
+                operadorId: e.operadorAsignado?.id
+              }))
+            });
+          } else {
+            console.log('❌ Operador no encontrado para ID:', filtroRaw);
+            console.log('📋 Operadores disponibles:', todosOperadores.slice(0, 5).map(op => ({
+              id: op.id,
+              nombre: op.nombre,
+              apellidos: op.apellidos
+            })));
+            // Si no se encuentra el operador, no mostrar nada
+            embarquesParaAnalisis = [];
           }
         }
-        const filtroNorm = normalizeName(filtroNombreRaw);
-
-        embarquesParaAnalisis = (embarquesParaAnalisis as any[]).filter((e: any) => {
-          const asignadoRaw = e.operadorAsignado?.nombre || "";
-          const originalRaw = e.operadorOriginalNombre || e.operadorOriginal || "";
-          const asignadoNorm = normalizeName(asignadoRaw);
-          const originalNorm = normalizeName(originalRaw);
-
-          // Si el filtro es un id (no comienza con nombre:) comparamos por id
-          if (!filtroIsNombre) {
-            if (e.operadorAsignado?.id === filtroRaw) return true;
-            if (e.operadorOriginalId === filtroRaw) return true;
-          }
-
-          // Comparar por nombre normalizado
-          if (filtroNorm) {
-            if (asignadoNorm === filtroNorm || originalNorm === filtroNorm) return true;
-            if (asignadoNorm.includes(filtroNorm) || originalNorm.includes(filtroNorm)) return true;
-          }
-
-          return false;
-        });
       }
 
       // Excluir embarques sin operador asignado (no mostrar 'Sin asignar' en el modal)
@@ -1266,69 +1423,167 @@ export default function FacturacionCobranzaPage() {
   };
 
   const exportarAnalisisExcel = () => {
-    // Exportar exactamente como la tabla "Detalle" (sin la columna Acciones)
-    // Columnas: Folio, Operador, Cliente, Fecha, Tipo Servicio, Pago Operador, Contingencia
     const escape = (val: any) => {
       const s = String(val ?? "");
       // Escapar comillas dobles para CSV
       return `"${s.replace(/"/g, '""')}"`;
     };
 
-    let csv = [
-      "Folio",
-      "Operador",
-      "Cliente",
-      "Load",
-      "Carta Porte",
-  "Tractocamión",
-  "Remolque",
-      "Fecha",
-      "Tipo Servicio",
-      "Pago Operador",
-      "Contingencia",
-    ].map(escape).join(",") + "\n";
+    let csv = "";
+    let filename = "analisis_operadores.csv";
 
-    const lista: any[] = analisisData.embarquesFiltradosAnalisis || [];
-    lista.forEach((e: any) => {
-      const fechaFmt = e.fechaAsignacion
-        ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
-        : "";
-      // 🎯 LÓGICA ACTUALIZADA: Embarques de contingencia muestran $0.00 automáticamente
-      const esContingencia = e.estado === 'asignado_contingencia' || e.modificadoPorEmergencia;
-      const pago = esContingencia
-        ? (e.rolContingencia === "original"
-            ? (((operadoresContingencia as any)[e.id]?.original) ?? 0) // Cambio de operador = $0.00
-            : (((operadoresContingencia as any)[e.id]?.reemplazo) || 0))
-        : (e.pagoOperador || 0);
-      const pagoFmt = `$${Number(pago).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-      const contingenciaTxt = (() => {
-        if (!e.modificadoPorEmergencia) return "No";
-        const folio = e.folio || "";
-        const folioShort = folio.includes("-") ? folio.split("-").slice(1).join("-") : folio;
-        return folioShort ? `Sí / ${folioShort}` : "Sí";
-      })();
+    // Determinar qué datos exportar según el tab activo
+    if (activeAnalisisTab === "porOperador") {
+      // Exportar resumen por operador
+      csv = [
+        "Operador",
+        "Total Pagos",
+        "Cantidad Embarques", 
+        "Correctos",
+        "Cancelados",
+        "Contingencia",
+        "Promedio por Embarque"
+      ].map(escape).join(",") + "\n";
 
-      const row = [
-        e.folio || "",
-        e.operadorAsignado?.nombre || "",
-        e.clienteNombre || "",
-        (e as any).load_number || (e as any).numeroLoad || "",
-        (e as any).carta_porte || "",
-  (e as any).camionAsignado?.numeroEconomico || (e as any).camion?.numero_economico || "",
-  (e as any).remolque?.numero_economico || (e as any).remolque_numero_economico || (e as any).remolque_placa || "",
-        fechaFmt,
-        e.tipoServicioNombre || "",
-        pagoFmt,
-        contingenciaTxt,
-      ].map(escape).join(",");
-      csv += row + "\n";
-    });
+      const lista = analisisData.analisisPorOperador || [];
+      // Si hay operador específico seleccionado, filtrar solo ese operador
+      const listaFiltrada = filtroAnalisisOperador !== "todos" 
+        ? lista.filter((op: any) => {
+            const operadorSeleccionado = todosOperadores.find(o => {
+              const operadorId = o.id || `nombre:${`${(o.nombre||'').toString().trim()} ${(o.apellidos||'').toString().trim()}`.trim()}`;
+              return operadorId === filtroAnalisisOperador;
+            });
+            return op.nombre === (operadorSeleccionado ? `${(operadorSeleccionado.nombre||'').toString().trim()} ${(operadorSeleccionado.apellidos||'').toString().trim()}`.trim() : '');
+          })
+        : lista;
+
+      listaFiltrada.forEach((op: any) => {
+        const row = [
+          op.nombre,
+          `$${op.totalPagos.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          op.cantidadEmbarques.toString(),
+          op.correctos.toString(),
+          op.cancelados.toString(),
+          op.embarquesContingencia.toString(),
+          `$${op.promedioPorEmbarque.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        ].map(escape).join(",");
+        csv += row + "\n";
+      });
+
+      filename = filtroAnalisisOperador !== "todos" 
+        ? `analisis_operador_${filtroAnalisisOperador.replace(':', '_')}.csv`
+        : "analisis_por_operador.csv";
+
+    } else if (activeAnalisisTab === "detalle") {
+      // Exportar detalle de embarques (como antes pero con el pago operador correcto)
+      csv = [
+        "Folio",
+        "Operador",
+        "Cliente",
+        "Load",
+        "Carta Porte",
+        "Tractocamión",
+        "Remolque",
+        "Fecha",
+        "Tipo Servicio",
+        "Pago Operador",
+        "Contingencia",
+        "Cancelado"
+      ].map(escape).join(",") + "\n";
+
+      const lista = analisisData.embarquesFiltradosAnalisis || [];
+      lista.forEach((e: any) => {
+        const fechaFmt = e.fechaAsignacion
+          ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
+          : "";
+        
+        // Usar la misma lógica que se muestra en la tabla del modal
+        const pagoMostrado = Number(e.pago_operador ?? 0);
+        const pagoFmt = `$${pagoMostrado.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+        
+        const contingenciaTxt = (() => {
+          if (!e.modificadoPorEmergencia) return "No";
+          const folio = e.folio || "";
+          const folioShort = folio.includes("-") ? folio.split("-").slice(1).join("-") : folio;
+          return folioShort ? `Sí / ${folioShort}` : "Sí";
+        })();
+
+        const canceladoTxt = esCancelado(e) ? "Sí" : "No";
+
+        const row = [
+          e.folio || "",
+          e.operadorAsignado?.nombre || "",
+          e.clienteNombre || "",
+          (e as any).load_number || (e as any).numeroLoad || "",
+          (e as any).carta_porte || "",
+          (e as any).camionAsignado?.numeroEconomico || (e as any).camion?.numero_economico || "",
+          (e as any).remolque?.numero_economico || (e as any).remolque_numero_economico || (e as any).remolque_placa || "",
+          fechaFmt,
+          e.tipoServicioNombre || "",
+          pagoFmt,
+          contingenciaTxt,
+          canceladoTxt
+        ].map(escape).join(",");
+        csv += row + "\n";
+      });
+
+      filename = filtroAnalisisOperador !== "todos" 
+        ? `detalle_embarques_${filtroAnalisisOperador.replace(':', '_')}.csv`
+        : "detalle_embarques.csv";
+
+    } else if (activeAnalisisTab === "contingencia") {
+      // Exportar casos de contingencia
+      csv = [
+        "Folio",
+        "Operador Original",
+        "Operador Reemplazo",
+        "Cliente",
+        "Fecha",
+        "Tipo Servicio",
+        "Pago Original",
+        "Pago Reemplazo",
+        "Total Pago",
+        "Motivo"
+      ].map(escape).join(",") + "\n";
+
+      const casosContingencia = (analisisData.embarquesFiltradosAnalisis || [])
+        .filter((e: any) => embarquesModificadosIds.includes(e.id))
+        .filter((e: any, idx: number, arr: any[]) => 
+          idx === arr.findIndex((x: any) => x.id === e.id)
+        );
+
+      casosContingencia.forEach((e: any) => {
+        const fechaFmt = e.fechaAsignacion
+          ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
+          : "";
+        
+        const pagoOriginal = operadoresContingencia[e.id]?.original || 0;
+        const pagoReemplazo = e.operadorReemplazoNombre ? (operadoresContingencia[e.id]?.reemplazo || 0) : 0;
+        const totalPago = pagoOriginal + pagoReemplazo;
+
+        const row = [
+          e.folio || "",
+          e.operadorOriginalNombre || e.operadorAsignado?.nombre || "",
+          e.operadorReemplazoNombre || "",
+          e.clienteNombre || "",
+          fechaFmt,
+          e.tipoServicioNombre || "",
+          `$${pagoOriginal.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `$${pagoReemplazo.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `$${totalPago.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          e.motivoModificacion || ""
+        ].map(escape).join(",");
+        csv += row + "\n";
+      });
+
+      filename = "casos_contingencia.csv";
+    }
 
     const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "analisis_operadores.csv";
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1339,6 +1594,8 @@ export default function FacturacionCobranzaPage() {
   >([]);
   // Global oldest archived id (fetched from DB) to ensure the oldest record is always deletable
   const [globalMasViejoArchivadoId, setGlobalMasViejoArchivadoId] = useState<string | null>(null);
+  // ⚡ OPTIMIZACIÓN: Estado para contador total real
+  const [totalArchivadosReal, setTotalArchivadosReal] = useState<number | null>(null);
   const [loadingArchivados, setLoadingArchivados] = useState(false);
 
   // UI/UX: filtros, orden y paginación para modal de Archivados (diseño alineado a Crear Embarques)
@@ -1422,81 +1679,75 @@ export default function FacturacionCobranzaPage() {
     }
   };
 
+  // ⚡ OPTIMIZACIÓN: Filtrado y ordenamiento simplificado (la mayoría se hace en servidor)
   const archivadosFilteredSorted = useMemo(() => {
-    const term = (archivadosSearch || "").toLowerCase();
-    const filtered = (embarquesArchivados || []).filter((e) => {
-      if (!e) return false;
-      const folio = String(e.folio || "").toLowerCase();
-      const cliente = String(e.clienteNombre || "").toLowerCase();
-      const load = String((e as any).load_number || e.numeroLoad || "").toLowerCase();
-      const matchesTerm = folio.includes(term) || cliente.includes(term) || load.includes(term);
-      // Para Facturación/Cobranza, filtramos por periodo usando preferentemente la fecha de pago de factura
-      const fechaRef = (e as any).fecha_pago || (e as any).fecha_archivado || (e as any).fechaArchivado || (e as any).updated_at || (e as any).fecha_creacion;
-      const matchesPeriodo = fechaDentroPeriodoArchivados(fechaRef);
-      return matchesTerm && matchesPeriodo;
-    });
+    // Como los filtros principales se aplican en servidor, solo ordenamiento en cliente para casos especiales
+    const data = embarquesArchivados || [];
+    
+    if (archivadosSortBy === "folio" || archivadosSortBy === "cliente" || archivadosSortBy === "load" || archivadosSortBy === "valor") {
+      // Solo ordenamiento en cliente para campos que no se pueden ordenar eficientemente en servidor
+      return data.sort((a, b) => {
+        let va: any = 0;
+        let vb: any = 0;
+        
+        switch (archivadosSortBy) {
+          case "folio":
+            const folioNum = (x: any) => {
+              const s = String(x?.folio ?? "");
+              const digits = s.replace(/[^0-9]/g, "");
+              return digits.length > 0 ? parseInt(digits, 10) : Number.MIN_SAFE_INTEGER;
+            };
+            va = folioNum(a);
+            vb = folioNum(b);
+            break;
+          case "cliente":
+            va = String(a.clienteNombre || "");
+            vb = String(b.clienteNombre || "");
+            break;
+          case "load":
+            va = String(a.load_number || "");
+            vb = String(b.load_number || "");
+            break;
+          case "valor":
+            va = typeof a.precioFlete === "number" ? a.precioFlete : 0;
+            vb = typeof b.precioFlete === "number" ? b.precioFlete : 0;
+            break;
+        }
+        
+        if (va < vb) return archivadosSortDir === "asc" ? -1 : 1;
+        if (va > vb) return archivadosSortDir === "asc" ? 1 : -1;
+        return 0;
+      });
+    }
+    
+    // Para fechaPago y fecha_archivado, el ordenamiento ya se hizo en servidor
+    return data;
+  }, [embarquesArchivados, archivadosSortBy, archivadosSortDir]);
 
-    const getValor = (e: any) => {
-      const raw =
-        typeof e?.precioFlete === "number"
-          ? e.precioFlete
-          : typeof e?.precio_flete === "string"
-          ? Number(e.precio_flete)
-          : typeof e?.precio_flete === "number"
-          ? e.precio_flete
-          : 0;
-      return Number.isFinite(raw) ? raw : 0;
-    };
-
-    const sorted = filtered.sort((a, b) => {
-      let va: any = 0;
-      let vb: any = 0;
-      switch (archivadosSortBy) {
-        case "folio":
-          // Comparación numérica de folio (extrae dígitos, e.g., "E-00123" -> 123)
-          const folioNum = (x: any) => {
-            const s = String(x?.folio ?? "");
-            const digits = s.replace(/[^0-9]/g, "");
-            if (digits.length > 0) return parseInt(digits, 10);
-            // Si no hay dígitos, colocarlo al final con el valor más bajo
-            return Number.MIN_SAFE_INTEGER;
-          };
-          va = folioNum(a);
-          vb = folioNum(b);
-          break;
-        case "cliente":
-          va = String(a.clienteNombre || "");
-          vb = String(b.clienteNombre || "");
-          break;
-        case "load":
-          va = String((a as any).load_number || a.numeroLoad || "");
-          vb = String((b as any).load_number || b.numeroLoad || "");
-          break;
-        case "valor":
-          va = getValor(a);
-          vb = getValor(b);
-          break;
-        case "fechaPago":
-          va = a.fecha_pago ? new Date(a.fecha_pago).getTime() : 0;
-          vb = b.fecha_pago ? new Date(b.fecha_pago).getTime() : 0;
-          break;
-      }
-      if (va < vb) return archivadosSortDir === "asc" ? -1 : 1;
-      if (va > vb) return archivadosSortDir === "asc" ? 1 : -1;
-      return 0;
-    });
-    return sorted;
-  }, [embarquesArchivados, archivadosSearch, archivadosSortBy, archivadosSortDir, archivadosPeriodo]);
-
+  // ⚡ OPTIMIZACIÓN: Paginación ya se maneja en servidor, aquí solo mostramos los datos
   const totalArchivados = archivadosFilteredSorted.length;
-  const totalArchivadosPaginas = Math.max(
-    1,
-    Math.ceil(totalArchivados / archivadosPageSize)
-  );
+  const paginatedArchivados = archivadosFilteredSorted; // Ya vienen paginados del servidor
+  
+  // ⚡ OPTIMIZACIÓN: Usar contador real cuando esté disponible, estimar cuando no
+  const totalParaPaginacion = useMemo(() => {
+    if (totalArchivadosReal !== null) {
+      return totalArchivadosReal;
+    }
+    
+    // Estimación basada en la página actual
+    if (totalArchivados === archivadosPageSize) {
+      // Página llena, hay más páginas
+      return archivadosPage * archivadosPageSize + 1;
+    } else {
+      // Página parcial, probablemente la última
+      return (archivadosPage - 1) * archivadosPageSize + totalArchivados;
+    }
+  }, [totalArchivadosReal, totalArchivados, archivadosPageSize, archivadosPage]);
+  
+  const totalArchivadosPaginas = Math.max(1, Math.ceil(totalParaPaginacion / archivadosPageSize));
   const clampedPage = Math.min(archivadosPage, totalArchivadosPaginas);
   const startIdx = (clampedPage - 1) * archivadosPageSize;
-  const endIdx = Math.min(totalArchivados, startIdx + archivadosPageSize);
-  const paginatedArchivados = archivadosFilteredSorted.slice(startIdx, endIdx);
+  const endIdx = startIdx + totalArchivados;
 
   // Elegibilidad de eliminación: habilitado si es el registro más antiguo o ya pasaron 6 meses desde su archivo
   const masViejoArchivadoId = useMemo(() => {
@@ -1560,112 +1811,172 @@ export default function FacturacionCobranzaPage() {
 
     const cargarArchivados = async () => {
       try {
-        // Server-side pagination using range
+        // ⚡ OPTIMIZACIÓN: Paginación más inteligente
         const page = Math.max(1, Number(archivadosPage || 1));
         const pageSize = Math.max(1, Number(archivadosPageSize || 25));
         const start = (page - 1) * pageSize;
         const end = start + pageSize - 1;
 
+        // ⚡ OPTIMIZACIÓN: Solo cargar campos necesarios para la tabla
         let query = supabase
           .from("embarques")
           .select(
-            `*,
-       cliente:clientes(*),
-       operador:operadores(*),
-       camion:camiones(*),
-       remolque:remolques(*)`
+            `id, folio, load_number, precio_flete, moneda_flete, fecha_archivado, fecha_pago, fecha_creacion, updated_at, recolectas_json, entregas_json, observaciones, flete_en_falso,
+            cliente:clientes(id, nombre),
+            operador:operadores(id, nombre, apellidos)`
           )
-          .eq("estado_facturacion", "archivado")
-          .order("fecha_archivado", { ascending: false })
-          .range(start, end);
+          .eq("estado_facturacion", "archivado");
 
-        // If a quick search is provided, try to push it to the DB where possible
+        // ⚡ OPTIMIZACIÓN: Aplicar filtros en el servidor cuando sea posible
         const s = (archivadosSearch || "").trim();
         if (s) {
-          // Use ilike on folio and load_number server-side to reduce payload when possible
           const like = `%${s.replace(/%/g, '')}%`;
           query = query.or(`folio.ilike.${like},load_number.ilike.${like}`);
         }
+
+        // ⚡ OPTIMIZACIÓN: Filtros de periodo en servidor
+        if (archivadosPeriodo && archivadosPeriodo !== "todo") {
+          const ahora = new Date();
+          let fechaDesde: string | null = null;
+          
+          switch (archivadosPeriodo) {
+            case "mes_actual":
+              fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString();
+              break;
+            case "mes_anterior":
+              fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1).toISOString();
+              const fechaHasta = new Date(ahora.getFullYear(), ahora.getMonth(), 0).toISOString();
+              query = query.gte("fecha_archivado", fechaDesde).lte("fecha_archivado", fechaHasta);
+              break;
+            case "ultimos_3":
+              const fechaTresMeses = new Date();
+              fechaTresMeses.setMonth(fechaTresMeses.getMonth() - 3);
+              query = query.gte("fecha_archivado", fechaTresMeses.toISOString());
+              break;
+            case "ultimos_6":
+              const fechaSeisMeses = new Date();
+              fechaSeisMeses.setMonth(fechaSeisMeses.getMonth() - 6);
+              query = query.gte("fecha_archivado", fechaSeisMeses.toISOString());
+              break;
+            case "este_anio":
+              fechaDesde = new Date(ahora.getFullYear(), 0, 1).toISOString();
+              query = query.gte("fecha_archivado", fechaDesde);
+              break;
+          }
+          
+          if (fechaDesde && archivadosPeriodo === "mes_actual") {
+            query = query.gte("fecha_archivado", fechaDesde);
+          }
+        }
+
+        // ⚡ OPTIMIZACIÓN: Ordenamiento en servidor
+        const orderField = archivadosSortBy === "fechaPago" ? "fecha_pago" : "fecha_archivado";
+        const ascending = archivadosSortDir === "asc";
+        query = query.order(orderField, { ascending, nullsFirst: false }).range(start, end);
 
         const { data, error } = await query;
 
         if (!active) return;
 
-  if (error) {
+        if (error) {
           console.error("Error cargando embarques archivados:", error);
           if (mounted.current) setEmbarquesArchivados([]);
         } else {
-          const embarquesFormateados = (data || []).map((embarque) => ({
-            ...embarque,
-            // Normalizamos monto flete a número cuando venga como string
-            precioFlete:
-              typeof (embarque as any).precio_flete === "string"
-                ? Number((embarque as any).precio_flete)
-                : typeof (embarque as any).precio_flete === "number"
-                ? (embarque as any).precio_flete
-                : undefined,
-            clienteNombre:
-              embarque.cliente?.nombre || "Cliente no especificado",
-            operadorAsignado: embarque.operador
-              ? {
-                  id: embarque.operador.id,
-                  nombre: `${embarque.operador.nombre} ${
-                    embarque.operador.apellidos || ""
-                  }`.trim(),
-                }
-              : { id: "", nombre: "Sin asignar" },
-            camionAsignado: embarque.camion
-              ? {
-                  id: embarque.camion.id,
-                  marca: embarque.camion.marca,
-                  modelo: embarque.camion.modelo,
-                  numeroEconomico: embarque.camion.numero_economico,
-                }
-              : {
-                  id: "",
-                  marca: "Sin asignar",
-                  modelo: "",
-                  numeroEconomico: "",
-                },
-          }));
+          // ⚡ OPTIMIZACIÓN: Procesamiento más simple y directo
+          const embarquesFormateados = (data || []).map((embarque: any): EmbarqueAsignado => {
+            const cliente = Array.isArray(embarque.cliente) ? embarque.cliente[0] : embarque.cliente;
+            const operador = Array.isArray(embarque.operador) ? embarque.operador[0] : embarque.operador;
+            
+            return {
+              ...embarque,
+              precioFlete: typeof embarque.precio_flete === "string" 
+                ? Number(embarque.precio_flete) || 0
+                : embarque.precio_flete || 0,
+              clienteNombre: cliente?.nombre || "Cliente no especificado",
+              numeroLoad: embarque.load_number || "",
+              direccionEnganche: embarque.direccion_enganche || "",
+              fechaEnganche: embarque.fecha_enganche || "",
+              horaEnganche: embarque.hora_enganche || "",
+              comentarios: embarque.comentarios || "",
+              operadorAsignado: operador
+                ? {
+                    id: operador.id || "",
+                    nombre: `${operador.nombre || ""} ${operador.apellidos || ""}`.trim(),
+                  }
+                : { id: "", nombre: "Sin asignar" },
+            };
+          });
+          
           if (mounted.current) {
             setEmbarquesArchivados(embarquesFormateados);
           }
-          // Además, obtener el registro más antiguo archivado globalmente para permitir su eliminación inmediata
-          try {
-            // Prefer records that have fecha_archivado set (non-null). Nulls sort first in some DBs,
-            // so filter them out to get the true oldest archived date.
-            let oldestId: string | null = null;
-            const { data: oldestByFecha, error: oldestByFechaError } = await supabase
-              .from('embarques')
-              .select('id, fecha_archivado')
-              .eq('estado_facturacion', 'archivado')
-              .not('fecha_archivado', 'is', null)
-              .order('fecha_archivado', { ascending: true })
-              .limit(1)
-              .maybeSingle();
-            if (!oldestByFechaError && oldestByFecha && oldestByFecha.id) {
-              oldestId = oldestByFecha.id;
-            } else {
-              // Fallback: order by fecha_creacion (creation date) if no fecha_archivado available
-              const { data: oldestByCreacion, error: oldestByCreacionError } = await supabase
-                .from('embarques')
-                .select('id, fecha_creacion')
-                .eq('estado_facturacion', 'archivado')
-                .not('fecha_creacion', 'is', null)
-                .order('fecha_creacion', { ascending: true })
-                .limit(1)
-                .maybeSingle();
-              if (!oldestByCreacionError && oldestByCreacion && oldestByCreacion.id) {
-                oldestId = oldestByCreacion.id;
-              }
-            }
-            if (mounted.current) setGlobalMasViejoArchivadoId(oldestId);
-          } catch (err) {
-            console.error('Error fetching global oldest archivado id:', err);
-            if (mounted.current) setGlobalMasViejoArchivadoId(null);
+          
+          // ⚡ OPTIMIZACIÓN: Solo buscar el registro más antiguo si se necesita para eliminación
+          if (embarquesFormateados.length > 0) {
+            const oldestId = embarquesFormateados.reduce((oldest: any, current: any) => {
+              const oldestTime = oldest.fecha_archivado ? new Date(oldest.fecha_archivado).getTime() : 0;
+              const currentTime = current.fecha_archivado ? new Date(current.fecha_archivado).getTime() : 0;
+              return currentTime < oldestTime ? current : oldest;
+            }, embarquesFormateados[0])?.id;
+            
+            if (mounted.current) setGlobalMasViejoArchivadoId(oldestId || null);
           }
-          console.log(`cargarArchivados: fetched ${embarquesFormateados.length} rows (page ${page})`);
+          
+          // ⚡ OPTIMIZACIÓN: Solo obtener contador total en primera página o cuando se cambian filtros
+          if (page === 1 && active) {
+            try {
+              let countQuery = supabase
+                .from("embarques")
+                .select("id", { count: "exact", head: true })
+                .eq("estado_facturacion", "archivado");
+
+              // Aplicar los mismos filtros que a la consulta principal
+              if (s) {
+                const like = `%${s.replace(/%/g, '')}%`;
+                countQuery = countQuery.or(`folio.ilike.${like},load_number.ilike.${like}`);
+              }
+
+              if (archivadosPeriodo && archivadosPeriodo !== "todo") {
+                const ahora = new Date();
+                let fechaDesde: string | null = null;
+                
+                switch (archivadosPeriodo) {
+                  case "mes_actual":
+                    fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth(), 1).toISOString();
+                    countQuery = countQuery.gte("fecha_archivado", fechaDesde);
+                    break;
+                  case "mes_anterior":
+                    fechaDesde = new Date(ahora.getFullYear(), ahora.getMonth() - 1, 1).toISOString();
+                    const fechaHasta = new Date(ahora.getFullYear(), ahora.getMonth(), 0).toISOString();
+                    countQuery = countQuery.gte("fecha_archivado", fechaDesde).lte("fecha_archivado", fechaHasta);
+                    break;
+                  case "ultimos_3":
+                    const fechaTresMesesCount = new Date();
+                    fechaTresMesesCount.setMonth(fechaTresMesesCount.getMonth() - 3);
+                    countQuery = countQuery.gte("fecha_archivado", fechaTresMesesCount.toISOString());
+                    break;
+                  case "ultimos_6":
+                    const fechaSeisMesesCount = new Date();
+                    fechaSeisMesesCount.setMonth(fechaSeisMesesCount.getMonth() - 6);
+                    countQuery = countQuery.gte("fecha_archivado", fechaSeisMesesCount.toISOString());
+                    break;
+                  case "este_anio":
+                    fechaDesde = new Date(ahora.getFullYear(), 0, 1).toISOString();
+                    countQuery = countQuery.gte("fecha_archivado", fechaDesde);
+                    break;
+                }
+              }
+
+              const { count } = await countQuery;
+              if (mounted.current && typeof count === 'number') {
+                setTotalArchivadosReal(count);
+              }
+            } catch (countError) {
+              console.warn('Error obteniendo contador de archivados:', countError);
+            }
+          }
+          
+          console.log(`⚡ cargarArchivados optimizado: ${embarquesFormateados.length} registros (página ${page})`);
         }
       } catch (error) {
         if (!active) return;
@@ -1681,7 +1992,13 @@ export default function FacturacionCobranzaPage() {
     return () => {
       active = false;
     };
-  }, [showArchivadosModal, archivadosPage, archivadosPageSize, archivadosSearch, archivadosPeriodo]);
+  }, [showArchivadosModal, archivadosPage, archivadosPageSize, archivadosSearch, archivadosPeriodo, archivadosSortBy, archivadosSortDir]);
+
+  // ⚡ OPTIMIZACIÓN: Resetear contador total cuando cambian filtros importantes
+  useEffect(() => {
+    setTotalArchivadosReal(null);
+    setArchivadosPage(1); // Volver a página 1 cuando cambian filtros
+  }, [archivadosSearch, archivadosPeriodo]);
 
   async function archivarEmbarque(embarque: EmbarqueAsignado) {
 
@@ -1769,7 +2086,7 @@ export default function FacturacionCobranzaPage() {
     } catch {}
   }
 
-  async function cancelarEmbarque(embarque: EmbarqueAsignado) {
+  async function cancelarEmbarque(embarque: EmbarqueAsignado, motivo?: string) {
     const fechaCancelacion = new Date().toISOString();
     
     // Obtener usuario actual
@@ -1789,7 +2106,7 @@ export default function FacturacionCobranzaPage() {
           estado_facturacion: "archivado", // También archivamos en facturación
           fecha_cancelacion: fechaCancelacion,
           usuario_cancelacion: usuarioCancelacion,
-          motivo_cancelacion: "Cancelado desde facturación y cobranza",
+          motivo_cancelacion: motivo || "Cancelado desde facturación y cobranza",
           updated_at: fechaCancelacion,
         })
         .eq("id", embarque.id);
@@ -1820,17 +2137,13 @@ export default function FacturacionCobranzaPage() {
       try {
         const { agregarAuditLog } = await import("../../lib/audit");
         agregarAuditLog(
-          "CANCELAR",
+          "ELIMINAR",
           "Facturación/Cobranza",
-          `Cancelación de embarque folio ${embarque.folio} por usuario ${usuarioCancelacion}`
+          `Cancelación de embarque folio ${embarque.folio} por usuario ${usuarioCancelacion}. Motivo: ${motivo || 'No especificado'}`
         );
       } catch {}
 
-      toast({ 
-        title: 'Embarque cancelado exitosamente', 
-        description: `El embarque ${embarque.folio} ha sido cancelado y removido de todas las secciones.`,
-        variant: 'default' 
-      });
+      // Toast se maneja desde el modal que llama a esta función
 
     } catch (error) {
       console.error("Error cancelando embarque:", error);
@@ -1941,7 +2254,7 @@ export default function FacturacionCobranzaPage() {
     }
     
     const searchLower = searchTipos.toLowerCase().trim();
-    return tiposServicio.filter((tipo: any) => 
+    return tiposServicio.filter((tipo: TipoServicio) => 
       String(tipo.nombre || '').toLowerCase().includes(searchLower) ||
       String(tipo.descripcion || '').toLowerCase().includes(searchLower) ||
       String(tipo.categoria || '').toLowerCase().includes(searchLower) ||
@@ -2050,8 +2363,121 @@ export default function FacturacionCobranzaPage() {
     [clientes]
   );
 
+  // Helper: verificar si el embarque tiene múltiples direcciones
+  const tieneMultiplesDirecciones = useCallback((recolectas: any[], entregas: any[]) => {
+    const recolectasValidas = recolectas.filter((r: any) => r.direccion?.trim());
+    const entregasValidas = entregas.filter((e: any) => e.direccion?.trim());
+    return recolectasValidas.length > 1 || entregasValidas.length > 1;
+  }, []);
+
+  // Helper: extraer múltiples direcciones de las observaciones
+  const extraerDireccionesMultiples = useCallback((observaciones: string | null) => {
+    if (!observaciones) return { recolectas: [], entregas: [], observacionesLimpias: "" };
+
+    const marcador = "--- DIRECCIONES MÚLTIPLES ---";
+    const partes = observaciones.split(marcador);
+    
+    if (partes.length < 2) {
+      // No hay direcciones múltiples guardadas
+      return { recolectas: [], entregas: [], observacionesLimpias: observaciones };
+    }
+
+    const observacionesLimpias = partes[0].trim();
+    const direccionesTexto = partes[1];
+
+    const recolectas: Array<{direccion: string, fecha: string, hora: string}> = [];
+    const entregas: Array<{direccion: string, fecha: string, hora: string}> = [];
+
+    try {
+      const lineas = direccionesTexto.split('\n').map(l => l.trim()).filter(l => l);
+      let seccionActual = '';
+
+      for (const linea of lineas) {
+        if (linea === 'RECOLECCIONES:') {
+          seccionActual = 'recolecciones';
+          continue;
+        }
+        if (linea === 'ENTREGAS:') {
+          seccionActual = 'entregas';
+          continue;
+        }
+
+        // Parsear línea de dirección: "1. Dirección (fecha hora)"
+        const match = linea.match(/^\d+\.\s*(.+?)(\s*\(([^)]+)\))?$/);
+        if (match) {
+          const direccion = match[1];
+          const fechaHora = match[3] || '';
+          
+          let fecha = '';
+          let hora = '';
+          if (fechaHora) {
+            const partesFechaHora = fechaHora.split(' ');
+            fecha = partesFechaHora[0] || '';
+            hora = partesFechaHora[1] || '';
+          }
+
+          const item = { direccion, fecha, hora };
+          if (seccionActual === 'recolecciones') {
+            recolectas.push(item);
+          } else if (seccionActual === 'entregas') {
+            entregas.push(item);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error parseando direcciones múltiples:', error);
+    }
+
+    return { recolectas, entregas, observacionesLimpias };
+  }, []);
+
+  // Helper: verificar si el embarque es flete falso
+  const esFleteFalso = useCallback((embarque: any) => {
+    // Solo mostrar F. Falso cuando el embarque tiene estado modificado FF (contingencia)
+    return embarque?.estado?.includes('_contingencia_FF') || false;
+  }, []);
+
+  // Helper: verificar si un embarque tiene múltiples direcciones (lógica idéntica a asignar-operadores)
+  const embarqueTieneMultiplesDirecciones = useCallback((embarque: any) => {
+    let recolectasArray, entregasArray;
+    
+    // Prioridad 1: Obtener desde campos JSON (método principal)
+    try {
+      recolectasArray = embarque.recolectas_json ? JSON.parse(embarque.recolectas_json) : [];
+      entregasArray = embarque.entregas_json ? JSON.parse(embarque.entregas_json) : [];
+    } catch (jsonError) {
+      recolectasArray = [];
+      entregasArray = [];
+    }
+    
+    // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+    if (recolectasArray.length === 0 && entregasArray.length === 0) {
+      if (embarque.observaciones && embarque.observaciones.includes('DIRECCIONES MÚLTIPLES')) {
+        try {
+          const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones);
+          recolectasArray = recolectas.length > 0 ? recolectas : [{ direccion: embarque.direccion_recolecta }];
+          entregasArray = entregas.length > 0 ? entregas : [{ direccion: embarque.direccion_entrega }];
+        } catch (e) {
+          console.warn('Error parseando direcciones múltiples desde observaciones:', e);
+          recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+          entregasArray = [{ direccion: embarque.direccion_entrega }];
+        }
+      } else {
+        // Sin múltiples direcciones, usar campos individuales
+        recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+        entregasArray = [{ direccion: embarque.direccion_entrega }];
+      }
+    } else {
+      // Si tenemos datos JSON pero están vacíos, usar datos principales
+      if (recolectasArray.length === 0) recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+      if (entregasArray.length === 0) entregasArray = [{ direccion: embarque.direccion_entrega }];
+    }
+    
+    return tieneMultiplesDirecciones(recolectasArray, entregasArray);
+  }, [tieneMultiplesDirecciones]);
+
   // Helper: obtener el monto contable de un embarque (preferir precio_quickpaid si aplica)
-  const getMontoContable = useCallback((e: any) => {
+  const getMontoContable = useCallback((e: EmbarqueAsignado | any) => {
     if (!e) return 0;
     // Si QuickPaid está activo y existe precio_quickpaid, usarlo (post-descuento)
     if (e?.quickpaid_enabled && (typeof e?.precio_quickpaid === "number" || typeof e?.precio_quickpaid === "string")) {
@@ -2279,18 +2705,18 @@ export default function FacturacionCobranzaPage() {
             fechaAsignacion: embarque.fecha_creacion,
             operadorAsignado: embarque.operador
               ? {
-                  id: embarque.operador.id,
-                  nombre: `${embarque.operador.nombre} ${
+                  id: embarque.operador.id || "",
+                  nombre: `${embarque.operador.nombre || ""} ${
                     embarque.operador.apellidos || ""
                   }`.trim(),
                 }
               : { id: "", nombre: "Sin asignar" },
             camionAsignado: embarque.camion
               ? {
-                  id: embarque.camion.id,
-                  marca: embarque.camion.marca,
-                  modelo: embarque.camion.modelo,
-                  numeroEconomico: embarque.camion.numero_economico,
+                  id: embarque.camion.id || "",
+                  marca: embarque.camion.marca || "",
+                  modelo: embarque.camion.modelo || "",
+                  numeroEconomico: embarque.camion.numero_economico || "",
                 }
               : {
                   id: "",
@@ -2564,7 +2990,7 @@ export default function FacturacionCobranzaPage() {
     })
     .filter((op): op is { id: string; nombre: string } => Boolean(op?.nombre));
 
-  const embarquesFiltrados = (embarquesAsignados || []).filter((embarque) => {
+  const embarquesFiltrados = (embarquesAsignados || []).filter((embarque: EmbarqueAsignado) => {
     if (!embarque) return false;
     // Mostrar embarques finalizados o archivados (operativo). Sólo se ocultan si están archivados en facturación
     const estadoNorm = String(embarque.estado || "").trim().toLowerCase();
@@ -3095,7 +3521,7 @@ export default function FacturacionCobranzaPage() {
         return;
       }
       // Update local list
-      setTiposServicio((prev) => prev.map((t) => t.id === tipoEditando.id ? {
+      setTiposServicio((prev) => prev.map((t: TipoServicio) => t.id === tipoEditando.id ? {
         ...t,
         nombre: payload.nombre,
         descripcion: payload.descripcion ?? undefined,
@@ -3288,7 +3714,7 @@ export default function FacturacionCobranzaPage() {
       if ((bloqueantes?.length || 0) > 0) {
         const msg = `Este tipo de servicio está en uso por ${bloqueantes.length} embarque(s) activos que impiden la eliminación.`;
         toast({ title: 'No se puede eliminar', description: msg, variant: 'destructive' });
-        try { await cargarUsosTipo(tipo as any); } catch {}
+        try { await cargarUsosTipo(tipo); } catch {}
         return;
       }
 
@@ -3429,14 +3855,15 @@ export default function FacturacionCobranzaPage() {
   const editarEmbarque = (embarque: EmbarqueAsignado) => {
     setEmbarqueEditando(embarque);
     setFormData({
-  montoFacturado: getMontoContable(embarque) || 0,
+      montoFacturado: getMontoContable(embarque) || 0,
       fechaEntrega: embarque.fechaEntrega || "",
       observacionesFacturacion: embarque.observacionesFacturacion || "",
       pagado: embarque.pagado || false,
       fechaPago: embarque.fechaPago || "",
-      estado_facturacion:
-        embarque.estado_facturacion || "pendiente_facturacion",
-      // Legacy: usar facturas_json en su lugar
+      estado_facturacion: embarque.estado_facturacion || "pendiente_facturacion",
+      numeroFactura1: "",
+      numeroFactura2: "",
+      numeroFactura3: "",
       fechaEnvioCliente: embarque.fechaEnvioCliente || "",
       referenciaPago: embarque.referenciaPago || "",
     });
@@ -3762,93 +4189,169 @@ export default function FacturacionCobranzaPage() {
       }
 
       const headers = [
-        "ID",
+        "Folio",
         "Cliente",
-  "Nombre Operador",
-  "Tipo Servicio",
-  "Monto Flete",
-  "Descuento QuickPaid",
-  "Precio QuickPaid",
-  "Fecha/Hora Recolección",
-  "Tracto",
-  "Remolque",
-        "Load",
+        "Operador Asignado",
+        "Tipo Servicio",
+        "Load Number",
         "Carta Porte",
-        "Dirección Entrega",
-        "Recolecta Hora",
-        "Observaciones",
+        "Tractocamión",
+        "Remolque",
+        "Lugar Recolecta",
+        "Lugar Entrega",
         "Fecha Asignación",
-        "Monto Facturado",
-        "Moneda",
-        "Pagado",
+        "Recolecta Hora",
+        "Monto Flete",
+        "Moneda Flete",
+        "Descuento QuickPaid",
+        "Precio QuickPaid",
+        "Monto Neto",
+        "Pago Operador",
+        "Estado",
         "Estado Facturación",
-        "Folio Factura 1",
-        "Folio Factura 2",
-        "Folio Factura 3",
-        "Folio Factura 4",
+        "Información de Facturas",
         "Observaciones Facturación",
+        "Contingencia",
+        "Cancelado",
+        "Observaciones",
       ];
 
       const rows = listaNoArchivados.map((e: any) => {
-        const operador =
-          e.operadorAsignado?.nombre || e.operadorNombre || e.operador || "";
-        // 🎯 ARQUITECTURA DESACOPLADA: Leer SOLO de columnas independientes
-        // Ya no consultamos tipos_servicios, solo las columnas desacopladas de embarques_financiero
+        // Operador asignado
+        const operador = e.operadorAsignado?.nombre || e.operadorNombre || e.operador || "";
+        
+        // Tipo de servicio
         const tipoServicio = e.tipo_servicio_nombre || "Sin especificar";
-        const tracto =
-          (e.tracto && (e.tracto.numero_economico || e.tracto.placas)) ||
-          e.tractoNumero ||
-          e.tractor ||
-          e.tracto ||
-          "";
-        const remolque =
-          (e.remolque && (e.remolque.numero_economico || e.remolque.placas)) ||
-          e.remolqueNumero ||
-          e.remolque ||
-          "";
-        const load = e.load_number || e.load || e.loadNumber || e.numero_carga || "";
+        
+        // Vehículos
+        const tracto = e.camionAsignado?.numeroEconomico || 
+                       e.camionAsignado?.numero_economico || 
+                       (e.tracto && (e.tracto.numero_economico || e.tracto.placas)) ||
+                       e.tractoNumero || 
+                       e.tractor || 
+                       "";
+        
+        const remolque = e.remolque?.numero_economico || 
+                         e.remolque_numero_economico || 
+                         e.remolque_placa ||
+                         (e.remolque && (e.remolque.numero_economico || e.remolque.placas)) ||
+                         e.remolqueNumero || 
+                         "";
+        
+        // Información del embarque
+        const load = e.load_number || e.numeroLoad || e.load || e.loadNumber || e.numero_carga || "";
         const cartaPorte = e.carta_porte || e.cartaPorte || e.carta || "";
-        const direccionEntrega =
-          e.direccion_entrega || e.direccionEntrega || e.direccion || "";
-        const recolectaHora =
-          e.recolecta_hora || e.hora_recolecta || e.recolectaHora || "";
-        const observaciones =
-          e.observaciones || e.observaciones_entrega || e.observacionesFacturacion || e.observaciones_facturacion || "";
-        const operadorNombre = operador;
-        const camion = e.camionAsignado
-          ? `${e.camionAsignado.marca || ""} ${e.camionAsignado.modelo || ""} (${e.camionAsignado.numeroEconomico || e.camionAsignado.numero_economico || ""})`
-          : e.camionNombre || "";
-        const monto = getMontoContable(e) || 0;
-        // QuickPaid breakdown (if present)
-        const descuentoQuick = (e.quickpaid_descuento != null ? e.quickpaid_descuento : (e.quickpaidDescuento || 0)) || 0;
-        const precioQuick = (e.precio_quickpaid != null ? e.precio_quickpaid : (e.precioQuickPaid || 0)) || 0;
-        const recolectaQuick = (e.recoleccion_quickpaid_datetime || e.recolecta_quickpaid || e.recolectaHora || e.hora_recolecta) || "";
+        
+        // Direcciones
+        const lugarRecolecta = e.lugar_recolecta || e.direccion_recolecta || e.recolecta || "";
+        const lugarEntrega = e.lugar_entrega || e.direccion_entrega || e.direccionEntrega || e.direccion || "";
+        
+        // Fechas y horarios
+        const fechaAsignacion = e.fechaAsignacion ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX") : "";
+        const recolectaHora = e.recolecta_hora || e.hora_recolecta || e.recolectaHora || "";
+        
+        // Montos
+        const montoFlete = e.monto_flete || e.montoFlete || e.valor || 0;
+        const monedaFlete = e.moneda_flete || "MXN";
+        const descuentoQuick = e.quickpaid_descuento || e.quickpaidDescuento || 0;
+        const precioQuick = e.precio_quickpaid || e.precioQuickPaid || 0;
+        const montoNeto = getMontoContable(e) || 0;
+        const pagoOperador = e.pagoOperador || e.pago_operador || 0;
+        
+        // Estados
+        const estado = e.estado || "";
+        const estadoFacturacion = e.estado_facturacion || "";
+        
+        // Contingencia y cancelación
+        const esContingencia = e.modificadoPorEmergencia || embarquesModificadosIds.includes(e.id) ? "Sí" : "No";
+        const esCancelado = (e.estado === "cancelado" || e.estado_facturacion === "cancelado") ? "Sí" : "No";
+        
+        // Datos de facturación formateados
+        const facturacionFormateada = (() => {
+          try {
+            const facturas: string[] = [];
+            
+            if (e.facturas_json && Array.isArray(e.facturas_json) && e.facturas_json.length > 0) {
+              // Usar datos JSON nuevos
+              e.facturas_json.forEach((f: any, index: number) => {
+                if (f && (f.numero || f.fechaEnvio || f.fechaPago || f.referenciaPago || f.monto)) {
+                  const campos = [];
+                  
+                  if (f.numero && f.numero.trim()) {
+                    campos.push(`numero: ${f.numero}`);
+                  }
+                  if (f.fechaEnvio && f.fechaEnvio.trim()) {
+                    campos.push(`fecha_envio: ${f.fechaEnvio}`);
+                  }
+                  if (f.fechaPago && f.fechaPago.trim()) {
+                    campos.push(`fecha_pago: ${f.fechaPago}`);
+                  }
+                  if (f.referenciaPago && f.referenciaPago.trim()) {
+                    campos.push(`referencia: ${f.referenciaPago}`);
+                  }
+                  if (f.monto && f.monto > 0) {
+                    campos.push(`monto: ${f.monto}`);
+                  }
+                  
+                  if (campos.length > 0) {
+                    facturas.push(`{${campos.join(', ')}}`);
+                  }
+                }
+              });
+            } else if (e.foliosFactura) {
+              // Fallback para datos legacy
+              const folios = [
+                { num: e.foliosFactura.folio1, tipo: "Factura_1" },
+                { num: e.foliosFactura.folio2, tipo: "Factura_2" },
+                { num: e.foliosFactura.folio3, tipo: "Factura_3" },
+                { num: e.foliosFactura.folio4, tipo: "Factura_4" }
+              ];
+              
+              folios.forEach(({ num, tipo }) => {
+                if (num && num.trim()) {
+                  facturas.push(`{numero: ${num.trim()}, tipo: ${tipo}}`);
+                }
+              });
+            }
+            
+            return facturas.length > 0 ? facturas.join(' | ') : "";
+          } catch (error) {
+            return "";
+          }
+        })();
+        
+        // Observaciones
+        const observaciones = e.observaciones || 
+                            e.observaciones_entrega || 
+                            e.observaciones_facturacion || 
+                            "";
+        
         return [
-          e.id,
+          e.folio || "",
           e.clienteNombre || e.cliente || "",
-          operadorNombre,
+          operador,
           tipoServicio,
-          monto,
-          descuentoQuick,
-          precioQuick,
-          recolectaQuick,
-          tracto,
-          remolque,
           load,
           cartaPorte,
-          direccionEntrega,
+          tracto,
+          remolque,
+          lugarRecolecta,
+          lugarEntrega,
+          fechaAsignacion,
           recolectaHora,
-          observaciones,
-          e.fechaAsignacion || e.fecha_creacion || e.updated_at || "",
-          monto,
-          e.moneda_flete || "MXN",
-          e.pagado ? "Sí" : "No",
-          e.estado_facturacion || "",
-          e.foliosFactura?.folio1 || "",
-          e.foliosFactura?.folio2 || "",
-          e.foliosFactura?.folio3 || "",
-          e.foliosFactura?.folio4 || "",
+          `$${Number(montoFlete).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          monedaFlete,
+          `$${Number(descuentoQuick).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `$${Number(precioQuick).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `$${Number(montoNeto).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          `$${Number(pagoOperador).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+          estado,
+          estadoFacturacion,
+          facturacionFormateada,
           e.observacionesFacturacion || e.observaciones_facturacion || "",
+          esContingencia,
+          esCancelado,
+          observaciones,
         ];
       });
 
@@ -5084,10 +5587,7 @@ export default function FacturacionCobranzaPage() {
                         onChange={(e) => {
                           setFechaInicioAnalisis(e.target.value);
                           if (analisisError) setAnalisisError(null);
-                          // Generar análisis automáticamente si ambas fechas están completas
-                          if (e.target.value && fechaFinAnalisis && new Date(e.target.value) <= new Date(fechaFinAnalisis)) {
-                            setTimeout(() => generarAnalisisOperadores(), 300);
-                          }
+                          // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                         }}
                         className="w-36"
                       />
@@ -5102,10 +5602,7 @@ export default function FacturacionCobranzaPage() {
                         onChange={(e) => {
                           setFechaFinAnalisis(e.target.value);
                           if (analisisError) setAnalisisError(null);
-                          // Generar análisis automáticamente si ambas fechas están completas
-                          if (e.target.value && fechaInicioAnalisis && new Date(fechaInicioAnalisis) <= new Date(e.target.value)) {
-                            setTimeout(() => generarAnalisisOperadores(), 300);
-                          }
+                          // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                         }}
                         className="w-36"
                       />
@@ -5117,26 +5614,58 @@ export default function FacturacionCobranzaPage() {
                       <select
                         value={filtroAnalisisOperador}
                         onChange={(e) => {
-                          setFiltroAnalisisOperador(e.target.value);
-                          // Generar análisis automáticamente si las fechas están completas
-                          if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
-                            setTimeout(() => generarAnalisisOperadores(), 100);
+                          const nuevoValor = e.target.value;
+                          console.log('🔍 Operador seleccionado en dropdown:', nuevoValor);
+                          
+                          // Mostrar información detallada del operador seleccionado
+                          if (nuevoValor !== "todos") {
+                            const operadorInfo = todosOperadores.find(op => op.id === nuevoValor);
+                            if (operadorInfo) {
+                              const nombreCompleto = `${operadorInfo.nombre || ''} ${operadorInfo.apellidos || ''}`.trim();
+                              console.log('📋 Información del operador seleccionado:', { 
+                                id: nuevoValor, 
+                                nombre: operadorInfo.nombre,
+                                apellidos: operadorInfo.apellidos,
+                                nombreCompleto,
+                                estado: operadorInfo.estado
+                              });
+                            } else {
+                              console.log('⚠️ No se encontró información para el operador ID:', nuevoValor);
+                            }
+                          } else {
+                            console.log('📋 Seleccionado: Todos los operadores');
                           }
+                          
+                          setFiltroAnalisisOperador(nuevoValor);
+                          
+                          // Limpiar error anterior si existe
+                          if (analisisError) setAnalisisError(null);
+                          
+                          // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
+                          console.log('💡 Presiona el botón "Analizar" para generar el análisis con el operador seleccionado');
                         }}
                         className="border rounded px-3 py-2 w-56 h-10 text-sm"
                         disabled={loadingEmbarques}
                       >
                         <option value="todos">Todos los operadores</option>
-                        {/* Mostrar siempre todos los operadores (activos e inactivos) */}
-                        {todosOperadores.map((op) => {
+                        {/* Mostrar mensaje si no hay operadores */}
+                        {!todosOperadores || todosOperadores.length === 0 ? (
+                          <option disabled>Cargando operadores...</option>
+                        ) : (
+                          todosOperadores.map((op) => {
                           const fullName = `${(op.nombre||'').toString().trim()} ${(op.apellidos||'').toString().trim()}`.trim();
-                          const value = op.id || `nombre:${fullName}`;
+                          // Usar siempre el ID si existe, sino usar un identificador único
+                          const value = op.id ? op.id : `nombre:${fullName}`;
+                          const displayName = fullName || 'Sin nombre';
+                          const estadoSuffix = op.estado && op.estado !== 'activo' ? ` (${op.estado})` : '';
+                          
                           return (
-                            <option key={op.id || fullName} value={value}>
-                              {fullName}{op.estado ? ` (${op.estado})` : ''}
+                            <option key={op.id || `name-${fullName}`} value={value}>
+                              {displayName}{estadoSuffix}
                             </option>
                           );
-                        })}
+                        })
+                        )}
                       </select>
                     </div>
                     <div className="flex flex-col">
@@ -5150,12 +5679,7 @@ export default function FacturacionCobranzaPage() {
                             const val = e.target.value;
                             setPeriodoAnalisis(val);
                             setPeriodoActual(val);
-                            // Generar análisis automáticamente después de establecer el periodo
-                            setTimeout(() => {
-                              if (fechaInicioAnalisis && fechaFinAnalisis && new Date(fechaInicioAnalisis) <= new Date(fechaFinAnalisis)) {
-                                generarAnalisisOperadores();
-                              }
-                            }, 200);
+                            // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                           }}
                           className="border rounded px-3 py-2 w-56 h-10 text-sm"
                         >
@@ -5174,6 +5698,17 @@ export default function FacturacionCobranzaPage() {
                           <option value="año">Año actual</option>
                         </select>
 
+                        <Button
+                          onClick={() => {
+                            console.log('🚀 Iniciando análisis manual por solicitud del usuario');
+                            generarAnalisisOperadores();
+                          }}
+                          className="bg-green-600 hover:bg-green-700 text-white"
+                          disabled={loadingAnalisis || !fechaInicioAnalisis || !fechaFinAnalisis}
+                        >
+                          {loadingAnalisis ? 'Analizando...' : 'Analizar'}
+                        </Button>
+                        
                         <Button
                           onClick={exportarAnalisisExcel}
                           variant="outline"
@@ -5224,7 +5759,7 @@ export default function FacturacionCobranzaPage() {
                     </div>
                     {analisisData.resumenGeneral === null && (
                       <div className="text-center py-8 text-gray-500">
-                        Por favor, selecciona las fechas y operador para generar el análisis automáticamente.
+                        Por favor, selecciona las fechas y operador, luego presiona el botón "Analizar" para generar el análisis.
                       </div>
                     )}
                     {activeAnalisisTab === "resumen" &&
@@ -6132,11 +6667,39 @@ export default function FacturacionCobranzaPage() {
                               {embarquesOperadorFiltrados.map((embarque) => (
                                 <tr key={embarque.id} className="border-b">
                                   <td className="px-2 py-1">
-                                    <div className="flex items-center gap-2">
+                                    <div className="flex items-center gap-2 flex-wrap">
                                       {embarque.folio}
                                       {esCancelado(embarque) && (
                                         <Badge className="bg-purple-600 text-white">Cancelado</Badge>
                                       )}
+                                      {(() => {
+                                        // Badge de Direcciones Múltiples
+                                        if (embarqueTieneMultiplesDirecciones(embarque)) {
+                                          return (
+                                            <span 
+                                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                              title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                            >
+                                              D. Múltiples
+                                            </span>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
+                                      {(() => {
+                                        // Badge de Flete Falso
+                                        if (esFleteFalso(embarque)) {
+                                          return (
+                                            <span 
+                                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                              title="Este embarque está marcado como flete en falso (contingencia)"
+                                            >
+                                              F. Falso
+                                            </span>
+                                          );
+                                        }
+                                        return null;
+                                      })()}
                                     </div>
                                   </td>
                                   <td className="px-2 py-1">
@@ -6497,8 +7060,17 @@ export default function FacturacionCobranzaPage() {
                     </Button>
                   </div>
 
-                  <div className="mb-3 text-sm text-gray-600">
-                    Mostrando {totalArchivados === 0 ? 0 : startIdx + 1}–{endIdx} de {totalArchivados}
+                  <div className="mb-3 text-sm text-gray-600 flex items-center gap-2">
+                    <span>
+                      Mostrando {totalArchivados === 0 ? 0 : startIdx + 1}–{endIdx} 
+                      {totalArchivadosReal !== null 
+                        ? ` de ${totalArchivadosReal.toLocaleString('es-MX')}` 
+                        : ` (página ${archivadosPage})`
+                      }
+                    </span>
+                    {loadingArchivados && (
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-purple-600"></div>
+                    )}
                   </div>
 
                   <div className="border rounded-lg overflow-x-auto">
@@ -6525,7 +7097,17 @@ export default function FacturacionCobranzaPage() {
                         </tr>
                       </thead>
                       <tbody>
-                        {paginatedArchivados.length === 0 ? (
+                        {loadingArchivados ? (
+                          <tr>
+                            <td colSpan={7} className="text-center py-12">
+                              <div className="flex flex-col items-center">
+                                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-3"></div>
+                                <span className="text-sm text-gray-600">⚡ Cargando archivados optimizado...</span>
+                                <span className="text-xs text-gray-500 mt-1">Paginación en servidor activa</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : paginatedArchivados.length === 0 ? (
                           <tr>
                             <td colSpan={7} className="text-center py-8 text-gray-500">
                               No hay embarques archivados.
@@ -6538,11 +7120,39 @@ export default function FacturacionCobranzaPage() {
                               className={`border-b hover:bg-purple-50 ${esCancelado(embarque) ? 'bg-red-50 border-l-4 border-red-200' : ''}`}
                             >
                               <td className="px-1 py-1 whitespace-nowrap w-32 md:w-40">
-                                <div className="flex items-center">
+                                <div className="flex items-center flex-wrap">
                                   <span className="font-mono">{embarque.folio}</span>
                                   {esCancelado(embarque) && (
                                     <Badge className="ml-2 bg-purple-600 text-white">Cancelado</Badge>
                                   )}
+                                  {(() => {
+                                    // Badge de Direcciones Múltiples
+                                    if (embarqueTieneMultiplesDirecciones(embarque)) {
+                                      return (
+                                        <span 
+                                          className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                          title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                        >
+                                          D. Múltiples
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
+                                  {(() => {
+                                    // Badge de Flete Falso
+                                    if (esFleteFalso(embarque)) {
+                                      return (
+                                        <span 
+                                          className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                          title="Este embarque está marcado como flete en falso (contingencia)"
+                                        >
+                                          F. Falso
+                                        </span>
+                                      );
+                                    }
+                                    return null;
+                                  })()}
                                 </div>
                               </td>
                               <td className="px-0 py-1 w-40 md:w-48 truncate">{embarque.clienteNombre}</td>
@@ -7241,6 +7851,7 @@ export default function FacturacionCobranzaPage() {
                                   )
                                 );
                               })()}
+
                             </div>
                             <p className="text-sm text-gray-500">
                               Load: {embarque.load_number || "-"}
@@ -7263,6 +7874,34 @@ export default function FacturacionCobranzaPage() {
                               <Coins className="h-4 w-4 text-yellow-500" />
                             </Badge>
                           )}
+                          {(() => {
+                            // Badge de Direcciones Múltiples
+                            if (embarqueTieneMultiplesDirecciones(embarque)) {
+                              return (
+                                <span 
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help mr-2"
+                                  title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                >
+                                  D. Múltiples
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {(() => {
+                            // Badge de Flete Falso
+                            if (esFleteFalso(embarque)) {
+                              return (
+                                <span 
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help mr-2"
+                                  title="Este embarque está marcado como flete en falso (contingencia)"
+                                >
+                                  F. Falso
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
                           <Select
                             value={
                               embarque.estado_facturacion ||
@@ -7390,24 +8029,6 @@ export default function FacturacionCobranzaPage() {
                             Detalles
                           </Button>
                           {/* Botón Modificar oculto según requerimiento */}
-                          {/* Botón Cancelar - disponible para embarques finalizados que no estén ya cancelados */}
-                          {(embarque.estado?.startsWith("finalizado") || 
-                            embarque.estado === "asignado" || 
-                            embarque.estado === "en-transito") && 
-                            !esCancelado(embarque) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEmbarqueACancelar(embarque);
-                                setShowConfirmCancelarDialog(true);
-                              }}
-                              className="text-red-600 border-red-200 hover:bg-red-50"
-                            >
-                              <X className="h-4 w-4 mr-1" />
-                              Cancelar
-                            </Button>
-                          )}
                           {(embarque.estado_facturacion === "pagado" ||
                             (embarque.pagado &&
                               (embarque as any).estado_facturacion == null) ||
@@ -7423,6 +8044,25 @@ export default function FacturacionCobranzaPage() {
                             >
                               <Package className="h-4 w-4 mr-1" />
                               Archivar
+                            </Button>
+                          )}
+                          {/* Botón Cancelar - disponible para embarques finalizados que no estén ya cancelados */}
+                          {(embarque.estado?.startsWith("finalizado") || 
+                            embarque.estado === "asignado" || 
+                            embarque.estado === "en-transito") && 
+                            !esCancelado(embarque) && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEmbarqueACancelar(embarque);
+                                setCancelReason(""); // Limpiar el campo de justificación
+                                setShowConfirmCancelarDialog(true);
+                              }}
+                              disabled={cancelingEmbarque}
+                            >
+                              <X className="h-4 w-4 mr-1" />
+                              Cancelar
                             </Button>
                           )}
                         </div>
@@ -8138,18 +8778,6 @@ export default function FacturacionCobranzaPage() {
                                 <Button size="sm" variant="outline" onClick={() => verDetallesEmbarque(e as any)} aria-label="Ver detalles">
                                   <Eye className="h-4 w-4" aria-hidden="true" />
                                 </Button>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setSelectedEmbarqueForUpdate(e);
-                                    setInitialRazonForModal('Precio agregado desde Control Clientes');
-                                    setShowUpdatePriceModal(true);
-                                  }}
-                                  title="Asignar/editar precio"
-                                >
-                                  <DollarSign className="h-4 w-4 mr-1" /> Precio
-                                </Button>
                               </td>
                             </tr>
                           );
@@ -8238,45 +8866,100 @@ export default function FacturacionCobranzaPage() {
           </Dialog>
 
           {/* Confirmar cancelación: dialog para cancelar embarques */}
-          <Dialog open={showConfirmCancelarDialog} onOpenChange={(v) => { if(!v) { setShowConfirmCancelarDialog(false); setEmbarqueACancelar(null); } }}>
+          <Dialog open={showConfirmCancelarDialog} onOpenChange={(v) => { 
+            if(!v) { 
+              setShowConfirmCancelarDialog(false); 
+              setEmbarqueACancelar(null); 
+              setCancelReason(""); 
+            } 
+          }}>
             <DialogContent className="max-w-md">
               <DialogHeader>
-                <DialogTitle>Confirmar cancelación</DialogTitle>
+                <DialogTitle>Cancelar Embarque</DialogTitle>
                 <DialogDescription>
-                  ¿Seguro que deseas cancelar este embarque? Esta acción cancelará el embarque en todas las secciones del sistema y no se puede deshacer.
+                  ¿Estás seguro de que deseas cancelar el embarque {embarqueACancelar?.folio}?
+                  <br />
+                  <strong>Esta acción no se puede deshacer.</strong>
                 </DialogDescription>
               </DialogHeader>
-              <div className="py-2">
-                <p className="font-medium">Folio: {embarqueACancelar?.folio || "-"}</p>
-                <p className="text-sm text-gray-600">Cliente: {embarqueACancelar?.clienteNombre || embarqueACancelar?.cliente_id || '-'}</p>
-                <p className="text-sm text-gray-600">Operador: {embarqueACancelar?.operadorAsignado?.nombre || '-'}</p>
-                <p className="text-sm text-gray-600">Estado actual: {embarqueACancelar?.estado || '-'}</p>
+
+              <div className="space-y-4">
+                <div className="bg-gray-50 border border-gray-200 rounded p-3">
+                  <div className="text-sm space-y-1">
+                    <p><span className="font-medium">Folio:</span> {embarqueACancelar?.folio || "-"}</p>
+                    <p><span className="font-medium">Cliente:</span> {embarqueACancelar?.clienteNombre || '-'}</p>
+                    <p><span className="font-medium">Operador:</span> {embarqueACancelar?.operadorAsignado?.nombre || '-'}</p>
+                    <p><span className="font-medium">Estado:</span> {embarqueACancelar?.estado || '-'}</p>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="cancel-reason-facturacion">
+                    Justificación de la cancelación *
+                  </Label>
+                  <Textarea
+                    id="cancel-reason-facturacion"
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                    placeholder="Ingresa la razón por la cual se cancela este embarque..."
+                    rows={4}
+                    className="resize-none"
+                    disabled={cancelingEmbarque}
+                  />
+                </div>
               </div>
-              <div className="bg-red-50 border border-red-200 rounded p-3 my-3">
-                <p className="text-sm text-red-800 font-medium">⚠️ Advertencia:</p>
-                <p className="text-sm text-red-700">El embarque será cancelado y removido de las secciones de Asignación, Crear Embarque y Facturación/Cobranza.</p>
-              </div>
+
               <DialogFooter>
-                <Button variant="outline" onClick={() => { setShowConfirmCancelarDialog(false); setEmbarqueACancelar(null); }}>
-                  No, mantener
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowConfirmCancelarDialog(false);
+                    setEmbarqueACancelar(null);
+                    setCancelReason("");
+                  }}
+                  disabled={cancelingEmbarque}
+                >
+                  Cerrar
                 </Button>
-                <Button 
-                  variant="destructive" 
+                <Button
                   onClick={async () => {
                     const emb = embarqueACancelar;
-                    if (!emb) return;
+                    if (!emb || !cancelReason.trim()) return;
+                    
+                    setCancelingEmbarque(true);
                     setShowConfirmCancelarDialog(false);
+                    
                     try {
-                      await cancelarEmbarque(emb);
+                      await cancelarEmbarque(emb, cancelReason.trim());
+                      toast({ 
+                        title: 'Embarque cancelado exitosamente', 
+                        description: `El embarque ${emb.folio} ha sido cancelado y removido de todas las secciones.`,
+                        variant: 'success' 
+                      });
                     } catch (err: any) {
                       console.error('Error cancelando embarque:', err);
-                      toast({ title: 'Error al cancelar', description: err?.message || String(err), variant: 'destructive' });
+                      toast({ 
+                        title: 'Error al cancelar', 
+                        description: err?.message || String(err), 
+                        variant: 'destructive' 
+                      });
                     } finally {
+                      setCancelingEmbarque(false);
                       setEmbarqueACancelar(null);
+                      setCancelReason("");
                     }
                   }}
+                  disabled={cancelingEmbarque || !cancelReason.trim()}
+                  className="bg-red-600 hover:bg-red-700"
                 >
-                  Sí, cancelar embarque
+                  {cancelingEmbarque ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                      Cancelando...
+                    </>
+                  ) : (
+                    "Confirmar Cancelación"
+                  )}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -8563,9 +9246,9 @@ export default function FacturacionCobranzaPage() {
                             {/* Detalles column: lock + edit + save */}
                             <DetallesTipoRow
                               tipo={tipo}
-                              onSave={(nuevoMonto, opts) =>
-                                guardarTipoServicio(tipo.id, nuevoMonto, opts)
-                              }
+                              onSave={(nuevoMonto: number) => {
+                                guardarTipoServicio(tipo.id, nuevoMonto);
+                              }}
                             />
                           </td>
                           <td className="px-3 py-2 text-center">

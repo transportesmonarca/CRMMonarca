@@ -944,6 +944,12 @@ export default function EmbarquesPage() {
     return recolectasValidas.length > 1 || entregasValidas.length > 1;
   };
 
+  // Función helper para detectar si un embarque es flete falso (contingencia FF)
+  const embarqueEsFleteFalso = (embarque: any) => {
+    // Solo mostrar F. Falso cuando el embarque tiene estado modificado FF (contingencia)
+    return embarque?.estado?.includes('_contingencia_FF') || false;
+  };
+
   // Función para extraer múltiples direcciones de las observaciones
   const extraerDireccionesMultiples = (observaciones: string | null) => {
     if (!observaciones) return { recolectas: [], entregas: [], observacionesLimpias: "" };
@@ -3141,7 +3147,7 @@ export default function EmbarquesPage() {
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
-              Gestión de Embarques
+              Crear Embarques
             </h1>
             <p className="text-gray-600 mt-2">
               Administrar embarques y asignaciones
@@ -3874,6 +3880,16 @@ export default function EmbarquesPage() {
                         }
                         return null;
                       })()}
+
+                      {/* Badge F. Falso */}
+                      {embarqueEsFleteFalso(embarque) && (
+                        <span 
+                          className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                          title="Este embarque está marcado como flete en falso (contingencia)"
+                        >
+                          F. Falso
+                        </span>
+                      )}
                       
                       <Button
                         variant="outline"
@@ -3965,6 +3981,16 @@ export default function EmbarquesPage() {
                               }
                               return null;
                             })()}
+
+                            {/* Badge F. Falso para embarques listos para asignar */}
+                            {embarqueEsFleteFalso(embarque) && (
+                              <span 
+                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                title="Este embarque está marcado como flete en falso (contingencia)"
+                              >
+                                F. Falso
+                              </span>
+                            )}
                             
                             {/* Solo mostrar botón Archivar para embarques cancelados, otros botones para embarques normales */}
                             {esCancelado ? (
@@ -4020,6 +4046,16 @@ export default function EmbarquesPage() {
                               }
                               return null;
                             })()}
+
+                            {/* Badge F. Falso para embarques asignados */}
+                            {embarqueEsFleteFalso(embarque) && (
+                              <span 
+                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                title="Este embarque está marcado como flete en falso (contingencia)"
+                              >
+                                F. Falso
+                              </span>
+                            )}
                             
                             {/* Solo mostrar botón Archivar para embarques cancelados */}
                             {esCancelado ? (

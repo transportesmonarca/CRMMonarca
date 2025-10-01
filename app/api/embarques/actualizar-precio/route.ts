@@ -13,11 +13,21 @@ function parseCookie(header: string | null, name: string) {
 export async function POST(req: Request) {
   try {
     const body = await req.json();
-    const { embarque_id, precio, usuario: usuarioBody, razon } = body || {};
+    const { embarque_id, precio, moneda, usuario: usuarioBody, razon } = body || {};
 
-    // razon is required. usuario is optional because we can derive it from an auth token.
-    if (!embarque_id || precio == null || !razon) {
-      return NextResponse.json({ error: 'Parámetros incompletos: embarque_id, precio y razon son requeridos' }, { status: 400 });
+    // Validar parámetros requeridos
+    if (!embarque_id || precio == null) {
+      return NextResponse.json({ error: 'Parámetros incompletos: embarque_id y precio son requeridos' }, { status: 400 });
+    }
+
+    // Validar moneda si se proporciona
+    if (moneda && !['MXN', 'USD'].includes(moneda)) {
+      return NextResponse.json({ error: 'Moneda debe ser MXN o USD' }, { status: 400 });
+    }
+
+    // Validar precio
+    if (isNaN(Number(precio)) || Number(precio) <= 0) {
+      return NextResponse.json({ error: 'Precio debe ser un número mayor a 0' }, { status: 400 });
     }
 
     // Try to verify the request's user from a Supabase access token when available.
@@ -53,8 +63,9 @@ export async function POST(req: Request) {
     const { data, error } = await supabaseAdmin.rpc('actualizar_precio_embarque', {
       p_embarque_id: embarque_id,
       p_precio: precio,
+      p_moneda: moneda || null, // Opcional, si no se envía mantiene la moneda actual
       p_usuario: usuarioEnviar,
-      p_razon: razon,
+      p_razon: razon || null, // Ahora opcional
     });
 
     if (error) {
