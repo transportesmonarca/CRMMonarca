@@ -12,6 +12,51 @@ import { Toaster } from "@/components/ui/toaster"
 import { supabase, obtenerFotosEmbarque } from "@/lib/supabase"
 import { formatDateMatamoros } from '@/lib/date-utils'
 
+// Función para extraer direcciones múltiples de las observaciones
+const extraerDireccionesMultiples = (observaciones: string) => {
+  const recolectas: Array<{direccion: string, fecha: string, hora: string}> = [];
+  const entregas: Array<{direccion: string, fecha: string, hora: string}> = [];
+  
+  if (!observaciones) return { recolectas, entregas };
+  
+  try {
+    // Buscar patrones de múltiples direcciones en las observaciones
+    const lineas = observaciones.split('\n').map(l => l.trim()).filter(Boolean);
+    
+    let currentSection = '';
+    
+    for (const linea of lineas) {
+      if (linea.toLowerCase().includes('recolecta') || linea.toLowerCase().includes('pickup')) {
+        currentSection = 'recolecta';
+        continue;
+      }
+      if (linea.toLowerCase().includes('entrega') || linea.toLowerCase().includes('delivery')) {
+        currentSection = 'entrega';
+        continue;
+      }
+      
+      // Intentar extraer direcciones con fechas/horas
+      const addressMatch = linea.match(/^(.+?)(?:\s*-\s*(\d{1,2}\/\d{1,2}\/\d{4}|\d{4}-\d{2}-\d{2}))?(?:\s*(\d{1,2}:\d{2}(?:\s*[AP]M)?))?\s*$/i);
+      
+      if (addressMatch && addressMatch[1].length > 10) {
+        const direccion = addressMatch[1].trim();
+        const fecha = addressMatch[2] || '';
+        const hora = addressMatch[3] || '';
+        
+        if (currentSection === 'recolecta') {
+          recolectas.push({ direccion, fecha, hora });
+        } else if (currentSection === 'entrega') {
+          entregas.push({ direccion, fecha, hora });
+        }
+      }
+    }
+  } catch (error) {
+    console.warn('Error extrayendo direcciones múltiples:', error);
+  }
+  
+  return { recolectas, entregas };
+};
+
 export default function EmbarqueReporteClientePage() {
   const params = useParams()
   const id = (params as any)?.id as string
@@ -194,67 +239,206 @@ export default function EmbarqueReporteClientePage() {
             </div>
           </CardHeader>
           <CardContent>
-            {/* Información del embarque (similar a Subir Fotos) */}
-            {/* Campos adicionales solicitados: Cliente (ya en header), Operador, Origen, Destino, No. Tractocamión, Fecha/Hora Recolecta, No. Remolque, Fecha/Hora Entrega */}
-            <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-6">
-              {/* Operador y Tractocamión - mostrar siempre si existen, evita duplicar cliente (está en header) */}
-              <div className="md:col-span-2">
-                <Label className="text-base font-semibold text-gray-900">Operador</Label>
-                <p className="text-base font-bold text-gray-900">{embarque.operador ? `${embarque.operador.nombre || ''} ${embarque.operador.apellidos || ''}`.trim() : (embarque.operador_nombre || '—')}</p>
-              </div>
-              <div className="md:col-span-3 text-right">
-                <Label className="text-base font-semibold text-gray-900">No. Tractocamión</Label>
-                <p className="text-base font-bold text-gray-900">{(embarque.camion && (embarque.camion.numero_economico || embarque.camion.placas)) || embarque.camion_numero_economico || embarque.camion_placas || '—'}</p>
-              </div>
-              <div className="md:col-span-1">
-                <Label className="text-base font-semibold text-gray-900">Folio</Label>
-                <p className="text-base font-bold text-gray-900">{embarque.folio || '—'}</p>
-              </div>
-              <div className="md:col-span-4 flex flex-col items-end">
-                <Label className="text-base font-semibold text-gray-900">Tipo de Servicio</Label>
-                <p className="text-lg text-right">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
-              </div>
-              <div className="md:col-span-5 lg:col-span-5">
-                <Label className="text-base font-semibold text-gray-900">Contenido</Label>
-                <p className="text-lg">{embarque.contenido || '—'}</p>
-              </div>
-              <div className="md:col-span-5">
-                <div className="flex items-center justify-between">
-                  <Label className="text-base font-semibold text-gray-900">Lugar Recolecta</Label>
-                  <Label className="text-base font-semibold text-gray-900">Fecha / Hora Recolecta</Label>
+            {/* Información del embarque */}
+            <div className="bg-gray-50 border rounded p-4 mb-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">Folio</Label>
+                  <p className="text-sm">{embarque.folio || '—'}</p>
                 </div>
-                <p className="mt-1 text-lg">{(embarque.recolectas && embarque.recolectas.length>0) ? embarque.recolectas.map((r:any)=>r.direccion).join(' • ') : (embarque.origen || '—')}</p>
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">Operador</Label>
+                  <p className="text-sm">{embarque.operador ? `${embarque.operador.nombre || ''} ${embarque.operador.apellidos || ''}`.trim() : (embarque.operador_nombre || '—')}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">No. Tractocamión</Label>
+                  <p className="text-sm">{(embarque.camion && (embarque.camion.numero_economico || embarque.camion.placas)) || embarque.camion_numero_economico || embarque.camion_placas || '—'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">No. Remolque</Label>
+                  <p className="text-sm">
+                    {embarque.remolque?.numero_economico || (embarque as any).remolque_numero_economico || embarque.remolque?.placas || (embarque as any).remolque_placa || '—'}
+                  </p>
+                </div>
               </div>
+              
+              {/* Segunda fila alineada */}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">Tipo de Servicio</Label>
+                  <p className="text-sm">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">No. Load</Label>
+                  <p className="text-sm">{embarque.load || embarque.numero_load || (embarque as any).load_number || '—'}</p>
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-gray-600">No. Carta Porte</Label>
+                  <p className="text-sm">{embarque.carta_porte || (embarque as any).numero_carta_porte || (embarque as any).cartaporte || '—'}</p>
+                </div>
+                <div>
+                  {/* Espacio vacío para mantener alineación */}
+                </div>
+              </div>
+            </div>
 
-              {/* Liga para cliente (editable) */}
-              <div className="md:col-span-5 bg-gray-50 border rounded p-3">
-                <div className="flex flex-col md:flex-row md:items-end gap-3">
-                  <div className="flex-1">
-                    <Label htmlFor="reporte-url" className="text-base font-semibold text-gray-900">Liga para el cliente (opcional)</Label>
-                    <Input id="reporte-url" placeholder="https://…" value={reporteUrl} onChange={(e)=>setReporteUrl(e.target.value)} disabled={!isEditingUrl} />
+            {/* Contenido en frame gris */}
+            <div className="bg-gray-50 border rounded p-4 mb-6">
+              <Label className="text-sm font-medium text-gray-600">Contenido</Label>
+              <p className="text-sm mt-1">{embarque.contenido || '—'}</p>
+            </div>
+
+            {/* Direcciones - Adaptativo móvil/escritorio */}
+            <div className="bg-gray-50 border rounded p-4 mb-6">
+              {(() => {
+                // Usar la misma lógica que en subir-fotos-embarque para extraer direcciones múltiples
+                let recolectasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                let entregasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
+                
+                try {
+                  // Prioridad 1: Intentar extraer de campos JSON 
+                  if ((embarque as any).recolectas_json) {
+                    recolectasFinales = JSON.parse((embarque as any).recolectas_json);
+                  }
+                  if ((embarque as any).entregas_json) {
+                    entregasFinales = JSON.parse((embarque as any).entregas_json);
+                  }
+                } catch (jsonError) {
+                  console.warn("Error parsing JSON direcciones:", jsonError);
+                }
+                
+                // Prioridad 2: Si no hay datos JSON, extraer de observaciones
+                if (recolectasFinales.length === 0 && entregasFinales.length === 0) {
+                  try {
+                    const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
+                    recolectasFinales = extracted.recolectas;
+                    entregasFinales = extracted.entregas;
+                  } catch (e) {
+                    console.warn('Error parseando direcciones múltiples:', e);
+                  }
+                }
+                
+                // Prioridad 3: Si aún no hay direcciones múltiples, usar campos legacy como fallback
+                if (recolectasFinales.length === 0) {
+                  const recolectaIndividual = (embarque as any).direccion_recolecta || embarque.origen;
+                  if (recolectaIndividual) {
+                    recolectasFinales = [{
+                      direccion: recolectaIndividual,
+                      fecha: (embarque as any).fecha_recolecta || "",
+                      hora: (embarque as any).hora_recolecta || ""
+                    }];
+                  }
+                }
+                
+                if (entregasFinales.length === 0) {
+                  const entregaIndividual = (embarque as any).direccion_entrega || embarque.destino;
+                  if (entregaIndividual) {
+                    entregasFinales = [{
+                      direccion: entregaIndividual,
+                      fecha: (embarque as any).fecha_entrega || "",
+                      hora: (embarque as any).hora_entrega || ""
+                    }];
+                  }
+                }
+
+                return (
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    {/* Recolectas */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-green-500"></div>
+                        <Label className="text-sm font-medium text-gray-900">Lugar(es) de Recolecta</Label>
+                      </div>
+                      <div className="space-y-2">
+                        {recolectasFinales.length > 0 ? recolectasFinales.map((r, i) => (
+                          <div key={i} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                            <div className="space-y-1">
+                              {recolectasFinales.length > 1 && (
+                                <div className="text-xs font-medium text-green-700 mb-1">
+                                  {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                </div>
+                              )}
+                              <p className="text-sm text-gray-900 break-words">{r.direccion}</p>
+                              {(r.fecha || r.hora) && (
+                                <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
+                                  {r.fecha && <span>📅 {r.fecha}</span>}
+                                  {r.hora && <span>🕐 {r.hora}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                            <p className="text-sm text-gray-500">Sin dirección de recolecta</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Entregas */}
+                    <div className="space-y-3">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full bg-blue-500"></div>
+                        <Label className="text-sm font-medium text-gray-900">Lugar(es) de Entrega</Label>
+                      </div>
+                      <div className="space-y-2">
+                        {entregasFinales.length > 0 ? entregasFinales.map((e, i) => (
+                          <div key={i} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                            <div className="space-y-1">
+                              {entregasFinales.length > 1 && (
+                                <div className="text-xs font-medium text-blue-700 mb-1">
+                                  {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                </div>
+                              )}
+                              <p className="text-sm text-gray-900 break-words">{e.direccion}</p>
+                              {(e.fecha || e.hora) && (
+                                <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
+                                  {e.fecha && <span>📅 {e.fecha}</span>}
+                                  {e.hora && <span>🕐 {e.hora}</span>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        )) : (
+                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                            <p className="text-sm text-gray-500">Sin dirección de entrega</p>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    {isEditingUrl ? (
-                      <Button onClick={guardarLigaCliente} disabled={savingUrl} className="bg-blue-600 hover:bg-blue-700 text-white">{savingUrl ? 'Guardando…' : 'Guardar liga'}</Button>
-                    ) : (
-                      <Button type="button" variant="outline" onClick={()=>setIsEditingUrl(true)} className="inline-flex items-center gap-2">
-                        <Pencil className="h-4 w-4" />
-                        Modificar
-                      </Button>
-                    )}
-                    {embarque?.reporte_cliente_url && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => window.open(embarque.reporte_cliente_url as string, '_blank')}
-                        className="inline-flex items-center gap-2"
-                        title="Abrir la liga en una nueva pestaña"
-                      >
-                        <ExternalLink className="h-4 w-4" />
-                        Abrir
-                      </Button>
-                    )}
-                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Liga para cliente (editable) */}
+            <div className="bg-gray-50 border rounded p-3 mb-6">
+              <div className="flex flex-col md:flex-row md:items-end gap-3">
+                <div className="flex-1">
+                  <Label htmlFor="reporte-url" className="text-sm font-medium text-gray-600">Liga para el cliente (opcional)</Label>
+                  <Input id="reporte-url" placeholder="https://…" value={reporteUrl} onChange={(e)=>setReporteUrl(e.target.value)} disabled={!isEditingUrl} />
+                </div>
+                <div className="flex items-center gap-2">
+                  {isEditingUrl ? (
+                    <Button onClick={guardarLigaCliente} disabled={savingUrl} className="bg-blue-600 hover:bg-blue-700 text-white">{savingUrl ? 'Guardando…' : 'Guardar liga'}</Button>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={()=>setIsEditingUrl(true)} className="inline-flex items-center gap-2">
+                      <Pencil className="h-4 w-4" />
+                      Modificar
+                    </Button>
+                  )}
+                  {embarque?.reporte_cliente_url && (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => window.open(embarque.reporte_cliente_url as string, '_blank')}
+                      className="inline-flex items-center gap-2"
+                      title="Abrir la liga en una nueva pestaña"
+                    >
+                      <ExternalLink className="h-4 w-4" />
+                      Abrir
+                    </Button>
+                  )}
                 </div>
               </div>
             </div>

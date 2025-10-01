@@ -92,11 +92,16 @@ export async function POST(request: Request) {
           }, { status: 400 })
         }
         
-        const { data: asignarData, error: asignarError } = await supabase
-          // .rpc( // FUNCIÓN ELIMINADA:'asignar_operador', { 
-            p_folio: folio, 
-            p_operador: operador 
-          })
+        // FUNCIÓN ELIMINADA: asignar_operador
+        // const { data: asignarData, error: asignarError } = await supabase
+        //   .rpc('asignar_operador', { 
+        //     p_folio: folio, 
+        //     p_operador: operador 
+        //   })
+        
+        // Implementación temporal mientras se restaura la función
+        const asignarData = null
+        const asignarError = new Error("Función asignar_operador no disponible")
         
         if (asignarError) {
           throw asignarError

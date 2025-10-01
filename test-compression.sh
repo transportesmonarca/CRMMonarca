@@ -1,0 +1,26 @@
+#!/bin/bash
+
+echo "🚀 Iniciando servidor para probar compresión de imágenes..."
+echo ""
+echo "📋 Funcionalidades implementadas:"
+echo "✅ Compresión automática de imágenes > 1MB"
+echo "✅ Progreso visual durante compresión"  
+echo "✅ Resumen de reducción de tamaño"
+echo "✅ Indicadores en vista previa de archivos"
+echo "✅ Fallback a archivos originales si falla"
+echo ""
+echo "🎯 Para probar:"
+echo "1. Ve a: http://localhost:3003/subir-fotos-embarque/[ID-EMBARQUE]"
+echo "2. Selecciona imágenes grandes (>1MB)"
+echo "3. Observa los indicadores de compresión"
+echo "4. Sube los archivos y ve el progreso"
+echo ""
+echo "⚡ Configuración actual:"
+echo "- Tamaño máximo: 800KB"
+echo "- Resolución máxima: 1600px"
+echo "- Calidad: 85%"
+echo "- Formato: JPEG"
+echo ""
+
+cd "/Users/ivanacuna/Documents/DESARROLLO DE PROYECTOS VSC/Monarca 8/CRMMonarca"
+npm run dev

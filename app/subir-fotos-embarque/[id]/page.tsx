@@ -36,6 +36,7 @@ import {
   ArrowLeft,
   MapPin,
   HelpCircle,
+  Zap,
 } from "lucide-react"
 import {
   supabase,
@@ -49,6 +50,8 @@ import {
 } from "@/lib/supabase"
 import { subirFotoEmbarque, eliminarFotoEmbarque } from "@/lib/blob"
 import { agregarAuditLog } from "@/lib/audit"
+import { compressMultipleImages, formatFileSize, needsCompression, type CompressionResult } from "@/lib/image-compression"
+import { CompressionProgress, CompressionResultSummary } from "@/components/ui/compression-progress"
 
 // Función para extraer direcciones múltiples de las observaciones
 const extraerDireccionesMultiples = (observaciones: string) => {
@@ -110,6 +113,12 @@ export default function SubirFotosEmbarquePage() {
   const [error, setError] = useState("")
   const [quotaFull, setQuotaFull] = useState(false)
   const [success, setSuccess] = useState("")
+  
+  // Estados para compresión de imágenes
+  const [isCompressing, setIsCompressing] = useState(false)
+  const [compressionProgress, setCompressionProgress] = useState({ current: 0, total: 0, fileName: "" })
+  const [compressionResults, setCompressionResults] = useState<CompressionResult[]>([])
+  const [showCompressionSummary, setShowCompressionSummary] = useState(false)
 
   const [openSuccessDialog, setOpenSuccessDialog] = useState(false)
   const [successMessage, setSuccessMessage] = useState("")
@@ -343,11 +352,20 @@ export default function SubirFotosEmbarquePage() {
 
     if (paraAgregar.length > 0) {
       setSelectedFiles((prev) => [...prev, ...paraAgregar])
+      
+      // Mostrar información sobre compresión pendiente
+      const imagesToCompress = paraAgregar.filter(file => needsCompression(file));
+      if (imagesToCompress.length > 0) {
+        const totalSize = imagesToCompress.reduce((sum, file) => sum + file.size, 0);
+        console.log(`📸 ${imagesToCompress.length} imagen(es) serán comprimidas (${formatFileSize(totalSize)} total)`);
+      }
     }
   }
 
   const removeSelectedFile = (index: number) => {
     setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
+    setShowCompressionSummary(false)
+    setCompressionResults([])
   }
 
   const subirArchivos = async () => {
@@ -373,10 +391,47 @@ export default function SubirFotosEmbarquePage() {
     try {
       setUploading(true)
       setError("")
+      setShowCompressionSummary(false)
 
+      // Paso 1: Comprimir imágenes si es necesario
+      let filesToUpload = selectedFiles;
+      const imagesToCompress = selectedFiles.filter(file => needsCompression(file));
+      
+      if (imagesToCompress.length > 0) {
+        setIsCompressing(true);
+        
+        try {
+          console.log(`🔄 Comprimiendo ${imagesToCompress.length} imagen(es)...`);
+          
+          const compressionResults = await compressMultipleImages(
+            selectedFiles,
+            undefined, // Usar configuración por defecto
+            (current, total, fileName) => {
+              setCompressionProgress({ current, total, fileName });
+            }
+          );
+          
+          setCompressionResults(compressionResults);
+          
+          // Usar archivos comprimidos para la subida
+          filesToUpload = compressionResults.map(result => result.compressedFile);
+          
+          console.log('✅ Compresión completada');
+          setShowCompressionSummary(true);
+          
+        } catch (compressionError) {
+          console.warn('⚠️ Error en compresión, usando archivos originales:', compressionError);
+          // Si falla la compresión, usar archivos originales
+          filesToUpload = selectedFiles;
+        } finally {
+          setIsCompressing(false);
+        }
+      }
+
+      // Paso 2: Subir archivos (comprimidos o originales)
       let archivosSubidos = 0
 
-  for (const file of selectedFiles) {
+      for (const file of filesToUpload) {
         // Corte de seguridad si se alcanzó el máximo mientras se sube
         if (fotos.length + archivosSubidos >= MAX_FILES) {
           break
@@ -447,6 +502,8 @@ export default function SubirFotosEmbarquePage() {
         setSuccessMessage(`${archivosSubidos} archivo(s) subido(s) exitosamente.`)
         setOpenSuccessDialog(true)
         setSelectedFiles([])
+        setShowCompressionSummary(false)
+        setCompressionResults([])
         try {
           agregarAuditLog(
             "CREAR",
@@ -677,10 +734,10 @@ export default function SubirFotosEmbarquePage() {
                       </div>
                       <div className="space-y-2">
                         {recolectasFinales.length > 0 ? recolectasFinales.map((r, i) => (
-                          <div key={i} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                          <div key={i} className="border rounded p-4">
                             <div className="space-y-1">
                               {recolectasFinales.length > 1 && (
-                                <div className="text-xs font-medium text-green-700 mb-1">
+                                <div className="text-xs font-medium text-gray-700 mb-1">
                                   {i === 0 ? "Original" : `Recolecta ${i + 1}`}
                                 </div>
                               )}
@@ -694,7 +751,7 @@ export default function SubirFotosEmbarquePage() {
                             </div>
                           </div>
                         )) : (
-                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                          <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
                             <p className="text-sm text-gray-500">Sin dirección de recolecta</p>
                           </div>
                         )}
@@ -709,10 +766,10 @@ export default function SubirFotosEmbarquePage() {
                       </div>
                       <div className="space-y-2">
                         {entregasFinales.length > 0 ? entregasFinales.map((e, i) => (
-                          <div key={i} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                          <div key={i} className="border rounded p-4">
                             <div className="space-y-1">
                               {entregasFinales.length > 1 && (
-                                <div className="text-xs font-medium text-blue-700 mb-1">
+                                <div className="text-xs font-medium text-gray-700 mb-1">
                                   {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
                                 </div>
                               )}
@@ -726,7 +783,7 @@ export default function SubirFotosEmbarquePage() {
                             </div>
                           </div>
                         )) : (
-                          <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
+                          <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
                             <p className="text-sm text-gray-500">Sin dirección de entrega</p>
                           </div>
                         )}
@@ -755,6 +812,27 @@ export default function SubirFotosEmbarquePage() {
             <CheckCircle className="h-4 w-4" />
             <AlertDescription>{success}</AlertDescription>
           </Alert>
+        )}
+
+        {/* Progreso de compresión */}
+        <CompressionProgress
+          isCompressing={isCompressing}
+          currentFile={compressionProgress.fileName}
+          currentIndex={compressionProgress.current}
+          totalFiles={compressionProgress.total}
+        />
+
+        {/* Resumen de compresión */}
+        {showCompressionSummary && compressionResults.length > 0 && (
+          <CompressionResultSummary
+            results={compressionResults.map(result => ({
+              fileName: result.compressedFile.name,
+              originalSize: result.originalSize,
+              compressedSize: result.compressedSize,
+              compressionPercentage: result.compressionPercentage,
+              success: result.compressionPercentage > 0
+            }))}
+          />
         )}
 
         {/* Formulario de subida */}
@@ -847,23 +925,35 @@ export default function SubirFotosEmbarquePage() {
               <div className="space-y-2">
                 <Label>Archivos Seleccionados ({selectedFiles.length})</Label>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {selectedFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                      <div className="flex items-center space-x-2">
-                        {file.type.startsWith("image/") ? (
-                          <ImageIcon className="h-4 w-4 text-blue-500" />
-                        ) : (
-                          <FileText className="h-4 w-4 text-red-500" />
-                        )}
-                        <div>
-                          <p className="text-sm font-medium truncate max-w-48">{file.name}</p>
+                  {selectedFiles.map((file, index) => {
+                    const willBeCompressed = needsCompression(file);
+                    return (
+                      <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                        <div className="flex items-center space-x-3 flex-1">
+                          {file.type.startsWith("image/") ? (
+                            <ImageIcon className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                          ) : (
+                            <FileText className="h-4 w-4 text-red-500 flex-shrink-0" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <p className="text-sm font-medium truncate">{file.name}</p>
+                            <div className="flex items-center gap-2 mt-1">
+                              <span className="text-xs text-gray-500">{formatFileSize(file.size)}</span>
+                              {willBeCompressed && (
+                                <div className="flex items-center gap-1">
+                                  <Zap className="h-3 w-3 text-amber-500" />
+                                  <span className="text-xs text-amber-600">Se comprimirá</span>
+                                </div>
+                              )}
+                            </div>
+                          </div>
                         </div>
+                        <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(index)} disabled={uploading || isCompressing}>
+                          <X className="h-4 w-4" />
+                        </Button>
                       </div>
-                      <Button variant="ghost" size="sm" onClick={() => removeSelectedFile(index)} disabled={uploading}>
-                        <X className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -871,10 +961,15 @@ export default function SubirFotosEmbarquePage() {
             {/* Botón de subida */}
             <Button
               onClick={subirArchivos}
-              disabled={uploading || selectedFiles.length === 0 || !operadorNombre.trim() || quotaFull}
-              className="w-full bg-green-600 hover:bg-green-700 text-white"
+              disabled={uploading || isCompressing || selectedFiles.length === 0 || !operadorNombre.trim() || quotaFull}
+              className="w-full bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
             >
-              {uploading ? (
+              {isCompressing ? (
+                <>
+                  <Zap className="h-4 w-4 mr-2 animate-pulse" />
+                  Comprimiendo imágenes...
+                </>
+              ) : uploading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
                   Subiendo archivos...
@@ -883,6 +978,9 @@ export default function SubirFotosEmbarquePage() {
                 <>
                   <Upload className="h-4 w-4 mr-2" />
                   Subir {selectedFiles.length} archivo(s)
+                  {selectedFiles.some(needsCompression) && (
+                    <span className="ml-1 text-xs opacity-90">⚡</span>
+                  )}
                 </>
               )}
             </Button>
