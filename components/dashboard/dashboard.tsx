@@ -49,20 +49,31 @@ export function Dashboard() {
             ?.slice(0, 5) || []
         setEmbarquesRecientes(embarquesOrdenados)
 
-        // Cargar recordatorios urgentes (vencidos o próximos a vencer)
+        // Cargar recordatorios urgentes (vencidos o próximos a vencer en 15 días)
         const { data: recordatorios } = await obtenerRecordatorios()
         const hoy = new Date()
-        const en7Dias = new Date()
-        en7Dias.setDate(hoy.getDate() + 7)
+        hoy.setHours(0, 0, 0, 0) // Normalizar a inicio del día
+        const en15Dias = new Date()
+        en15Dias.setDate(hoy.getDate() + 15)
+        en15Dias.setHours(23, 59, 59, 999) // Final del día
 
         const recordatoriosUrgentes =
           (recordatorios as Recordatorio[])
             ?.filter((r: Recordatorio) => {
               const fechaVencimiento = new Date(r.fecha_vencimiento)
-              return fechaVencimiento <= en7Dias && r.estado !== "completado"
+              fechaVencimiento.setHours(0, 0, 0, 0) // Normalizar a inicio del día
+              // Incluir: ya vencidos o próximos a vencer en 15 días
+              return fechaVencimiento <= en15Dias && r.estado !== "completado"
             })
-            ?.sort((a: Recordatorio, b: Recordatorio) => new Date(a.fecha_vencimiento).getTime() - new Date(b.fecha_vencimiento).getTime())
-            ?.slice(0, 5) || []
+            ?.sort((a: Recordatorio, b: Recordatorio) => {
+              // Ordenar: primero los vencidos, luego por proximidad de vencimiento
+              const fechaA = new Date(a.fecha_vencimiento)
+              const fechaB = new Date(b.fecha_vencimiento)
+              fechaA.setHours(0, 0, 0, 0)
+              fechaB.setHours(0, 0, 0, 0)
+              return fechaA.getTime() - fechaB.getTime()
+            })
+            ?.slice(0, 8) || [] // Mostrar hasta 8 recordatorios
         setRecordatoriosUrgentes(recordatoriosUrgentes)
 
         // Agenda de hoy y sin asignar
@@ -355,45 +366,85 @@ export function Dashboard() {
               {recordatoriosUrgentes.map((recordatorio: Recordatorio) => {
                 const fechaVencimiento = new Date(recordatorio.fecha_vencimiento)
                 const hoy = new Date()
-                const esVencido = fechaVencimiento < hoy
+                fechaVencimiento.setHours(0, 0, 0, 0)
+                hoy.setHours(0, 0, 0, 0)
+                
+                const diasDiff = Math.ceil((fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24))
+                const esVencido = diasDiff < 0
+                const esCritico = diasDiff >= 0 && diasDiff <= 3
+                const esUrgente = diasDiff > 3 && diasDiff <= 7
+
+                // Determinar estilo y color
+                let bgClass = "bg-yellow-50 border-yellow-200"
+                let iconClass = "text-yellow-600"
+                let badgeClass = "bg-yellow-100 text-yellow-800"
+                let badgeText = "Próximo"
+
+                if (esVencido) {
+                  bgClass = "bg-red-50 border-red-200"
+                  iconClass = "text-red-600"
+                  badgeClass = "bg-red-100 text-red-800"
+                  badgeText = `Vencido ${Math.abs(diasDiff)}d`
+                } else if (esCritico) {
+                  bgClass = "bg-red-50 border-red-200"
+                  iconClass = "text-red-600" 
+                  badgeClass = "bg-red-100 text-red-800"
+                  badgeText = diasDiff === 0 ? "Hoy" : `${diasDiff}d`
+                } else if (esUrgente) {
+                  bgClass = "bg-orange-50 border-orange-200"
+                  iconClass = "text-orange-600"
+                  badgeClass = "bg-orange-100 text-orange-800"
+                  badgeText = `${diasDiff}d`
+                }
 
                 return (
                   <div
                     key={recordatorio.id}
-                    className={`flex items-center justify-between p-3 border rounded-lg ${
-                      esVencido ? "bg-red-50 border-red-200" : "bg-yellow-50 border-yellow-200"
-                    }`}
+                    className={`flex items-center justify-between p-3 border rounded-lg ${bgClass}`}
                   >
                     <div className="flex items-center space-x-3">
-                      <AlertTriangle className={`h-8 w-8 ${esVencido ? "text-red-600" : "text-yellow-600"}`} />
-                      <div>
-                        <p className="font-medium">{recordatorio.titulo}</p>
-                        <p className="text-sm text-gray-600">
+                      <AlertTriangle className={`h-6 w-6 ${iconClass}`} />
+                      <div className="flex-1">
+                        <p className="font-medium text-sm">{recordatorio.titulo}</p>
+                        <p className="text-xs text-gray-600">
                           {recordatorio.operador
-                            ? `${recordatorio.operador.nombre} ${recordatorio.operador.apellidos}`
-                            : "Sin operador"}
+                            ? `${recordatorio.operador.nombre} ${recordatorio.operador.apellidos || ""}`.trim()
+                            : recordatorio.camion
+                            ? `Camión ${recordatorio.camion.numero_economico || recordatorio.camion.placas}`
+                            : "Sin asignar"}
                         </p>
-                        <div className="flex items-center space-x-2 text-xs text-gray-500">
+                        <div className="flex items-center space-x-2 text-xs text-gray-500 mt-1">
                           <Clock className="h-3 w-3" />
-                          <span className={esVencido ? "text-red-600 font-medium" : ""}>
-                            {esVencido ? "Vencido: " : "Vence: "}
+                          <span className={esVencido || esCritico ? "text-red-600 font-medium" : ""}>
                             {fechaVencimiento.toLocaleDateString()}
                           </span>
+                          {recordatorio.tipo && (
+                            <>
+                              <span>•</span>
+                              <span className="capitalize">{recordatorio.tipo}</span>
+                            </>
+                          )}
                         </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <Badge className={esVencido ? "bg-red-100 text-red-800" : "bg-yellow-100 text-yellow-800"}>
-                        {esVencido ? "Vencido" : "Urgente"}
+                    <div className="text-right ml-2">
+                      <Badge className={`${badgeClass} text-xs`}>
+                        {badgeText}
                       </Badge>
+                      {recordatorio.prioridad && (
+                        <div className="mt-1">
+                          {getPrioridadBadge(recordatorio.prioridad)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 )
               })}
               {recordatoriosUrgentes.length === 0 && (
-                <div className="text-center py-4 text-gray-500">
-                  <CheckCircle className="h-8 w-8 mx-auto mb-2 text-gray-400" />
-                  <p>No hay recordatorios urgentes</p>
+                <div className="text-center py-6 text-gray-500">
+                  <CheckCircle className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                  <p className="font-medium">¡Todo al día!</p>
+                  <p className="text-sm">No hay recordatorios próximos a vencer</p>
                 </div>
               )}
             </div>

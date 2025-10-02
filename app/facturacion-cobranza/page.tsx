@@ -564,7 +564,17 @@ const UpdatePriceModal = ({
         <div className="space-y-4">
           {embarque && (
             <div className="bg-gray-50 p-3 rounded-lg border">
-              <h4 className="font-medium text-sm text-gray-700 mb-2">Embarque: {embarque.folio}</h4>
+              <h4 className="font-medium text-sm text-gray-700 mb-2 flex items-center">
+                Embarque: {embarque.folio}
+                {esFleteFalso(embarque) && (
+                  <span 
+                    className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                    title="Este embarque está marcado como flete en falso (contingencia)"
+                  >
+                    Flete F.
+                  </span>
+                )}
+              </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs text-gray-600">
                 <div>Cliente: {embarque.clienteNombre || 'N/A'}</div>
                 <div>Load: {embarque.load_number || 'N/A'}</div>
@@ -2087,6 +2097,10 @@ export default function FacturacionCobranzaPage() {
   }
 
   async function cancelarEmbarque(embarque: EmbarqueAsignado, motivo?: string) {
+    if (!embarque || !embarque.id) {
+      throw new Error('Embarque inválido para cancelar');
+    }
+
     const fechaCancelacion = new Date().toISOString();
     
     // Obtener usuario actual
@@ -2095,59 +2109,159 @@ export default function FacturacionCobranzaPage() {
       const { getCurrentUser } = await import("../../lib/auth");
       const user = getCurrentUser && getCurrentUser();
       if (user && user.nombre) usuarioCancelacion = user.nombre;
-    } catch {}
+    } catch (error) {
+      console.warn("Error obteniendo usuario actual:", error);
+    }
 
     try {
-      // Actualizar el estado del embarque a cancelado
-      const { error } = await supabase
+      // PASO 1: Actualización base (campos que siempre existen) - similar a embarques y asignar-operadores
+      const baseUpdate: any = {
+        estado: "cancelado",
+        // NO archivar automáticamente - el usuario decidirá cuándo usar el botón "Archivar"
+        updated_at: fechaCancelacion,
+      };
+
+      // Intentar agregar observaciones si es posible
+      try {
+        baseUpdate.observaciones = `${embarque.observaciones || ""}
+
+[CANCELADO DESDE FACTURACIÓN] ${motivo || "Sin motivo especificado"}`.trim();
+      } catch (error) {
+        console.warn("Campo observaciones no disponible, continuando sin él");
+      }
+
+      const { error: baseError } = await supabase
         .from("embarques")
-        .update({
-          estado: "cancelado",
-          estado_facturacion: "archivado", // También archivamos en facturación
+        .update(baseUpdate)
+        .eq("id", embarque.id);
+
+      if (baseError) {
+        console.error("Error de Supabase al cancelar embarque (actualización base):", baseError);
+        
+        // Manejo mejorado del error similar a otras implementaciones
+        const errorMessage = baseError?.message || JSON.stringify(baseError) || "Error desconocido en base de datos";
+        
+        toast({ 
+          title: 'Error al cancelar embarque', 
+          description: errorMessage, 
+          variant: 'destructive' 
+        });
+        throw new Error(`Error de base de datos: ${errorMessage}`);
+      }
+
+      console.log(`✅ Embarque ${embarque.folio} - actualización base exitosa`);
+
+      // PASO 2: Metadata best-effort (puede fallar si columnas no existen) - similar a embarques y asignar-operadores
+      try {
+        const metaUpdate: any = {
           fecha_cancelacion: fechaCancelacion,
           usuario_cancelacion: usuarioCancelacion,
           motivo_cancelacion: motivo || "Cancelado desde facturación y cobranza",
-          updated_at: fechaCancelacion,
-        })
-        .eq("id", embarque.id);
+        };
 
-      if (error) {
-        toast({ 
-          title: 'Error al cancelar embarque', 
-          description: error.message || String(error), 
-          variant: 'destructive' 
-        });
-        throw error;
+        const { error: metaError } = await supabase
+          .from("embarques")
+          .update(metaUpdate)
+          .eq("id", embarque.id);
+
+        if (metaError) {
+          // No bloquear al usuario, solo advertir en consola - como en otras implementaciones
+          console.warn(
+            "No se pudo guardar metadata de cancelación (campos pueden no existir en el esquema):",
+            metaError
+          );
+        } else {
+          console.log(`✅ Embarque ${embarque.folio} - metadata de cancelación guardada`);
+        }
+      } catch (metaException) {
+        console.warn("Excepción guardando metadata de cancelación:", metaException);
       }
 
-      // Actualizar estado local - remover de la lista activa
-      const actualizados = embarquesAsignados.filter((e) => e.id !== embarque.id);
-      if (mounted.current) {
-        setEmbarquesAsignados(actualizados);
-      }
+      console.log(`✅ Embarque ${embarque.folio} cancelado exitosamente en base de datos`);
 
-      // También actualizar embarques analíticos si existen
+      // PASO 3: Actualizar estado local - mantener embarque con estado cancelado (NO remover)
       if (mounted.current) {
-        setEmbarquesAnaliticos((prev) => 
-          prev.filter((e) => e.id !== embarque.id)
+        // Actualizar el embarque en la lista principal marcándolo como cancelado
+        const actualizados = embarquesAsignados.map((e) => 
+          e.id === embarque.id 
+            ? { 
+                ...e, 
+                estado: "cancelado",
+                // NO archivar automáticamente en facturación - el usuario decidirá
+                fecha_cancelacion: fechaCancelacion,
+                usuario_cancelacion: usuarioCancelacion,
+                motivo_cancelacion: motivo || "Cancelado desde facturación y cobranza",
+                updated_at: fechaCancelacion,
+                observaciones: `${e.observaciones || ""}
+
+[CANCELADO DESDE FACTURACIÓN] ${motivo || "Sin motivo especificado"}`.trim()
+              }
+            : e
         );
+        setEmbarquesAsignados(actualizados);
+        console.log(`✅ Estado local actualizado: embarque ${embarque.folio} marcado como cancelado (mantenido en lista)`);
+
+        // También actualizar embarques analíticos si existen
+        setEmbarquesAnaliticos((prev) => 
+          prev.map((e) => 
+            e.id === embarque.id 
+              ? { ...e, estado: "cancelado" } // NO archivar automáticamente
+              : e
+          )
+        );
+        console.log(`✅ Estado analítico actualizado: embarque ${embarque.folio} marcado como cancelado`);
       }
 
-      // Audit log: cancelar embarque
+      // PASO 4: Audit log best-effort - similar a asignar-operadores
       try {
         const { agregarAuditLog } = await import("../../lib/audit");
-        agregarAuditLog(
+        await agregarAuditLog(
           "ELIMINAR",
           "Facturación/Cobranza",
           `Cancelación de embarque folio ${embarque.folio} por usuario ${usuarioCancelacion}. Motivo: ${motivo || 'No especificado'}`
         );
-      } catch {}
+        console.log(`✅ Audit log registrado para cancelación de ${embarque.folio}`);
+      } catch (auditError) {
+        console.warn("Error registrando audit log (no crítico):", auditError);
+        // No lanzar error aquí, el audit log no debe interrumpir la cancelación
+      }
 
-      // Toast se maneja desde el modal que llama a esta función
+      // Toast de éxito se maneja desde el modal que llama a esta función
+      console.log(`🎯 Cancelación completa para embarque ${embarque.folio}`);
 
     } catch (error) {
       console.error("Error cancelando embarque:", error);
-      throw error;
+      
+      // Manejo de errores más robusto
+      let errorMessage = 'Error desconocido al cancelar embarque';
+      
+      if (error instanceof Error) {
+        errorMessage = error.message || 'Error sin mensaje específico';
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error && typeof error === 'object') {
+        // Manejar objetos de error de Supabase u otros
+        if ('message' in error && error.message) {
+          errorMessage = String(error.message);
+        } else if ('code' in error && error.code) {
+          errorMessage = `Error de base de datos (${error.code})`;
+        } else {
+          // Objeto vacío o sin propiedades útiles
+          errorMessage = 'Error de sistema - contacte al administrador';
+          console.error("Error objeto sin información útil:", JSON.stringify(error));
+        }
+      }
+      
+      toast({ 
+        title: 'Error al cancelar embarque', 
+        description: errorMessage, 
+        variant: 'destructive' 
+      });
+      
+      // Crear un error más descriptivo para propagación
+      const enhancedError = new Error(errorMessage);
+      enhancedError.cause = error;
+      throw enhancedError;
     }
   }
   const [embarquesAsignados, setEmbarquesAsignados] = useState<
@@ -2433,8 +2547,10 @@ export default function FacturacionCobranzaPage() {
 
   // Helper: verificar si el embarque es flete falso
   const esFleteFalso = useCallback((embarque: any) => {
-    // Solo mostrar F. Falso cuando el embarque tiene estado modificado FF (contingencia)
-    return embarque?.estado?.includes('_contingencia_FF') || false;
+    // Mostrar "Flete F." cuando:
+    // 1. El estado contiene "_contingencia_FF" (estado modificado por contingencia)
+    // 2. O cuando el campo flete_falso es true (marcado explícitamente como flete falso)
+    return embarque?.estado?.includes('_contingencia_FF') || embarque?.flete_falso === true;
   }, []);
 
   // Helper: verificar si un embarque tiene múltiples direcciones (lógica idéntica a asignar-operadores)
@@ -2992,9 +3108,9 @@ export default function FacturacionCobranzaPage() {
 
   const embarquesFiltrados = (embarquesAsignados || []).filter((embarque: EmbarqueAsignado) => {
     if (!embarque) return false;
-    // Mostrar embarques finalizados o archivados (operativo). Sólo se ocultan si están archivados en facturación
+    // Mostrar embarques finalizados, archivados o cancelados (operativo). Sólo se ocultan si están archivados en facturación
     const estadoNorm = String(embarque.estado || "").trim().toLowerCase();
-    if (!(estadoNorm.startsWith("finalizado") || estadoNorm.startsWith("archivado"))) return false;
+    if (!(estadoNorm.startsWith("finalizado") || estadoNorm.startsWith("archivado") || estadoNorm === "cancelado")) return false;
     if (embarque.estado_facturacion === "archivado") return false;
 
     const currentSearchTerm = searchTerm || "";
@@ -4517,7 +4633,7 @@ export default function FacturacionCobranzaPage() {
   const [controlClientesRango, setControlClientesRango] = useState<string>("custom");
   const [controlClientesGenerado, setControlClientesGenerado] = useState(false);
   const [controlIncluirArchivados, setControlIncluirArchivados] = useState(false);
-  const [controlMostrarCancelados, setControlMostrarCancelados] = useState(false);
+  const [controlMostrarCancelados, setControlMostrarCancelados] = useState(true); // Mostrar cancelados por defecto
   // If the user requests to include archivados, we fetch an ad-hoc dataset from the server
   // instead of relying solely on `embarquesAsignados` which may not contain archived items.
   const [controlClientesFetched, setControlClientesFetched] = useState<any[] | null>(null);
@@ -6315,6 +6431,14 @@ export default function FacturacionCobranzaPage() {
                                           {esCancelado(embarque) && (
                                             <Badge className="ml-2 bg-gray-700 text-white">Cancelado</Badge>
                                           )}
+                                          {esFleteFalso(embarque) && (
+                                            <span 
+                                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                              title="Este embarque está marcado como flete en falso (contingencia)"
+                                            >
+                                              Flete F.
+                                            </span>
+                                          )}
                                         </CardTitle>
                                         {/* removed 'Requiere atención' badge as requested */}
                                       </div>
@@ -6694,7 +6818,7 @@ export default function FacturacionCobranzaPage() {
                                               className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
                                               title="Este embarque está marcado como flete en falso (contingencia)"
                                             >
-                                              F. Falso
+                                              Flete F.
                                             </span>
                                           );
                                         }
@@ -7147,7 +7271,7 @@ export default function FacturacionCobranzaPage() {
                                           className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
                                           title="Este embarque está marcado como flete en falso (contingencia)"
                                         >
-                                          F. Falso
+                                          Flete F.
                                         </span>
                                       );
                                     }
@@ -7896,7 +8020,7 @@ export default function FacturacionCobranzaPage() {
                                   className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help mr-2"
                                   title="Este embarque está marcado como flete en falso (contingencia)"
                                 >
-                                  F. Falso
+                                  Flete F.
                                 </span>
                               );
                             }
@@ -8933,14 +9057,30 @@ export default function FacturacionCobranzaPage() {
                       await cancelarEmbarque(emb, cancelReason.trim());
                       toast({ 
                         title: 'Embarque cancelado exitosamente', 
-                        description: `El embarque ${emb.folio} ha sido cancelado y removido de todas las secciones.`,
+                        description: `El embarque ${emb.folio} ha sido cancelado y marcado con badge "Cancelado".`,
                         variant: 'success' 
                       });
                     } catch (err: any) {
                       console.error('Error cancelando embarque:', err);
+                      
+                      // Manejo mejorado de errores en el botón
+                      let errorDescription = 'Error desconocido en la cancelación';
+                      
+                      if (err instanceof Error) {
+                        errorDescription = err.message || 'Error sin mensaje específico';
+                      } else if (typeof err === 'string') {
+                        errorDescription = err;
+                      } else if (err && typeof err === 'object') {
+                        if (err.message) {
+                          errorDescription = String(err.message);
+                        } else {
+                          errorDescription = 'Error del sistema - por favor intente de nuevo';
+                        }
+                      }
+                      
                       toast({ 
                         title: 'Error al cancelar', 
-                        description: err?.message || String(err), 
+                        description: errorDescription, 
                         variant: 'destructive' 
                       });
                     } finally {

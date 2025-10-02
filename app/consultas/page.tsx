@@ -55,11 +55,17 @@ export default function ConsultasPage() {
       }
 
       // Traer una sola vez el dataset relevante del año y construir todas las agregaciones en memoria
-      // Traer el dataset del año. Seleccionamos '*' para incluir posibles
-      // campos adicionales como quickpaid_enabled / precio_quickpaid presentes en e.*
-      const { data: rows, error: rowsError } = await supabase
-        .from("vista_embarques_completa")
-        .select("*")
+      // Usar directamente la tabla embarques con joins básicos para evitar errores de campos inexistentes
+      let { data: rows, error: rowsError } = await supabase
+        .from("embarques")
+        .select(`
+          *,
+          cliente:clientes(id, nombre),
+          operador:operadores(id, nombre, apellidos),
+          camion:camiones(id, numero_economico),
+          remolque:remolques(id, numero_economico),
+          tipo_servicio:tipos_servicio(id, nombre)
+        `)
         .gte("fecha_creacion", startOfYear)
         .lt("fecha_creacion", startOfNextYear)
 
@@ -68,12 +74,11 @@ export default function ConsultasPage() {
         console.log('cargarEstadisticas: supabase rows fetched:', Array.isArray(rows) ? rows.length : rows)
         console.log('cargarEstadisticas: rows sample:', (rows || []).slice(0,3))
       } catch (e) {}
+      
       if (rowsError) {
-        console.error('cargarEstadisticas: rowsError raw:', rowsError)
-        try {
-          console.error('cargarEstadisticas: rowsError props:', Object.getOwnPropertyNames(rowsError))
-        } catch (e) {}
-        throw rowsError
+        console.log('cargarEstadisticas: Error en consulta principal:', rowsError)
+        const errorMsg = rowsError.message || rowsError.details || rowsError.hint || 'Error desconocido en consulta'
+        throw new Error(`Error en cargarEstadisticas: ${errorMsg}`)
       }
 
       const totalRows = (rows || []).length
@@ -85,14 +90,15 @@ export default function ConsultasPage() {
       const tiposMap = new Map()
       const estadosMap = new Map()
 
-      // Obtener metadatos de clientes para derivar la 'empresa' asociada
+      // Obtener metadatos básicos de clientes (solo campos que sabemos que existen)
       let clientesMeta: any[] = []
       try {
         const { data: clientesData } = await supabase
           .from("clientes")
-          .select("id, empresa, empresa_facturadora, razon_social, nombre_comercial")
+          .select("id, nombre")
         clientesMeta = clientesData || []
       } catch (e) {
+        console.log('cargarEstadisticas: Error obteniendo metadatos de clientes, continuando sin ellos:', e)
         clientesMeta = []
       }
       const clientesMetaMap = new Map((clientesMeta || []).map((c: any) => [c.id, c]))
@@ -145,9 +151,11 @@ export default function ConsultasPage() {
         // Clientes (por id)
         if (r.cliente_id) {
           if (!clientesMap.has(r.cliente_id)) {
+            // Usar el nombre del join o fallback a cliente_nombre si existe
+            const nombreCliente = r.cliente?.nombre || r.cliente_nombre || `Cliente ${r.cliente_id}`
             clientesMap.set(r.cliente_id, {
               id: r.cliente_id,
-              nombre: r.cliente_nombre || "Cliente sin nombre",
+              nombre: nombreCliente,
               embarques: 0,
               ingresos_mxn: 0,
               ingresos_usd: 0,
@@ -174,9 +182,11 @@ export default function ConsultasPage() {
         // Camiones
         if (r.camion_id) {
           if (!camionesMap.has(r.camion_id)) {
+            // Usar el número del join o fallback
+            const numeroCamion = r.camion?.numero_economico || r.camion_numero || `Camión ${r.camion_id}`
             camionesMap.set(r.camion_id, {
               id: r.camion_id,
-              numero: r.camion_numero,
+              numero: numeroCamion,
               embarques: 0,
               embarquesActivos: 0,
             })
@@ -192,9 +202,13 @@ export default function ConsultasPage() {
         // Operadores
         if (r.operador_id) {
           if (!operadoresMap.has(r.operador_id)) {
+            // Usar el nombre del join o fallback
+            const nombreOperador = r.operador 
+              ? `${r.operador.nombre || ""} ${r.operador.apellidos || ""}`.trim()
+              : `${r.operador_nombre || ""} ${r.operador_apellidos || ""}`.trim() || "Sin asignar"
             operadoresMap.set(r.operador_id, {
               id: r.operador_id,
-              nombre: `${r.operador_nombre || ""} ${r.operador_apellidos || ""}`.trim() || "Sin asignar",
+              nombre: nombreOperador || `Operador ${r.operador_id}`,
               embarques: 0,
               embarquesEntregados: 0,
             })
@@ -216,9 +230,24 @@ export default function ConsultasPage() {
         estadosMap.set(estado, (estadosMap.get(estado) || 0) + 1)
       })
 
-      // Top clientes: ordenar por cantidad (actividad). mostramos ingresos separados por moneda
+      // Top clientes: calcular score combinado de actividad e ingresos (convertir USD a MXN para comparar)
+      // Los mejores clientes son aquellos con mayor combinación de embarques e ingresos
       const topClientesArray = Array.from(clientesMap.values())
-        .sort((a: any, b: any) => b.embarques - a.embarques)
+        .map((cliente: any) => {
+          // Convertir USD a MXN aproximadamente (tasa promedio ~20 MXN/USD)
+          const ingresosTotal = cliente.ingresos_mxn + (cliente.ingresos_usd * 20)
+          // Score: 70% ingresos + 30% cantidad de embarques (normalizado)
+          const scoreIngresos = ingresosTotal / 1000 // Normalizar dividiendo entre 1000
+          const scoreEmbarques = cliente.embarques * 10 // Dar peso a los embarques
+          const scoreCombinado = (scoreIngresos * 0.7) + (scoreEmbarques * 0.3)
+          
+          return {
+            ...cliente,
+            ingresosTotal,
+            scoreCombinado
+          }
+        })
+        .sort((a: any, b: any) => b.scoreCombinado - a.scoreCombinado)
         .slice(0, 5)
       setTopClientes(topClientesArray)
 
@@ -424,34 +453,83 @@ export default function ConsultasPage() {
               <TrendingUp className="h-5 w-5 text-blue-600 flex-shrink-0" />
               Top 5 Clientes
             </CardTitle>
-            <CardDescription>Clientes con mayor actividad e ingresos</CardDescription>
+            <CardDescription>Mejores clientes del año (actividad + ingresos combinados)</CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
               {topClientes.map((item, index) => (
                 <div
                   key={item.id}
-                  className="flex items-center justify-between p-4 border rounded-lg bg-gradient-to-r from-blue-50 to-transparent"
+                  className="bg-white border border-gray-200 rounded-xl p-4 shadow-sm hover:shadow-md transition-shadow duration-200 relative overflow-hidden"
                 >
-                  <div className="flex items-center space-x-4">
-                    <div className="flex items-center justify-center w-10 h-10 bg-blue-100 text-blue-600 rounded-full font-bold text-lg">
+                  {/* Gradient background for ranking */}
+                  <div className={`absolute top-0 left-0 w-full h-1 ${
+                    index === 0 ? 'bg-gradient-to-r from-yellow-400 to-yellow-600' :
+                    index === 1 ? 'bg-gradient-to-r from-gray-400 to-gray-500' :
+                    index === 2 ? 'bg-gradient-to-r from-amber-600 to-amber-700' :
+                    'bg-gradient-to-r from-blue-400 to-blue-600'
+                  }`} />
+                  
+                  {/* Ranking badge */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div className={`flex items-center justify-center w-8 h-8 rounded-full font-bold text-sm ${
+                      index === 0 ? 'bg-yellow-100 text-yellow-800' :
+                      index === 1 ? 'bg-gray-100 text-gray-800' :
+                      index === 2 ? 'bg-amber-100 text-amber-800' :
+                      'bg-blue-100 text-blue-800'
+                    }`}>
                       {index + 1}
                     </div>
-                    <div>
-                      <p className="font-semibold text-gray-900">{item.nombre}</p>
-                      <p className="text-sm text-gray-600">{item.embarques ?? 0} embarques</p>
-                    </div>
+                    {index < 3 && (
+                      <div className="text-right">
+                        {index === 0 && <span className="text-lg">🥇</span>}
+                        {index === 1 && <span className="text-lg">🥈</span>}
+                        {index === 2 && <span className="text-lg">🥉</span>}
+                      </div>
+                    )}
                   </div>
-                  <div className="text-right">
-                    <p className="font-bold text-green-600 text-lg">
-                      {`MXN ${Number(item.ingresos_mxn || 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
-                    </p>
-                    <p className="text-sm text-gray-600">{`USD ${Number(item.ingresos_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</p>
-                    <p className="text-xs text-gray-500">Ingresos por divisa{item.__isCompany ? ' (por empresa)' : ''}</p>
+                  
+                  {/* Client name */}
+                  <div className="mb-3">
+                    <h3 className="font-semibold text-gray-900 text-sm leading-tight line-clamp-2" title={item.nombre}>
+                      {item.nombre}
+                    </h3>
+                    <p className="text-xs text-gray-500 mt-1">{item.embarques ?? 0} embarques</p>
+                  </div>
+                  
+                  {/* Revenue info */}
+                  <div className="space-y-2">
+                    <div className="text-center">
+                      <p className="font-bold text-green-600 text-lg">
+                        ${Number(item.ingresosTotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </p>
+                      <p className="text-xs text-gray-500">Total MXN</p>
+                    </div>
+                    
+                    {/* Currency breakdown */}
+                    <div className="border-t pt-2 space-y-1">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-600">MXN:</span>
+                        <span className="font-medium">${Number(item.ingresos_mxn || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                      </div>
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-600">USD:</span>
+                        <span className="font-medium">${Number(item.ingresos_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
+                      </div>
+                    </div>
                   </div>
                 </div>
               ))}
             </div>
+            
+            {/* Message when no clients */}
+            {topClientes.length === 0 && (
+              <div className="text-center py-8 text-gray-500">
+                <TrendingUp className="h-12 w-12 mx-auto mb-4 text-gray-300" />
+                <p>No hay datos de clientes para mostrar</p>
+                <p className="text-sm">Los datos aparecerán cuando haya embarques registrados</p>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -464,24 +542,36 @@ export default function ConsultasPage() {
                   <Truck className="h-5 w-5 text-orange-600 flex-shrink-0" />
                   Camiones Más Utilizados
                 </CardTitle>
-              <CardDescription>Unidades con mayor actividad</CardDescription>
+              <CardDescription>Tractocamiones con más embarques asignados en el año</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
                 {camionesUsados.map((camion, index) => (
-                  <div key={camion.id} className="flex items-center justify-between p-3 border rounded-lg">
+                  <div key={camion.id} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50 transition-colors">
                     <div className="flex items-center space-x-3">
-                      <div className="flex items-center justify-center w-8 h-8 bg-orange-100 text-orange-600 rounded-full font-bold">
+                      <div className="flex items-center justify-center w-8 h-8 bg-orange-100 text-orange-600 rounded-full font-bold text-sm">
                         {index + 1}
                       </div>
                       <div>
-                        <p className="font-medium">{camion.numero}</p>
-                        <p className="text-sm text-gray-600">{camion.embarquesActivos} activos</p>
+                        <p className="font-semibold text-gray-900">#{camion.numero}</p>
+                        <p className="text-sm text-gray-600">Número Económico</p>
                       </div>
                     </div>
-                    <Badge className="bg-orange-100 text-orange-800">{camion.embarques} embarques</Badge>
+                    <div className="text-right">
+                      <div className="font-bold text-lg text-orange-600">{camion.embarques}</div>
+                      <div className="text-xs text-gray-500">embarques asignados</div>
+                    </div>
                   </div>
                 ))}
+                
+                {/* Message when no trucks */}
+                {camionesUsados.length === 0 && (
+                  <div className="text-center py-6 text-gray-500">
+                    <Truck className="h-10 w-10 mx-auto mb-3 text-gray-300" />
+                    <p>No hay datos de camiones para mostrar</p>
+                    <p className="text-sm">Los datos aparecerán cuando haya embarques asignados</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

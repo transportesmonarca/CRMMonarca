@@ -673,14 +673,6 @@ export default function ConfiguracionPage() {
                                     </DialogContent>
                                 </Dialog>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div className="space-y-2">
-                                        <Label>Nombre de la empresa</Label>
-                                        <Input
-                                            placeholder="Transportes Monarca"
-                                            value={configuracion.nombreEmpresa}
-                                            onChange={(e) => setConfiguracion({ ...configuracion, nombreEmpresa: e.target.value })}
-                                        />
-                                    </div>
                                     {/* Formato de fecha removed from UI per request */}
                                     <div className="space-y-2">
                                         <Label>Retención de datos (meses) — Solo Embarques</Label>
