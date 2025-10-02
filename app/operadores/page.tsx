@@ -894,7 +894,6 @@ export default function OperadoresPage() {
     const raw = (operadorDetalle as any).observaciones as unknown;
 
     const asComentario = (v: any): ComentarioOperador | null => {
-      if (!v) return null;
 
       if (typeof v === 'string') {
         const s = v.trim();
@@ -2844,16 +2843,6 @@ export default function OperadoresPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {!editingId && (
-                  <Button
-                    onClick={autocompletarAleatorio}
-                    variant="outline"
-                    size="sm"
-                    className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                  >
-                    🎲 Datos Aleatorios
-                  </Button>
-                )}
                 <Button
                   onClick={() => setShowModal(false)}
                   variant="outline"

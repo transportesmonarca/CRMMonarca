@@ -2447,18 +2447,7 @@ export default function CamionesPage() {
                         Completa la información del camión
                       </DialogDescription>
                     </div>
-                    {!editingCamion && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => generarDatosAleatoriosCamion(setFormData, toast)}
-                        className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                      >
-                        🎲 Datos Aleatorios
-                      </Button>
-                    )}
-                  </div>
+                 </div>
                 </DialogHeader>
 
                 <div className="w-full">
