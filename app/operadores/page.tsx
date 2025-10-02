@@ -889,44 +889,92 @@ export default function OperadoresPage() {
 
   // Parsear observaciones actuales cuando se abre el modal de detalles
   useEffect(() => {
-    if (showDetailsModal && operadorDetalle) {
-      try {
-        if (operadorDetalle.observaciones) {
-          const raw = operadorDetalle.observaciones;
-          let parsed: any = null;
-            try { parsed = JSON.parse(raw); } catch (_) { parsed = null; }
-          if (
-            parsed &&
-            Array.isArray(parsed) &&
-            parsed.every(
-              (c: any) => typeof c.id === "string" && typeof c.texto === "string" && typeof c.fecha === "string"
-            )
-          ) {
-            setComentarios(parsed as ComentarioOperador[]);
-            setComentariosPage(1);
-          } else {
-            // Tratar todo el texto como un único comentario
-            setComentarios([
-              {
-                id: Date.now().toString(),
-                texto: raw,
-                fecha: new Date().toISOString(),
-              },
-            ]);
-            setComentariosPage(1);
+    if (!operadorDetalle) return;
+
+    const raw = (operadorDetalle as any).observaciones as unknown;
+
+    const asComentario = (v: any): ComentarioOperador | null => {
+      if (!v) return null;
+
+      if (typeof v === 'string') {
+        const s = v.trim();
+        if (!s || s.toLowerCase() === 'null' || s === '[]') return null;
+        return {
+          id: globalThis.crypto?.randomUUID?.() ?? String(Date.now()),
+          texto: s,
+          fecha: new Date().toISOString(),
+        };
+      }
+
+      if (typeof v === 'object') {
+        // ya viene con forma de ComentarioOperador o similar
+        return {
+          id:
+            (typeof v.id === 'string' && v.id) ||
+            globalThis.crypto?.randomUUID?.() ||
+            String(Date.now()),
+          texto: String(v.texto ?? ''),
+          fecha:
+            (typeof v.fecha === 'string' && v.fecha) ||
+            new Date().toISOString(),
+          usuario:
+            typeof v.usuario === 'string' || v.usuario == null
+              ? v.usuario ?? null
+              : String(v.usuario),
+        };
+      }
+
+      return null;
+    };
+
+    const isJsonLike = (s: string) => {
+      const t = s.trim();
+      return t.startsWith('{') || t.startsWith('[');
+    };
+
+    try {
+      let lista: ComentarioOperador[] = [];
+
+      if (raw == null || raw === '' || raw === 'null' || raw === '[]') {
+        lista = [];
+      } else if (typeof raw === 'string') {
+        const s = raw.trim();
+        if (isJsonLike(s)) {
+          // Solo parsea si parece JSON
+          try {
+            const parsed = JSON.parse(s);
+            if (Array.isArray(parsed)) {
+              lista = parsed.map(asComentario).filter(Boolean) as ComentarioOperador[];
+            } else {
+              const uno = asComentario(parsed);
+              lista = uno ? [uno] : [];
+            }
+          } catch {
+            // No era JSON válido → tratar como texto libre
+            const uno = asComentario(s);
+            lista = uno ? [uno] : [];
           }
         } else {
-          setComentarios([]);
+          // Texto libre directo
+          const uno = asComentario(s);
+          lista = uno ? [uno] : [];
         }
-      } catch (e) {
-        console.error("Error parseando observaciones", e);
-        setComentarios([]);
+      } else if (Array.isArray(raw)) {
+        lista = raw.map(asComentario).filter(Boolean) as ComentarioOperador[];
+      } else if (typeof raw === 'object') {
+        const uno = asComentario(raw);
+        lista = uno ? [uno] : [];
       }
-      setNuevoComentario("");
-      setEditandoComentarioId(null);
-      setTextoEdicion("");
+
+      setComentarios(lista);
+      setComentariosPage(1);
+    } catch (e) {
+      console.error('Error normalizando observaciones', e, {
+        observaciones: (operadorDetalle as any).observaciones,
+      });
+      setComentarios([]);
     }
-  }, [showDetailsModal, operadorDetalle]);
+  }, [operadorDetalle]);
 
   // Derivados de paginación de comentarios
   const comentariosTotalPages = Math.max(1, Math.ceil(comentarios.length / Math.max(1, comentariosPerPage)));
