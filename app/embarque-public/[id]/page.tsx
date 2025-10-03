@@ -236,84 +236,128 @@ export default function EmbarquePublicPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <Header onMenuClick={() => {}} showControls={false} />
-      <main className="pt-24 p-6 max-w-5xl mx-auto">
+      <main className="pt-24 p-3 sm:p-6 max-w-5xl mx-auto">
         <Toaster />
 
         <Card>
-          <CardHeader className="pb-8">
-            <div className="flex items-center justify-between w-full">
-              <div className="w-1/3" />
-            <div className="flex flex-col items-center w-1/3">
-              <CardTitle className="flex flex-col items-center">
-                <img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto" />
-                <div className="mt-3 text-xl md:text-2xl font-semibold text-gray-900 capitalize truncate">transportes internacionales monarca</div>
-                <span className="mt-2 text-lg font-semibold">Información del Embarque</span>
-              </CardTitle>
-              <CardDescription className="mt-1">Vista pública para permisionarios</CardDescription>
-            </div>
-              <div className="w-1/3 text-right">
-                <div className="text-sm text-gray-600">Fecha creación</div>
-                <div className="text-sm text-gray-700">{(embarque?.fecha_creacion || embarque?.created_at) ? formatDateTime(embarque?.fecha_creacion || embarque?.created_at) : '—'}</div>
+          <CardHeader className="pb-6 px-3 sm:pb-8 sm:px-6">
+            <div className="flex flex-col space-y-4 sm:space-y-0 sm:flex-row sm:items-center sm:justify-between w-full">
+              {/* Logo y título - responsive */}
+              <div className="flex flex-col items-center sm:items-start order-2 sm:order-1">
+                <CardTitle className="flex flex-col items-center sm:items-start">
+                  <img src="/monarca-logo.png" alt="Monarca" className="h-10 sm:h-12 w-auto" />
+                  <div className="mt-2 sm:mt-3 text-lg sm:text-xl md:text-2xl font-semibold text-gray-900 text-center sm:text-left leading-tight">
+                    Transportes Internacionales Monarca
+                  </div>
+                  <span className="mt-1 sm:mt-2 text-base sm:text-lg font-semibold text-blue-600">Información del Embarque</span>
+                </CardTitle>
+                <CardDescription className="mt-1 text-center sm:text-left">Vista pública para permisionarios</CardDescription>
+              </div>
+              
+              {/* Fecha de creación - más visible en móvil */}
+              <div className="bg-blue-50 p-3 rounded-lg text-center sm:text-right order-1 sm:order-2">
+                <div className="text-xs sm:text-sm font-medium text-blue-700 uppercase tracking-wide">Fecha creación</div>
+                <div className="text-sm sm:text-base font-semibold text-gray-900 mt-1">
+                  {(embarque?.fecha_creacion || embarque?.created_at) ? formatDateTime(embarque?.fecha_creacion || embarque?.created_at) : '—'}
+                </div>
               </div>
             </div>
-            <div>
-              <div className="mt-10 text-center text-2xl font-semibold text-gray-900">{embarque?.cliente?.nombre || '—'}</div>
+            
+            {/* Nombre del cliente */}
+            <div className="mt-4 sm:mt-6">
+              <div className="text-center bg-gradient-to-r from-blue-50 to-indigo-50 p-3 sm:p-4 rounded-lg border border-blue-100">
+                <div className="text-lg sm:text-2xl font-bold text-gray-900">{embarque?.cliente?.nombre || 'Cliente no especificado'}</div>
+              </div>
             </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className="px-3 sm:px-6">
             <div id="embarque-printable">
-              <div className="grid grid-cols-1 md:grid-cols-5 gap-4 px-6 sm:px-8">
-                <div className="md:col-span-1">
-                  <Label className="text-base font-semibold text-gray-900">Folio</Label>
-                  <p className="text-base font-bold text-gray-900">{embarque.folio || '—'}</p>
+              {/* Información básica - Grid responsive */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+                  <Label className="text-xs sm:text-sm font-semibold text-gray-700 uppercase tracking-wide">Folio</Label>
+                  <p className="text-lg sm:text-xl font-bold text-blue-600 mt-1">{embarque.folio || '—'}</p>
                 </div>
-                <div className="md:col-span-4 flex flex-col items-end">
-                  <Label className="text-base font-semibold text-gray-900">Tipo de Servicio</Label>
-                  <p className="text-lg text-right">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
-                </div>
-                {/* Liga compartida por Monarca (si existe) */}
-                {embarque?.reporte_cliente_url && (
-                  <div className="md:col-span-5 mt-2">
-                    <Label className="text-base font-semibold text-gray-900">Liga de referencia</Label>
-                    <div className="mt-1">
-                      <a href={embarque.reporte_cliente_url} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all">{embarque.reporte_cliente_url}</a>
-                    </div>
-                  </div>
-                )}
-                <div className="md:col-span-5 lg:col-span-5">
-                  <Label className="text-base font-semibold text-gray-900">Contenido</Label>
-                  <p className="text-lg">{embarque.contenido || '—'}</p>
+                <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 shadow-sm">
+                  <Label className="text-xs sm:text-sm font-semibold text-gray-700 uppercase tracking-wide">Tipo de Servicio</Label>
+                  <p className="text-sm sm:text-base font-semibold text-gray-900 mt-1">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
                 </div>
               </div>
-
-              <div className="mt-3 grid grid-cols-1 md:grid-cols-5 gap-4 px-6 sm:px-8">
-                {/* Column 1: Lugar Recolecta, Destino, Peso (peso under destino) */}
-                <div className="md:col-span-5">
-                  <div className="flex items-center justify-between">
-                    <Label className="text-base font-semibold text-gray-900">Lugar Recolecta</Label>
-                    <Label className="text-base font-semibold text-gray-900">Fecha / Hora Recolecta</Label>
+              
+              {/* Liga de referencia - si existe */}
+              {embarque?.reporte_cliente_url && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 sm:p-4 mb-4 sm:mb-6">
+                  <Label className="text-xs sm:text-sm font-semibold text-amber-800 uppercase tracking-wide flex items-center">
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                    </svg>
+                    Liga de referencia
+                  </Label>
+                  <div className="mt-2">
+                    <a 
+                      href={embarque.reporte_cliente_url} 
+                      target="_blank" 
+                      rel="noreferrer" 
+                      className="text-blue-700 hover:text-blue-800 underline break-all text-xs sm:text-sm font-medium"
+                    >
+                      {embarque.reporte_cliente_url}
+                    </a>
                   </div>
+                </div>
+              )}
+              
+              {/* Contenido */}
+              <div className="bg-white border border-gray-200 rounded-lg p-3 sm:p-4 mb-4 sm:mb-6">
+                <Label className="text-xs sm:text-sm font-semibold text-gray-700 uppercase tracking-wide flex items-center">
+                  <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  Contenido de la carga
+                </Label>
+                <p className="text-sm sm:text-base text-gray-900 mt-2 leading-relaxed">{embarque.contenido || 'No especificado'}</p>
+              </div>
+
+              {/* Sección de Recolectas - Mejorada para móvil */}
+              <div className="mb-4 sm:mb-6">
+                <div className="bg-green-50 border border-green-200 rounded-lg p-3 sm:p-4">
+                  <Label className="text-xs sm:text-sm font-semibold text-green-800 uppercase tracking-wide flex items-center mb-3">
+                    <svg className="w-3 h-3 sm:w-4 sm:h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z" />
+                    </svg>
+                    Lugar de Recolecta
+                  </Label>
                   {Array.isArray(embarque.recolectas) && embarque.recolectas.length > 0 ? (
-                    <div className="space-y-2 mt-1">
+                    <div className="space-y-3">
                       {embarque.recolectas.map((r: any, i: number) => (
-                        <div key={i} className="w-full text-gray-900 bg-gray-50 p-3 rounded">
-                          <div className="font-medium text-sm text-gray-700">{i === 0 ? 'Original' : `Recolecta ${i + 1}`}</div>
-                          <div className="mt-1 flex justify-between items-start gap-4">
-                            <div className="whitespace-pre-wrap text-lg">{r?.direccion || 'Sin especificar'}</div>
-                            <div className="text-lg text-gray-600 text-right min-w-[140px] font-semibold">
+                        <div key={i} className="bg-white border border-green-100 rounded-lg p-3 shadow-sm">
+                          <div className="flex flex-col gap-2 mb-2">
+                            <div className="font-medium text-xs sm:text-sm text-green-700 bg-green-100 px-2 py-1 rounded-full inline-block w-fit">
+                              {i === 0 ? 'Recolecta Principal' : `Recolecta ${i + 1}`}
+                            </div>
+                            <div className="text-xs sm:text-sm font-semibold text-gray-600">
                               {(r?.fecha || r?.hora) ? (
-                                <span>{r?.fecha ? new Date(r.fecha).toLocaleDateString() : ''} {r?.hora || ''}</span>
+                                <span className="bg-gray-100 px-2 py-1 rounded">
+                                  📅 {r?.fecha ? new Date(r.fecha).toLocaleDateString('es-MX') : ''} {r?.hora ? `⏰ ${r.hora}` : ''}
+                                </span>
                               ) : (
-                                <span className="text-gray-400 text-lg">Sin información</span>
+                                <span className="text-gray-400">Sin programar</span>
                               )}
                             </div>
+                          </div>
+                          <div className="text-sm sm:text-base text-gray-900 leading-relaxed">
+                            {r?.direccion || 'Sin especificar'}
                           </div>
                         </div>
                       ))}
                     </div>
                   ) : (
-                    <p className="text-base">{embarque.origen || '—'}</p>
+                    <div className="bg-white border border-green-100 rounded-lg p-3">
+                      <p className="text-sm sm:text-base text-gray-900">{embarque.origen || 'No especificado'}</p>
+                    </div>
                   )}
+                </div>
+              </div>
 
                   <div className="mt-3">
                     <div className="flex items-center justify-between">
