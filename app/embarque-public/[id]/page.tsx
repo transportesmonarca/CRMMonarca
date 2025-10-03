@@ -130,7 +130,7 @@ export default function EmbarquePublicPage() {
       }
 
       setLoading(true)
-          try {
+      try {
         const res = await fetch(`/api/public-link/${token}`)
         const json = await res.json()
         if (json?.error) {
