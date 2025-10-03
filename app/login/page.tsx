@@ -283,7 +283,7 @@ export default function LoginPage() {
         <div className="text-center text-sm text-gray-500">
           Made by: <span className="font-medium text-gray-700">Kleos Digital 2025</span> for{" "}
           <span className="font-medium text-gray-700">Transportes Internacionales Monarca</span>{" "}
-          <span className="text-gray-400">v1.0</span>
+          <span className="text-gray-400">v1.1</span>
         </div>
       </footer>
 
