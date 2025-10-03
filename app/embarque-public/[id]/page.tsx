@@ -348,9 +348,38 @@ export default function EmbarquePublicPage() {
                       <Label className="text-base font-semibold text-gray-900">Peso</Label>
                       <p className="text-lg">{embarque.peso ? `${String(embarque.peso)} Kg` : '—'}</p>
                     </div>
+                    
                     <div className="text-center sm:text-left">
                       <Label className="text-base font-semibold text-gray-900">Remolque</Label>
-                      <p className="text-lg text-right max-w-[280px] truncate">{(embarque.remolque && (embarque.remolque.numero_economico || embarque.remolque.numero)) || '—'}</p>
+                      <div className="text-lg text-right max-w-[280px]">
+                        {(() => {
+                          // Usar la misma lógica que en embarques/page.tsx
+                          const remolqueNumero = embarque.remolque?.numero_economico || embarque.remolque_numero_economico || "";
+                          const remolqueMarca = embarque.remolque?.marca || (embarque as any).remolque_marca || "";
+                          const remolquePlacas = embarque.remolque?.placas || embarque.remolque_placa || "";
+                          
+                          if (!remolqueNumero && !remolquePlacas && !remolqueMarca) {
+                            return <span>—</span>;
+                          }
+                          
+                          return (
+                            <div>
+                              {remolqueNumero && (
+                                <div className="font-semibold"># {remolqueNumero}</div>
+                              )}
+                              {remolquePlacas && (
+                                <div className="text-sm text-gray-600">{remolquePlacas}</div>
+                              )}
+                              {remolqueMarca && (
+                                <div className="text-sm text-gray-500">{remolqueMarca}</div>
+                              )}
+                              {!remolqueNumero && !remolquePlacas && !remolqueMarca && (
+                                <span>Sin información</span>
+                              )}
+                            </div>
+                          );
+                        })()}
+                      </div>
                     </div>
                   </div>
                 </div>
