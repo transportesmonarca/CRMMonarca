@@ -1010,8 +1010,30 @@ export default function EmbarquesPage() {
   };
 
   const handleEdit = async (embarque: Embarque) => {
-    // Extraer direcciones múltiples de observaciones si existen
-    const { recolectas, entregas, observacionesLimpias } = extraerDireccionesMultiples(embarque.observaciones || null);
+    // Extraer direcciones múltiples - PRIORIDAD: campos JSON, luego observaciones, luego legacy
+    let recolectas: any[] = [];
+    let entregas: any[] = [];
+    let observacionesLimpias = embarque.observaciones || "";
+    
+    // Prioridad 1: Obtener desde campos JSON
+    try {
+      if ((embarque as any).recolectas_json) {
+        recolectas = JSON.parse((embarque as any).recolectas_json);
+      }
+      if ((embarque as any).entregas_json) {
+        entregas = JSON.parse((embarque as any).entregas_json);
+      }
+    } catch (jsonError) {
+      console.warn("Error parsing JSON direcciones:", jsonError);
+    }
+    
+    // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+    if (recolectas.length === 0 && entregas.length === 0) {
+      const extracted = extraerDireccionesMultiples(embarque.observaciones || null);
+      recolectas = extracted.recolectas;
+      entregas = extracted.entregas;
+      observacionesLimpias = extracted.observacionesLimpias || "";
+    }
 
     // Si no se encontraron direcciones múltiples, usar los campos legacy
     const recolectasFinales = recolectas.length > 0 ? recolectas : [
