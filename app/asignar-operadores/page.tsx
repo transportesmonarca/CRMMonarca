@@ -3470,6 +3470,8 @@ export default function AsignarOperadoresPage() {
                         {embarque.folio}
                       </span>
                       
+
+                      
                       {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
                       {(() => {
                         const analisis = analizarContingencia(embarque.estado || '');
@@ -3507,9 +3509,47 @@ export default function AsignarOperadoresPage() {
                     </CardDescription>
                   </div>
                   <div className="flex items-center space-x-2">
-                    {/* Badge de Direcciones Múltiples ahora está junto al botón Detalles */}
                     {getEstadoBadge(embarque.estado)}
-                    <div className="flex space-x-1">
+                    <div className="flex space-x-1 items-center">
+                      {/* Badge D. Múltiples - Solo mostrar cuando esté asignado o listo para asignar */}
+                      {(() => {
+                        const estado = embarque.estado || '';
+                        const estadosValidos = ['asignado', 'listo-para-asignar'];
+                        const mostrarBadge = estadosValidos.some(est => estado.includes(est));
+                        
+                        if (mostrarBadge) {
+                          // Extraer direcciones múltiples
+                          let recolectas: any[] = [];
+                          let entregas: any[] = [];
+                          
+                          try {
+                            // Intentar JSON primero
+                            if ((embarque as any).recolectas_json) {
+                              recolectas = JSON.parse((embarque as any).recolectas_json);
+                            }
+                            if ((embarque as any).entregas_json) {
+                              entregas = JSON.parse((embarque as any).entregas_json);
+                            }
+                          } catch (e) {
+                            // Si falla JSON, extraer de observaciones
+                            const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
+                            recolectas = extracted.recolectas;
+                            entregas = extracted.entregas;
+                          }
+                          
+                          if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                            return (
+                              <span 
+                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                              >
+                                D. Múltiples
+                              </span>
+                            );
+                          }
+                        }
+                        return null;
+                      })()}
                       
                         <Button
                         variant="outline"
