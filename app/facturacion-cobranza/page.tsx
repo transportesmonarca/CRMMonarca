@@ -2271,6 +2271,7 @@ export default function FacturacionCobranzaPage() {
   const [filtroFecha, setFiltroFecha] = useState("");
   const [filtroFechaHasta, setFiltroFechaHasta] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
+  const [filtroEstado, setFiltroEstado] = useState("todos");
   // Paginación lista principal
   const [listaPage, setListaPage] = useState(1);
   const [listaPageSize, setListaPageSize] = useState(12);
@@ -3133,6 +3134,10 @@ export default function FacturacionCobranzaPage() {
       filtroOperador === "todos" ||
       embarque.operadorAsignado?.nombre === filtroOperador;
 
+    const coincideEstado =
+      filtroEstado === "todos" ||
+      String(embarque.estado || "").trim().toLowerCase().startsWith(filtroEstado.toLowerCase());
+
     const coincideFecha =
       !filtroFecha ||
       new Date(embarque.fechaAsignacion || "") >= new Date(filtroFecha);
@@ -3144,6 +3149,7 @@ export default function FacturacionCobranzaPage() {
     return (
       coincideBusqueda &&
       coincideOperador &&
+      coincideEstado &&
       coincideFecha &&
       coincideFechaHasta
     );
@@ -3161,7 +3167,7 @@ export default function FacturacionCobranzaPage() {
   }, [totalListaPages]);
   useEffect(() => {
     setListaPage(1);
-  }, [searchTerm, filtroOperador, filtroFecha, filtroFechaHasta, listaPageSize]);
+  }, [searchTerm, filtroOperador, filtroEstado, filtroFecha, filtroFechaHasta, listaPageSize]);
   const listaStart = (listaPage - 1) * listaPageSize;
   const listaEnd = listaStart + listaPageSize;
   const embarquesPaginados = embarquesOrdenados.slice(listaStart, listaEnd);
@@ -7836,6 +7842,19 @@ export default function FacturacionCobranzaPage() {
                   <SelectItem value="18">18 por página</SelectItem>
                   <SelectItem value="24">24 por página</SelectItem>
                   <SelectItem value="48">48 por página</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-700">Estado:</span>
+              <Select value={filtroEstado} onValueChange={setFiltroEstado}>
+                <SelectTrigger className="w-[140px]"><SelectValue placeholder="Filtrar estado" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos los estados</SelectItem>
+                  <SelectItem value="finalizado">Finalizado</SelectItem>
+                  <SelectItem value="archivado">Archivado</SelectItem>
+                  <SelectItem value="cancelado">Cancelado</SelectItem>
                 </SelectContent>
               </Select>
             </div>

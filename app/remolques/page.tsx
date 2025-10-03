@@ -1319,16 +1319,6 @@ export default function RemolquesPage() {
                         Completa la información del remolque
                       </DialogDescription>
                     </div>
-                    {!editingRemolque && (
-                      <Button
-                        onClick={generarDatosAleatorios}
-                        variant="outline"
-                        size="sm"
-                        className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                      >
-                        🎲 Datos Aleatorios
-                      </Button>
-                    )}
                   </div>
                 </DialogHeader>
                 

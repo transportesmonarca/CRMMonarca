@@ -2438,7 +2438,6 @@ export default function CamionesPage() {
               </DialogTrigger>
               <DialogContent className={`max-w-4xl ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
                 <DialogHeader>
-                  <div className="flex items-center justify-between">
                     <div>
                       <DialogTitle>
                         {editingCamion ? "Editar Camión" : "Nuevo Camión"}
@@ -2447,18 +2446,6 @@ export default function CamionesPage() {
                         Completa la información del camión
                       </DialogDescription>
                     </div>
-                    {!editingCamion && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={() => generarDatosAleatoriosCamion(setFormData, toast)}
-                        className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                      >
-                        🎲 Datos Aleatorios
-                      </Button>
-                    )}
-                  </div>
                 </DialogHeader>
 
                 <div className="w-full">

@@ -13,10 +13,12 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import LoginBackgroundManager from "@/components/configuracion/login-background-manager";
 import { Settings, Shield, Bell, FileText, User, Trash2, Download, Filter, AlertTriangle, Edit2, Save } from "lucide-react";
-import { getCurrentUser, verifyAuditPassword, listUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser } from "@/lib/auth";
+import { getCurrentUser, verifyAuditPassword, listUsers, listActiveUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser, deleteUser } from "@/lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
+import { toast } from "@/hooks/use-toast";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from "@/components/ui/alert-dialog";
 
 interface AlertThreshold {
     id: string;
@@ -92,6 +94,11 @@ export default function ConfiguracionPage() {
     const [resetUser, setResetUser] = useState<{ id: string; username: string } | null>(null)
     const [resetPwd1, setResetPwd1] = useState("")
     const [resetPwd2, setResetPwd2] = useState("")
+    // Estado para eliminar usuario
+    const [deleteUserOpen, setDeleteUserOpen] = useState(false)
+    const [userToDelete, setUserToDelete] = useState<{ id: string; username: string; nombre: string } | null>(null)
+    const [deletingUser, setDeletingUser] = useState(false)
+
     // Retención de datos (solo Embarques)
     const [retencionConfirmOpen, setRetencionConfirmOpen] = useState(false)
     const [retencionFinalOpen, setRetencionFinalOpen] = useState(false)
@@ -150,13 +157,27 @@ export default function ConfiguracionPage() {
     // Cargar usuarios y seguridad
     const cargarUsuarios = async () => {
         try {
-            setLoadingUsers(true)
-            const data = await listUsers()
-            setUsers(data)
+            console.log('🔄 Iniciando carga de usuarios activos...');
+            setLoadingUsers(true);
+            
+            // Limpiar estado actual primero
+            setUsers([]);
+            
+            // Llamada fresca a la base de datos
+            const data = await listActiveUsers();
+            console.log('📥 Datos recibidos de listActiveUsers:', data?.length || 0, 'usuarios activos');
+            console.log('👥 Usuarios activos cargados:', data?.map(u => ({ id: u.id, username: u.username, active: u.active })) || []);
+            
+            // Verificar que realmente estamos filtrando usuarios activos
+            const allActiveUsers = data?.filter(u => u.active) || [];
+            console.log('🔍 Usuarios confirmados como activos:', allActiveUsers.length);
+            
+            setUsers(allActiveUsers);
+            console.log('✅ Estado de usuarios actualizado - solo usuarios activos');
         } catch (e) {
-            console.warn("No se pudieron cargar usuarios:", e)
+            console.error("❌ Error cargando usuarios activos:", e);
         } finally {
-            setLoadingUsers(false)
+            setLoadingUsers(false);
         }
     }
 
@@ -203,7 +224,11 @@ export default function ConfiguracionPage() {
             setEditIdx(null);
             setEditValues({});
         } else {
-            alert('No se pudo actualizar el umbral.');
+            toast({
+                title: "Error al actualizar",
+                description: "No se pudo actualizar el umbral de alerta.",
+                variant: "destructive"
+            });
         }
     }
 
@@ -371,7 +396,90 @@ export default function ConfiguracionPage() {
         }
     }
 
+    // Función mejorada para eliminar usuario permanentemente
+    const handleDeleteUser = async () => {
+        if (!userToDelete || !currentUser) {
+            console.error("No hay usuario seleccionado o currentUser no existe");
+            return;
+        }
 
+        // Verificar permisos
+        if (currentUser.role !== 'admin') {
+            toast({
+                title: "Sin permisos",
+                description: "Solo el administrador puede eliminar usuarios.",
+                variant: "destructive"
+            });
+            return;
+        }
+
+        setDeletingUser(true);
+        
+        try {
+            // Validación adicional: no eliminar usuarios críticos
+            if (userToDelete.username === 'admin' || userToDelete.username === currentUser.username) {
+                toast({
+                    title: "⚠️ Operación no permitida",
+                    description: "No puedes eliminar tu propio usuario o el usuario administrador principal.",
+                    variant: "destructive"
+                });
+                return;
+            }
+
+            console.log(`🗑️ Eliminando permanentemente usuario ${userToDelete.username} (ID: ${userToDelete.id})`);
+            
+            // Guardar referencia del usuario antes de eliminar
+            const deletedUserRef = { ...userToDelete };
+            
+            // Cerrar diálogo y limpiar estado ANTES de la eliminación
+            setDeleteUserOpen(false);
+            setUserToDelete(null);
+            
+            // Realizar la eliminación física
+            await deleteUser(userToDelete.id);
+            console.log(`✅ Usuario ${deletedUserRef.username} eliminado permanentemente de la base de datos`);
+            
+            // Actualización inmediata del estado local (optimistic update)
+            setUsers(prevUsers => {
+                const filtered = prevUsers.filter(u => u.id !== deletedUserRef.id);
+                console.log(`🔄 Eliminado ${deletedUserRef.username} del estado local. Usuarios restantes:`, filtered.length);
+                return filtered;
+            });
+            
+            // Esperar un momento antes de recargar para asegurar consistencia
+            await new Promise(resolve => setTimeout(resolve, 200));
+            
+            // Recarga completa para confirmar
+            console.log('🔄 Recargando lista completa de usuarios desde la base de datos...');
+            await cargarUsuarios();
+            console.log('✅ Lista de usuarios recargada exitosamente');
+            
+            // Registrar en auditoría
+            try {
+                await agregarAuditLog('ELIMINAR', 'Seguridad', `Usuario eliminado permanentemente: ${deletedUserRef.username}`);
+                console.log('✅ Auditoría registrada');
+            } catch (e) {
+                console.warn("⚠️ Error registrando auditoría:", e);
+            }
+            
+            // Mostrar éxito con toast
+            toast({
+                title: "✅ Usuario eliminado",
+                description: `El usuario "${deletedUserRef.username}" ha sido eliminado permanentemente del sistema.`,
+                variant: "default"
+            });
+            
+        } catch (error: any) {
+            console.error("❌ Error eliminando usuario:", error);
+            toast({
+                title: "❌ Error al eliminar usuario",
+                description: error.message || "No se pudo eliminar el usuario. Intenta nuevamente.",
+                variant: "destructive"
+            });
+        } finally {
+            setDeletingUser(false);
+        }
+    };
 
     const exportarAuditLogs = () => {
         const csv = [
@@ -422,8 +530,22 @@ export default function ConfiguracionPage() {
     }, [retencionNextRun])
 
     const runRetention = async () => {
-        if (!currentUser) { alert('Tu sesión ha expirado.'); return }
-        if (currentUser.role !== 'admin') { alert('Solo el administrador puede realizar esta acción.'); return }
+        if (!currentUser) { 
+            toast({
+                title: "Sesión expirada",
+                description: "Tu sesión ha expirado. Inicia sesión nuevamente.",
+                variant: "destructive"
+            });
+            return;
+        }
+        if (currentUser.role !== 'admin') { 
+            toast({
+                title: "Sin permisos",
+                description: "Solo el administrador puede realizar esta acción.",
+                variant: "destructive"
+            });
+            return;
+        }
         try {
             setRetencionRunning(true)
             // Calcular fecha límite por meses
@@ -441,9 +563,17 @@ export default function ConfiguracionPage() {
             // Reprogramar siguiente corrida
             scheduleNextRun(months)
             setRetencionWarning(null)
-            alert('Limpieza de embarques ejecutada correctamente.')
+            toast({
+                title: "Limpieza completada",
+                description: "La limpieza de embarques se ejecutó correctamente.",
+                variant: "default"
+            });
         } catch (e: any) {
-            alert('Error ejecutando retención: ' + (e.message || e))
+            toast({
+                title: "Error en la limpieza",
+                description: e.message || "Error ejecutando retención de datos",
+                variant: "destructive"
+            });
         } finally {
             setRetencionRunning(false)
             setRetencionFinalOpen(false)
@@ -452,7 +582,11 @@ export default function ConfiguracionPage() {
 
     const startRetentionFlow = () => {
         if (!currentUser || currentUser.role !== 'admin') {
-            alert('Solo el administrador puede modificar retención o ejecutar limpieza.');
+            toast({
+                title: "Sin permisos",
+                description: "Solo el administrador puede modificar retención o ejecutar limpieza.",
+                variant: "destructive"
+            });
             return
         }
         setRetencionConfirmOpen(true)
@@ -746,7 +880,11 @@ export default function ConfiguracionPage() {
                                                 a.remove()
                                                 URL.revokeObjectURL(url)
                                             } catch (e: any) {
-                                                alert(e?.message || 'Error generando Excel')
+                                                toast({
+                                                    title: "Error generando Excel",
+                                                    description: e?.message || "No se pudo generar el archivo Excel",
+                                                    variant: "destructive"
+                                                });
                                             }
                                         }}
                                     >
@@ -812,7 +950,11 @@ export default function ConfiguracionPage() {
                                                             a.remove()
                                                             URL.revokeObjectURL(url)
                                                         } catch (e: any) {
-                                                            alert(e?.message || 'Error desconocido descargando ZIP')
+                                                            toast({
+                                                                title: "Error descargando ZIP",
+                                                                description: e?.message || "Error desconocido descargando archivo ZIP",
+                                                                variant: "destructive"
+                                                            });
                                                         } finally {
                                                             setZipDownloading(false)
                                                         }
@@ -840,7 +982,14 @@ export default function ConfiguracionPage() {
                                 <div className="flex gap-2">
                                     <Button variant="outline" onClick={() => scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))}>Reprogramar siguiente ejecución</Button>
                                     <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={() => {
-                                        if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede guardar estos cambios.'); return }
+                                        if (!currentUser || currentUser.role !== 'admin') { 
+                                            toast({
+                                                title: "Sin permisos",
+                                                description: "Solo el administrador puede guardar estos cambios.",
+                                                variant: "destructive"
+                                            });
+                                            return;
+                                        }
                                         guardarConfiguracion()
                                         scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))
                                     }}>Guardar configuración</Button>
@@ -861,9 +1010,17 @@ export default function ConfiguracionPage() {
                                                         a.click()
                                                         a.remove()
                                                         URL.revokeObjectURL(url)
-                                                        alert('Export descargado correctamente')
+                                                        toast({
+                                                            title: "Exportación exitosa",
+                                                            description: "Los datos han sido exportados correctamente",
+                                                            variant: "default"
+                                                        })
                                                     } catch (e: any) {
-                                                        alert('Error exportando: ' + (e.message || e))
+                                                        toast({
+                                                            title: "Error en exportación",
+                                                            description: e.message || e,
+                                                            variant: "destructive"
+                                                        })
                                                     }
                                                 }}
                                             >
@@ -880,13 +1037,24 @@ export default function ConfiguracionPage() {
                                                     className="ml-2 bg-green-600 hover:bg-green-700 text-white border-green-700"
                                                     onClick={async () => {
                                                         const input = document.getElementById('importFile') as HTMLInputElement | null
-                                                        if (!input || !input.files || input.files.length === 0) { alert('Selecciona un archivo exportado primero'); return }
+                                                        if (!input || !input.files || input.files.length === 0) { 
+                                                            toast({
+                                                                title: "Archivo requerido",
+                                                                description: "Selecciona un archivo exportado primero",
+                                                                variant: "destructive"
+                                                            })
+                                                            return 
+                                                        }
                                                         const file = input.files[0]
                                                         try {
                                                             let text = ''
                                                             if (file.name.endsWith('.gz')) {
                                                                 const arrayBuffer = await file.arrayBuffer()
-                                                                alert('Archivo .gz recibido. Descomprime localmente y sube el JSON resultante para previsualizar.')
+                                                                toast({
+                                                                    title: "Archivo comprimido detectado",
+                                                                    description: "Descomprime localmente y sube el JSON resultante para previsualizar",
+                                                                    variant: "default"
+                                                                })
                                                                 return
                                                             } else {
                                                                 text = await file.text()
@@ -899,9 +1067,17 @@ export default function ConfiguracionPage() {
                                                             for (const k of Object.keys(json.summary || {})) {
                                                                 msg += `${k}: ${json.summary[k].count} registros\n`
                                                             }
-                                                            alert(msg)
+                                                            toast({
+                                                                title: "Vista previa de importación",
+                                                                description: msg,
+                                                                variant: "default"
+                                                            })
                                                         } catch (e: any) {
-                                                            alert('Error previsualizando import: ' + (e.message || e))
+                                                            toast({
+                                                                title: "Error en vista previa",
+                                                                description: e.message || e,
+                                                                variant: "destructive"
+                                                            })
                                                         }
                                                     }}
                                                 >
@@ -986,8 +1162,12 @@ export default function ConfiguracionPage() {
                                             className="bg-green-600 hover:bg-green-700 text-white border-green-700"
                                             onClick={() => {
                                                 if (!newUser.username || !newUser.nombre || !newUser.password) {
-                                                    alert('Completa usuario, nombre y contraseña')
-                                                    return
+                                                    toast({
+                                                        title: "Campos incompletos",
+                                                        description: "Completa usuario, nombre y contraseña para continuar.",
+                                                        variant: "destructive"
+                                                    });
+                                                    return;
                                                 }
                                                 setPendingCreate({ ...newUser })
                                                 setAdminPassword("")
@@ -997,6 +1177,7 @@ export default function ConfiguracionPage() {
                                             Crear usuario
                                         </Button>
                                     </div>
+
 
                                     <div className="overflow-x-auto mt-4">
                                         <table className="min-w-full text-sm border">
@@ -1015,12 +1196,16 @@ export default function ConfiguracionPage() {
                                                 {loadingUsers ? (
                                                     <tr><td className="px-2 py-2" colSpan={6}>Cargando...</td></tr>
                                                 ) : users.length === 0 ? (
-                                                    <tr><td className="px-2 py-6 text-center text-gray-500" colSpan={6}>Sin usuarios</td></tr>
+                                                    <tr><td className="px-2 py-6 text-center text-gray-500" colSpan={7}>Sin usuarios activos</td></tr>
                                                 ) : users.map((u) => (
                                                     <tr key={u.id} className="border-b">
                                                         <td className="px-2 py-1 border">{u.username}</td>
                                                         <td className="px-2 py-1 border">{u.nombre}</td>
-                                                        <td className="px-2 py-1 border">{u.active ? 'Activo' : 'Inactivo'}</td>
+                                                        <td className="px-2 py-1 border">
+                                                            <span className="px-2 py-1 rounded text-xs bg-green-100 text-green-800">
+                                                                Activo
+                                                            </span>
+                                                        </td>
                                                         <td className="px-2 py-1 border">{u.failed_attempts || 0}</td>
                                                         <td className="px-2 py-1 border">{u.locked_until ? new Date(u.locked_until).toLocaleString() : '-'}</td>
                                                         <td className="px-2 py-1 border text-center">
@@ -1034,20 +1219,18 @@ export default function ConfiguracionPage() {
                                                         <td className="px-2 py-1 border text-center">
                                                             <Button
                                                                 size="sm"
-                                                                className="bg-red-600 hover:bg-red-700 text-white border-red-700"
-                                                                onClick={async () => {
-                                                                    if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede eliminar usuarios.'); return }
-                                                                    const ok = confirm(`¿Eliminar al usuario \"${u.username}\"? Esta acción no afectará documentos pasados; solo desactiva al usuario hacia futuro.`)
-                                                                    if (!ok) return
-                                                                    try {
-                                                                        await deactivateUser(u.id)
-                                                                        await cargarUsuarios()
-                                                                        try { await agregarAuditLog('ELIMINAR', 'Seguridad', `Usuario desactivado: ${u.username}`) } catch { }
-                                                                    } catch (e: any) {
-                                                                        alert('No se pudo eliminar: ' + (e.message || e))
-                                                                    }
+                                                                variant="destructive"
+                                                                onClick={() => {
+                                                                    setUserToDelete({
+                                                                        id: u.id,
+                                                                        username: u.username,
+                                                                        nombre: u.nombre || u.username
+                                                                    });
+                                                                    setDeleteUserOpen(true);
                                                                 }}
+                                                                disabled={!currentUser || currentUser.role !== 'admin'}
                                                             >
+                                                                <Trash2 className="h-4 w-4 mr-1" />
                                                                 Eliminar
                                                             </Button>
                                                         </td>
@@ -1057,6 +1240,37 @@ export default function ConfiguracionPage() {
                                         </table>
                                     </div>
                                 </div>
+
+                                {/* AlertDialog para eliminar usuario - ÚNICO */}
+                                <AlertDialog open={deleteUserOpen} onOpenChange={setDeleteUserOpen}>
+                                    <AlertDialogContent>
+                                        <AlertDialogHeader>
+                                            <AlertDialogTitle className="flex items-center space-x-2">
+                                                <AlertTriangle className="h-5 w-5 text-red-500" />
+                                                <span>¿Eliminar usuario permanentemente?</span>
+                                            </AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                                Estás a punto de <strong>ELIMINAR PERMANENTEMENTE</strong> al usuario <strong>"{userToDelete?.username}"</strong> ({userToDelete?.nombre}).
+                                                <br /><br />
+                                                <span className="text-red-600 font-bold">🚨 ATENCIÓN:</span> Esta acción eliminará completamente al usuario del sistema y <strong>NO SE PUEDE DESHACER</strong>. 
+                                                <br /><br />
+                                                Los registros históricos asociados no se eliminarán, pero el usuario desaparecerá de todas las listas y no podrá volver a acceder al sistema.
+                                            </AlertDialogDescription>
+                                        </AlertDialogHeader>
+                                        <AlertDialogFooter>
+                                            <AlertDialogCancel disabled={deletingUser}>
+                                                Cancelar
+                                            </AlertDialogCancel>
+                                            <AlertDialogAction
+                                                onClick={handleDeleteUser}
+                                                disabled={deletingUser}
+                                                className="bg-red-600 hover:bg-red-700 text-white"
+                                            >
+                                                {deletingUser ? "Eliminando..." : "SÍ, ELIMINAR PERMANENTEMENTE"}
+                                            </AlertDialogAction>
+                                        </AlertDialogFooter>
+                                    </AlertDialogContent>
+                                </AlertDialog>
 
                                 {/* Políticas de seguridad */}
                                 <div>
@@ -1075,10 +1289,31 @@ export default function ConfiguracionPage() {
                                                 <Button variant="outline" onClick={() => setConfirmAdminOpen(false)}>Cancelar</Button>
                                                 <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={async () => {
                                                     if (!pendingCreate) return
-                                                    if (!currentUser) { alert('Tu sesión ha expirado. Inicia sesión nuevamente.'); return }
-                                                    if (currentUser.role !== 'admin') { alert('Solo el administrador puede realizar esta acción.'); return }
+                                                    if (!currentUser) { 
+                                                        toast({
+                                                            title: "Sesión expirada",
+                                                            description: "Tu sesión ha expirado. Inicia sesión nuevamente.",
+                                                            variant: "destructive"
+                                                        });
+                                                        return;
+                                                    }
+                                                    if (currentUser.role !== 'admin') { 
+                                                        toast({
+                                                            title: "Sin permisos",
+                                                            description: "Solo el administrador puede realizar esta acción.",
+                                                            variant: "destructive"
+                                                        });
+                                                        return;
+                                                    }
                                                     const ok = await verifyCurrentUserPassword(adminPassword)
-                                                    if (!ok) { alert('Contraseña admin incorrecta'); return }
+                                                    if (!ok) { 
+                                                        toast({
+                                                            title: "Contraseña incorrecta",
+                                                            description: "La contraseña de administrador es incorrecta.",
+                                                            variant: "destructive"
+                                                        });
+                                                        return;
+                                                    }
                                                     try {
                                                         await createUser(pendingCreate.username.trim(), pendingCreate.nombre.trim(), pendingCreate.password)
                                                         setNewUser({ username: '', nombre: '', password: '' })
@@ -1086,7 +1321,13 @@ export default function ConfiguracionPage() {
                                                         agregarAuditLog('CREAR', 'Seguridad', 'Usuario secundario creado')
                                                         setConfirmAdminOpen(false)
                                                         setPendingCreate(null)
-                                                    } catch (e: any) { alert('Error creando usuario: ' + (e.message || e)) }
+                                                    } catch (e: any) { 
+                                                        toast({
+                                                            title: "Error creando usuario",
+                                                            description: e.message || "No se pudo crear el usuario",
+                                                            variant: "destructive"
+                                                        });
+                                                    }
                                                 }}>Confirmar y crear</Button>
                                             </DialogFooter>
                                         </DialogContent>
@@ -1107,14 +1348,34 @@ export default function ConfiguracionPage() {
                                                 <Button variant="outline" onClick={() => setResetDialogOpen(false)}>Cancelar</Button>
                                                 <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={async () => {
                                                     if (!resetUser) return
-                                                    if (!resetPwd1 || !resetPwd2) { alert('Ingresa la nueva contraseña dos veces'); return }
-                                                    if (resetPwd1 !== resetPwd2) { alert('Las contraseñas no coinciden'); return }
+                                                    if (!resetPwd1 || !resetPwd2) { 
+                                                        toast({
+                                                            title: "Contraseñas incompletas",
+                                                            description: "Ingresa la nueva contraseña dos veces para confirmar.",
+                                                            variant: "destructive"
+                                                        });
+                                                        return;
+                                                    }
+                                                    if (resetPwd1 !== resetPwd2) { 
+                                                        toast({
+                                                            title: "Contraseñas no coinciden",
+                                                            description: "Las contraseñas ingresadas no son iguales.",
+                                                            variant: "destructive"
+                                                        });
+                                                        return;
+                                                    }
                                                     try {
                                                         await resetPassword(resetUser.id, resetPwd1)
                                                         agregarAuditLog('ACTUALIZAR', 'Seguridad', 'Password reset')
                                                         setResetDialogOpen(false)
                                                         setResetUser(null)
-                                                    } catch (e: any) { alert('Error: ' + (e.message || e)) }
+                                                    } catch (e: any) { 
+                                                        toast({
+                                                            title: "Error al resetear contraseña",
+                                                            description: e.message || "No se pudo cambiar la contraseña",
+                                                            variant: "destructive"
+                                                        });
+                                                    }
                                                 }}>Guardar</Button>
                                             </DialogFooter>
                                         </DialogContent>
@@ -1151,10 +1412,31 @@ export default function ConfiguracionPage() {
                                                     className="bg-green-600 hover:bg-green-700 text-white border-green-700"
                                                     disabled={savingSec}
                                                     onClick={async () => {
-                                                        if (!currentUser) { alert('Tu sesión ha expirado. Inicia sesión nuevamente.'); return }
-                                                        if (currentUser.role !== 'admin') { alert('Solo el administrador puede realizar esta acción.'); return }
+                                                        if (!currentUser) { 
+                                                            toast({
+                                                                title: "Sesión expirada",
+                                                                description: "Tu sesión ha expirado. Inicia sesión nuevamente",
+                                                                variant: "destructive"
+                                                            })
+                                                            return 
+                                                        }
+                                                        if (currentUser.role !== 'admin') { 
+                                                            toast({
+                                                                title: "Acceso denegado",
+                                                                description: "Solo el administrador puede realizar esta acción",
+                                                                variant: "destructive"
+                                                            })
+                                                            return 
+                                                        }
                                                         const ok = await verifyCurrentUserPassword(secAdminPassword)
-                                                        if (!ok) { alert('Contraseña admin incorrecta'); return }
+                                                        if (!ok) { 
+                                                            toast({
+                                                                title: "Contraseña incorrecta",
+                                                                description: "La contraseña de administrador es incorrecta",
+                                                                variant: "destructive"
+                                                            })
+                                                            return 
+                                                        }
                                                         try {
                                                             setSavingSec(true)
                                                             await setSecuritySettings(secSettings as any)
@@ -1170,7 +1452,11 @@ export default function ConfiguracionPage() {
                                                             } catch (e) { /* ignore */ }
                                                             setSecConfirmOpen(false)
                                                         } catch (e: any) {
-                                                            alert('Error guardando políticas: ' + (e.message || e))
+                                                            toast({
+                                                                title: "Error al guardar",
+                                                                description: "Error guardando políticas: " + (e.message || e),
+                                                                variant: "destructive"
+                                                            })
                                                         } finally {
                                                             setSavingSec(false)
                                                         }
@@ -1505,7 +1791,14 @@ export default function ConfiguracionPage() {
                                                 onClick={() => {
                                                     setBlobResult(null);
                                                     setBlobErr(null);
-                                                    if (!currentUser || currentUser.role !== 'admin') { alert('Solo el administrador puede ejecutar esta acción.'); return }
+                                                    if (!currentUser || currentUser.role !== 'admin') { 
+                                                        toast({
+                                                            title: "Acceso denegado",
+                                                            description: "Solo el administrador puede ejecutar esta acción",
+                                                            variant: "destructive"
+                                                        })
+                                                        return 
+                                                    }
                                                     setBlobPwd1("");
                                                     setBlobPwd2("");
                                                     setBlobDialog1Open(true)

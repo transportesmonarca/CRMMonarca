@@ -234,7 +234,7 @@ export default function ConsultasPage() {
       // Los mejores clientes son aquellos con mayor combinación de embarques e ingresos
       const topClientesArray = Array.from(clientesMap.values())
         .map((cliente: any) => {
-          // Convertir USD a MXN aproximadamente (tasa promedio ~20 MXN/USD)
+          // Convertir USD a MXN aproximadamente (tasa promedio ~20 MXN/USD) solo para scoring
           const ingresosTotal = cliente.ingresos_mxn + (cliente.ingresos_usd * 20)
           // Score: 70% ingresos + 30% cantidad de embarques (normalizado)
           const scoreIngresos = ingresosTotal / 1000 // Normalizar dividiendo entre 1000
@@ -243,7 +243,6 @@ export default function ConsultasPage() {
           
           return {
             ...cliente,
-            ingresosTotal,
             scoreCombinado
           }
         })
@@ -497,25 +496,22 @@ export default function ConsultasPage() {
                     <p className="text-xs text-gray-500 mt-1">{item.embarques ?? 0} embarques</p>
                   </div>
                   
-                  {/* Revenue info */}
-                  <div className="space-y-2">
+                  {/* Revenue info - MXN and USD side by side */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {/* MXN Amount */}
                     <div className="text-center">
-                      <p className="font-bold text-green-600 text-lg">
-                        ${Number(item.ingresosTotal || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      <p className="font-bold text-green-600 text-base">
+                        ${Number(item.ingresos_mxn || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </p>
-                      <p className="text-xs text-gray-500">Total MXN</p>
+                      <p className="text-xs text-gray-500">MXN</p>
                     </div>
                     
-                    {/* Currency breakdown */}
-                    <div className="border-t pt-2 space-y-1">
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-600">MXN:</span>
-                        <span className="font-medium">${Number(item.ingresos_mxn || 0).toLocaleString('es-MX', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                      </div>
-                      <div className="flex justify-between text-xs">
-                        <span className="text-gray-600">USD:</span>
-                        <span className="font-medium">${Number(item.ingresos_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>
-                      </div>
+                    {/* USD Amount */}
+                    <div className="text-center">
+                      <p className="font-bold text-green-600 text-base">
+                        ${Number(item.ingresos_usd || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                      </p>
+                      <p className="text-xs text-gray-500">USD</p>
                     </div>
                   </div>
                 </div>

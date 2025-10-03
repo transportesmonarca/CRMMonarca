@@ -1,0 +1,30 @@
+# ===================================
+# Dockerfile para Desarrollo con Hot Reload
+# ===================================
+
+FROM node:18-alpine
+
+# Set working directory
+WORKDIR /app
+
+# Install dependencies for alpine
+RUN apk add --no-cache libc6-compat curl
+
+# Copy package files
+COPY package.json package-lock.json* ./
+
+# Install all dependencies (including dev dependencies)
+RUN npm ci
+
+# Copy source code
+COPY . .
+
+# Expose ports
+EXPOSE 3000 3001
+
+# Set environment
+ENV NODE_ENV=development
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Command for development with hot reload
+CMD ["npm", "run", "dev"]

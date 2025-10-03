@@ -357,6 +357,33 @@ export async function listUsers() {
   return data || []
 }
 
+// Lista solo usuarios activos para la interfaz de configuración
+export async function listActiveUsers() {
+  console.log('🔍 Consultando usuarios activos desde la base de datos...');
+  
+  const { data, error } = await supabase
+    .from("app_users")
+    .select("id, username, nombre, is_admin, active, failed_attempts, locked_until, created_at, updated_at")
+    .eq("active", true)
+    .order("created_at", { ascending: true });
+    
+  if (error) {
+    console.error('❌ Error consultando usuarios activos:', error);
+    throw error;
+  }
+  
+  const activeUsers = data || [];
+  console.log(`📊 Resultados de usuarios activos:`, activeUsers.length, 'usuarios');
+  console.log(`👥 Lista de usuarios activos:`, activeUsers.map(u => ({ 
+    id: u.id, 
+    username: u.username, 
+    nombre: u.nombre, 
+    active: u.active 
+  })));
+  
+  return activeUsers;
+}
+
 export async function resetPassword(userId: string, newPassword: string) {
   const salt = genSalt()
   const hash = await hashPassword(newPassword, salt)
@@ -390,26 +417,31 @@ export async function setUserActive(userId: string, active: boolean) {
 
 // Eliminar físicamente un usuario de la tabla app_users
 export async function deleteUser(userId: string) {
-  // Nota: eliminar físicamente puede romper referencias en otras tablas.
-  // Asegúrate de revisar integridad referencial antes de usar en producción.
-  const { error } = await supabase.from("app_users").delete().eq("id", userId)
-  if (error) throw error
-
-  // Intentar agregar registro de auditoría de borrado
+  console.log(`🗑️ Cliente: Iniciando eliminación física del usuario ID: ${userId}`);
+  
   try {
-    await supabase.from("audit_logs").insert({
-      usuario: getCurrentUser()?.nombre || getCurrentUser()?.username || "Sistema",
-      accion: "ELIMINAR",
-      modulo: "Seguridad",
-      detalles: `Usuario eliminado físicamente: ${userId}`,
-      fecha_creacion: new Date().toISOString(),
-    })
-  } catch (e) {
-    // No crítico
-    console.warn("No se pudo anotar audit log de deleteUser:", e)
+    // Llamar a la API del servidor que tiene permisos de admin
+    const response = await fetch('/api/admin/delete-user', {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ userId })
+    });
+    
+    const result = await response.json();
+    
+    if (!response.ok) {
+      console.error("❌ Error en API de eliminación:", result);
+      throw new Error(result.error || 'Error eliminando usuario');
+    }
+    
+    console.log("✅ Cliente: Usuario eliminado exitosamente via API:", result);
+    return true;
+  } catch (error) {
+    console.error("❌ Cliente: Error en deleteUser:", error);
+    throw error;
   }
-
-  return true
 }
 
 export async function setSecuritySettings(params: { max_failed_attempts: number; lockout_minutes: number; session_timeout_minutes: number }) {

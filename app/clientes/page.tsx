@@ -1218,24 +1218,10 @@ export default function ClientesPage() {
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
-                    {!editingClient && (
-                      <div className="mt-2">
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={generarDatosAleatorios}
-                          className="w-full bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                        >
-                          🎲 Generar Datos Aleatorios
-                        </Button>
-                      </div>
-                    )}
                   </div>
 
                   {/* Desktop header: keep original header for md+ */}
                   <DialogHeader className="hidden md:block">
-                    <div className="flex items-center justify-between">
                       <div>
                         <DialogTitle>
                           {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
@@ -1244,18 +1230,6 @@ export default function ClientesPage() {
                           Completa la información del cliente
                         </DialogDescription>
                       </div>
-                      {!editingClient && (
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          onClick={generarDatosAleatorios}
-                          className="flex items-center gap-2 bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                        >
-                          🎲 Datos Aleatorios
-                        </Button>
-                      )}
-                    </div>
                   </DialogHeader>
 
                 

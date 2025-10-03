@@ -88,6 +88,29 @@ interface DocumentoOperador {
 }
 
 export default function OperadoresPage() {
+  // Helper function para parsing seguro de JSON
+  const safeJsonParse = (raw: any, fallback: any = []) => {
+    if (!raw) return fallback;
+    
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim();
+      // Solo intentar parsear si parece ser JSON válido
+      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+        try {
+          return JSON.parse(trimmed);
+        } catch (parseError) {
+          console.warn('JSON Parse Error:', parseError, 'Raw:', raw.substring(0, 100));
+          return fallback;
+        }
+      } else {
+        console.warn('String no parece ser JSON válido:', raw.substring(0, 50));
+        return fallback;
+      }
+    }
+    
+    return raw;
+  };
+
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
@@ -940,7 +963,8 @@ export default function OperadoresPage() {
     if (!operadorDetalle) return;
     try {
       const raw = (operadorDetalle as any).observaciones ?? null;
-      const lista = raw ? (typeof raw === 'string' ? JSON.parse(raw) : raw) : [];
+      const lista = safeJsonParse(raw, []);
+      
       if (Array.isArray(lista)) {
         setComentarios(lista as ComentarioOperador[]);
         setComentariosPage(1);
@@ -948,7 +972,7 @@ export default function OperadoresPage() {
         setComentarios([]);
       }
     } catch (e) {
-      console.error('Error parsing observaciones desde operadorDetalle', e);
+      console.error('Error processing observaciones desde operadorDetalle', e);
       setComentarios([]);
     }
   }, [operadorDetalle]);
@@ -965,7 +989,6 @@ export default function OperadoresPage() {
         console.error("Error guardando comentarios", upError);
         setError("Error al guardar comentarios");
       } else {
-        setSuccess("Observaciones actualizadas");
         // Actualizar en operadorDetalle para mantener consistencia
         setOperadorDetalle((prev) =>
           prev ? { ...prev, observaciones: obsValue ?? undefined } : prev
@@ -1408,10 +1431,7 @@ export default function OperadoresPage() {
     const contactosCargados: Array<any> = [];
     if (operador.contactos_emergencia) {
       try {
-        const contactosExistentes =
-          typeof operador.contactos_emergencia === "string"
-            ? JSON.parse(operador.contactos_emergencia)
-            : operador.contactos_emergencia;
+        const contactosExistentes = safeJsonParse(operador.contactos_emergencia, []);
 
         if (Array.isArray(contactosExistentes)) {
           contactosExistentes.forEach((contacto) => {
@@ -2796,16 +2816,6 @@ export default function OperadoresPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {!editingId && (
-                  <Button
-                    onClick={autocompletarAleatorio}
-                    variant="outline"
-                    size="sm"
-                    className="bg-purple-50 hover:bg-purple-100 text-purple-700 border-purple-200"
-                  >
-                    🎲 Datos Aleatorios
-                  </Button>
-                )}
                 <Button
                   onClick={() => setShowModal(false)}
                   variant="outline"
@@ -3560,7 +3570,8 @@ export default function OperadoresPage() {
                       <div className="space-y-2">
                         {(() => {
                           try {
-                            const lista = operadorDetalle.contactos_emergencia ? (typeof operadorDetalle.contactos_emergencia === 'string' ? JSON.parse(operadorDetalle.contactos_emergencia) : operadorDetalle.contactos_emergencia) : [];
+                            const lista = safeJsonParse(operadorDetalle.contactos_emergencia, []);
+                            
                             if (!Array.isArray(lista) || lista.length === 0) return <p className="text-gray-500">Sin contactos registrados</p>;
                             return (
                               <div className="border rounded">
@@ -4065,11 +4076,7 @@ export default function OperadoresPage() {
                       });
                       // contactos emergencia - parse defensively and only load real entries
                       try {
-                        const contactosExistentes = op.contactos_emergencia
-                          ? typeof op.contactos_emergencia === "string"
-                            ? JSON.parse(op.contactos_emergencia)
-                            : op.contactos_emergencia
-                          : [];
+                        const contactosExistentes = safeJsonParse(op.contactos_emergencia, []);
 
                         const contactosCargados: Array<any> = [];
 
@@ -4237,7 +4244,7 @@ export default function OperadoresPage() {
                       <dd className="text-xs text-gray-700">
                         {(() => {
                           try {
-                            const lista = operadorQuickDetalle.contactos_emergencia ? (typeof operadorQuickDetalle.contactos_emergencia === 'string' ? JSON.parse(operadorQuickDetalle.contactos_emergencia) : operadorQuickDetalle.contactos_emergencia) : [];
+                            const lista = safeJsonParse(operadorQuickDetalle.contactos_emergencia, []);
                             if (!Array.isArray(lista) || lista.length === 0) return '—';
                             return lista.filter(Boolean).slice(0,2).map((c:any)=>c.nombre).join(', ') + (lista.length>2 ? '…' : '');
                           } catch { return '—'; }
@@ -4299,7 +4306,7 @@ export default function OperadoresPage() {
                   <div className="bg-gray-50 rounded border p-4 text-xs space-y-2">
                     {(() => {
                       try {
-                        const lista = operadorQuickDetalle.contactos_emergencia ? (typeof operadorQuickDetalle.contactos_emergencia === 'string' ? JSON.parse(operadorQuickDetalle.contactos_emergencia) : operadorQuickDetalle.contactos_emergencia) : [];
+                        const lista = safeJsonParse(operadorQuickDetalle.contactos_emergencia, []);
                         if (!Array.isArray(lista) || lista.length === 0) return <p className="text-gray-500">Sin contactos registrados</p>;
                         return (
                           <ul className="list-disc ml-4 space-y-1">

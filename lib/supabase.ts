@@ -14,6 +14,29 @@ export const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
 );
 
+// Cliente Supabase con service role para operaciones administrativas (solo servidor)
+let supabaseAdmin: ReturnType<typeof createClient> | null = null;
+
+export function getSupabaseAdmin() {
+  if (typeof window !== 'undefined') {
+    throw new Error('supabaseAdmin solo debe usarse en el servidor');
+  }
+  
+  if (!supabaseAdmin) {
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE;
+    if (!serviceRoleKey) {
+      throw new Error('SUPABASE_SERVICE_ROLE no está configurada');
+    }
+    
+    supabaseAdmin = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL!,
+      serviceRoleKey
+    );
+  }
+  
+  return supabaseAdmin;
+}
+
 // Tipos TypeScript para las tablas
 export interface Operador {
   id: string;

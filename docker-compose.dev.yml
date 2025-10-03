@@ -1,0 +1,31 @@
+# ===================================
+# Docker Compose para Desarrollo
+# ===================================
+
+services:
+  crm-monarca-dev:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: crm-monarca-dev
+    ports:
+      - "3005:3000"  # Puerto para desarrollo Docker
+    volumes:
+      # Bind mount para hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    env_file:
+      - .env.docker
+    environment:
+      - NODE_ENV=development
+      - WATCHPACK_POLLING=true
+    restart: unless-stopped
+    networks:
+      - crm-dev-network
+    stdin_open: true
+    tty: true
+
+networks:
+  crm-dev-network:
+    driver: bridge

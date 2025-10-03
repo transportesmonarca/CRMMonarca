@@ -4431,22 +4431,7 @@ export default function EmbarquesPage() {
             <div className="space-y-6">
               <Card>
                 <CardHeader>
-                    <div className="flex justify-between items-center">
-                      <CardTitle className="text-lg">Información Básica</CardTitle>
-                      {/* Autocompletar solo cuando se crea un embarque (no al editar) */}
-                      {!embarqueEditando && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={handleFillAllFields}
-                          disabled={saving}
-                          title="Autocompletar campos con datos de ejemplo"
-                        >
-                          Autocompletar
-                        </Button>
-                      )}
-                      {/* Generar liga pública: (oculto por ahora) */}
-                    </div>
+                    <CardTitle className="text-lg">Información Básica</CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Tabs defaultValue="basica" className="w-full">
