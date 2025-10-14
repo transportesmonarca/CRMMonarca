@@ -104,6 +104,9 @@ export async function uploadFile(fileName: string, file: File): Promise<{ url: s
     const response = await fetch("/api/upload", {
       method: "POST",
       body: formData,
+    }).catch((fetchError) => {
+      console.error("Error de red al contactar API de upload:", fetchError)
+      throw new Error("No se pudo conectar con el servidor. Asegúrese de que la aplicación esté ejecutándose.")
     })
 
     if (!response.ok) {

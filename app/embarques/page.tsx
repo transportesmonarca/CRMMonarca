@@ -5422,11 +5422,18 @@ export default function EmbarquesPage() {
                                 {embarqueDetalle.operador.nombre}{" "}
                                 {embarqueDetalle.operador.apellidos}
                               </p>
-                              {embarqueDetalle.operador.telefono && (
-                                <p className="text-xs text-gray-500 mt-1">
-                                  Tel: {embarqueDetalle.operador.telefono}
-                                </p>
-                              )}
+                              <div className="flex flex-col gap-1 mt-1">
+                                {embarqueDetalle.operador.operator_number && (
+                                  <p className="text-xs text-blue-600 font-medium">
+                                    Número: {embarqueDetalle.operador.operator_number}
+                                  </p>
+                                )}
+                                {embarqueDetalle.operador.telefono && (
+                                  <p className="text-xs text-gray-500">
+                                    Tel: {embarqueDetalle.operador.telefono}
+                                  </p>
+                                )}
+                              </div>
                             </div>
                           )}
                           {embarqueDetalle.camion && (

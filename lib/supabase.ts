@@ -40,6 +40,7 @@ export function getSupabaseAdmin() {
 // Tipos TypeScript para las tablas
 export interface Operador {
   id: string;
+  operator_number?: string; // Número consecutivo único del operador (OP-0001)
   nombre: string;
   apellidos: string;
   alias?: string;

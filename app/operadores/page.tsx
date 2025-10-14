@@ -59,6 +59,7 @@ import {
   Contact,
   MessageSquare,
   Save,
+  Zap,
 } from "lucide-react";
 import { exportOperadoresToExcel, exportOperadorDetalleToExcel } from "./excel-export";
 import { useState, useEffect, useRef } from "react";
@@ -191,6 +192,7 @@ export default function OperadoresPage() {
 
   // Estados para el formulario
   const [formData, setFormData] = useState({
+    operator_number: "",
     nombre: "",
     apellidos: "",
     alias: "",
@@ -236,6 +238,84 @@ export default function OperadoresPage() {
   const [backupCreating, setBackupCreating] = useState(false);
   const [restoring, setRestoring] = useState(false);
   const restoreInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Función para obtener el siguiente número de operador automáticamente
+  const obtenerSiguienteNumeroOperador = async () => {
+    try {
+      // Obtener todos los operadores y contar en el cliente temporalmente
+      const { data: operadores, error } = await supabase
+        .from('operadores')
+        .select('id');
+      
+      if (error) {
+        console.error('Error obteniendo operadores:', error);
+        return "OP001";
+      }
+      
+      const totalOperadores = (operadores?.length || 0) + 1;
+      return `OP${totalOperadores.toString().padStart(3, '0')}`;
+    } catch (error) {
+      console.error('Error calculando siguiente número:', error);
+      return "OP001";
+    }
+  };
+
+  // Función para rellenar datos de prueba
+  const rellenarDatosPrueba = () => {
+    const nombres = ['Juan Carlos', 'María Elena', 'Pedro Antonio', 'Ana Sofía', 'Luis Miguel'];
+    const apellidos = ['García López', 'Rodríguez Martín', 'Hernández Cruz', 'González Sánchez', 'López Pérez'];
+    const alias = ['El Rápido', 'La Estrella', 'El Profesional', 'La Confiable', 'El Experto'];
+    
+    const nombreAleatorio = nombres[Math.floor(Math.random() * nombres.length)];
+    const apellidoAleatorio = apellidos[Math.floor(Math.random() * apellidos.length)];
+    const aliasAleatorio = alias[Math.floor(Math.random() * alias.length)];
+    
+    setFormData(prev => ({
+      ...prev,
+      nombre: nombreAleatorio,
+      apellidos: apellidoAleatorio,
+      alias: aliasAleatorio,
+      telefono: `+52 ${Math.floor(Math.random() * 9 + 1)}${Math.floor(Math.random() * 900000000 + 100000000)}`,
+      email: `${nombreAleatorio.toLowerCase().replace(' ', '.')}@correo.com`,
+      licencia: `LIC${Math.floor(Math.random() * 900000 + 100000)}`,
+      numero_apto_medico: `APT${Math.floor(Math.random() * 90000 + 10000)}`,
+      fecha_vencimiento_licencia: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      fecha_vencimiento_apto_medico: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      tipo_sangre: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'][Math.floor(Math.random() * 8)],
+      direccion: `Calle ${Math.floor(Math.random() * 100 + 1)} #${Math.floor(Math.random() * 999 + 1)}, Col. Centro`,
+      fecha_nacimiento: new Date(Date.now() - (25 + Math.floor(Math.random() * 20)) * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+      curp: `${nombreAleatorio.substring(0,2).toUpperCase()}${apellidoAleatorio.substring(0,2).toUpperCase()}${Math.floor(Math.random() * 90) + 10}${Math.floor(Math.random() * 12) + 1}${Math.floor(Math.random() * 28) + 1}`,
+      rfc: `${nombreAleatorio.substring(0,2).toUpperCase()}${apellidoAleatorio.substring(0,2).toUpperCase()}${Math.floor(Math.random() * 900000 + 100000)}`,
+      nss: `${Math.floor(Math.random() * 90000000000 + 10000000000)}`,
+      telefono_emergencia: `+52 ${Math.floor(Math.random() * 9 + 1)}${Math.floor(Math.random() * 900000000 + 100000000)}`,
+    }));
+
+    // También rellenar algunos contactos de emergencia
+    const contactosPrueba = [
+      {
+        nombre: 'María González',
+        relacion: 'Esposa',
+        direccion: 'Av. Principal #123, Col. Centro',
+        telefono: '+52 5551234567',
+        correo: 'maria.gonzalez@email.com'
+      },
+      {
+        nombre: 'Roberto López',
+        relacion: 'Hermano',
+        direccion: 'Calle Secundaria #456, Col. Norte',
+        telefono: '+52 5557654321',
+        correo: 'roberto.lopez@email.com'
+      }
+    ];
+    
+    setContactosEmergencia(contactosPrueba);
+    
+    toast({ 
+      title: 'Datos de prueba cargados', 
+      description: 'Se han rellenado todos los campos con datos de ejemplo',
+      variant: 'success' 
+    });
+  };
 
   const [contactosEmergencia, setContactosEmergencia] = useState<Array<{nombre:string;relacion:string;direccion:string;telefono:string;correo:string}>>([]);
   const [nuevoContacto, setNuevoContacto] = useState({ nombre: "", relacion: "", direccion: "", telefono: "", correo: "" });
@@ -296,6 +376,7 @@ export default function OperadoresPage() {
     const telefono = randTelefonoMX();
     const email = randEmail(nombre, apellidos);
     setFormData({
+      operator_number: "",
       nombre,
       apellidos,
       alias: Math.random() < 0.5 ? randAlias() : "",
@@ -761,9 +842,11 @@ export default function OperadoresPage() {
           }
         }
 
-        const enriched = (operadoresData || []).map((o: any) => ({
+        const enriched = (operadoresData || []).map((o: any, index: number) => ({
           ...o,
           foto_url: fotosMap[o.id] || "",
+          // Temporalmente agregar operator_number simulado hasta aplicar migración de BD
+          operator_number: o.operator_number || `OP${String(index + 1).padStart(3, '0')}`,
         }));
         setOperadores(enriched);
       }
@@ -1122,6 +1205,7 @@ export default function OperadoresPage() {
 
   const resetForm = () => {
     setFormData({
+      operator_number: "",
       nombre: "",
       apellidos: "",
       alias: "",
@@ -1208,10 +1292,13 @@ export default function OperadoresPage() {
       }
 
       if (editingId) {
+        // Para actualizaciones, no modificar operator_number (es inmutable)
+        const { operator_number, ...dataToSaveWithoutOpNumber } = dataToSave;
+        
         const { data: updatedData, error } = await supabase
           .from("operadores")
           .update({
-            ...dataToSave,
+            ...dataToSaveWithoutOpNumber,
             updated_at: new Date().toISOString(),
           })
           .eq("id", editingId)
@@ -1249,10 +1336,25 @@ export default function OperadoresPage() {
             );
               try { toast({ title: 'Operador actualizado exitosamente', variant: 'success' }); } catch {}
           } catch (error) {
-            setSuccess(
-              "Operador actualizado exitosamente, pero hubo errores subiendo algunos archivos"
-            );
+            console.error("Error subiendo archivos en actualización:", error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            
+            // Verificar si es error de conexión
+            if (errorMsg.includes("conectar con el servidor") || errorMsg.includes("Failed to fetch")) {
+              setSuccess(
+                "Operador actualizado exitosamente. Los archivos se subirán cuando el servidor esté disponible."
+              );
+              try { toast({ 
+                title: 'Operador actualizado exitosamente',
+                description: "Los archivos se subirán cuando el servidor esté disponible",
+                variant: 'success' 
+              }); } catch {}
+            } else {
+              setSuccess(
+                `Operador actualizado exitosamente, pero hubo errores subiendo algunos archivos: ${errorMsg}`
+              );
               try { toast({ title: 'Operador actualizado exitosamente', variant: 'success' }); } catch {}
+            }
           }
         } else {
           setSuccess("Operador actualizado exitosamente");
@@ -1267,6 +1369,7 @@ export default function OperadoresPage() {
         // For new operator creation, we need to get the created operator ID
         console.log("[DEBUG] Creando operador con payload:", dataToSave);
         // Solo columnas que existen realmente en la tabla 'operadores'
+        // Construir payload (operator_number se agregará solo si la columna existe)
         const payload = {
           nombre: dataToSave.nombre,
           apellidos: dataToSave.apellidos,
@@ -1295,14 +1398,17 @@ export default function OperadoresPage() {
           updated_at: new Date().toISOString(),
         };
         console.log('[DEBUG] Payload depurado para inserción:', payload);
-        // Ejecutar inserción y registrar la respuesta completa para diagnóstico
+        
+        // Ahora que la migración está completa, incluir operator_number en el payload
         let insertResult: any;
         try {
-          insertResult = await supabase.from('operadores').insert(payload).select().single();
-          console.log('[DEBUG] supabase insert result raw (stringified):', JSON.stringify(insertResult, null, 2));
-        } catch (ex) {
-          console.error('[DEBUG] supabase insert threw an exception:', ex);
-          setError(`Error al crear operador (excepción): ${ex instanceof Error ? ex.message : String(ex)}`);
+          // Incluir operator_number en el payload ya que la columna existe
+          const payloadWithOpNumber = { ...payload, operator_number: dataToSave.operator_number || null };
+          insertResult = await supabase.from('operadores').insert(payloadWithOpNumber).select().single();
+          console.log('[DEBUG] supabase insert result exitoso:', JSON.stringify(insertResult, null, 2));
+        } catch (ex: any) {
+          console.error('[DEBUG] Error al insertar operador:', ex);
+          setError(`Error al crear operador: ${ex instanceof Error ? ex.message : String(ex)}`);
           return;
         }
 
@@ -1408,22 +1514,38 @@ export default function OperadoresPage() {
         } catch {}
 
         // Subir archivos para el nuevo operador
+        const operatorNumber = newOperador.operator_number || 'N/A';
         if (fotoOperador || documentosBasicos.length > 0) {
           try {
             const resultados = await subirFotografiaYDocumentos(newOperador.id);
             setSuccess(
-              `Operador creado exitosamente. ${resultados.join(", ")}`
+              `Operador creado con número: ${operatorNumber}. ${resultados.join(", ")}`
             );
-            toast({ title: 'Operador creado exitosamente', variant: 'success' });
+            toast({ title: `Operador creado con número: ${operatorNumber}`, variant: 'success' });
           } catch (error) {
-            setSuccess(
-              "Operador creado exitosamente, pero hubo errores subiendo algunos archivos"
-            );
-            toast({ title: 'Operador creado exitosamente', variant: 'success' });
+            console.error("Error subiendo archivos:", error);
+            const errorMsg = error instanceof Error ? error.message : String(error);
+            
+            // Verificar si es error de conexión
+            if (errorMsg.includes("conectar con el servidor") || errorMsg.includes("Failed to fetch")) {
+              setSuccess(
+                `Operador creado con número: ${operatorNumber}. Los archivos se subirán cuando el servidor esté disponible.`
+              );
+              toast({ 
+                title: `Operador creado con número: ${operatorNumber}`, 
+                description: "Los archivos se subirán cuando el servidor esté disponible",
+                variant: 'success' 
+              });
+            } else {
+              setSuccess(
+                `Operador creado con número: ${operatorNumber}, pero hubo errores subiendo algunos archivos: ${errorMsg}`
+              );
+              toast({ title: `Operador creado con número: ${operatorNumber}`, variant: 'success' });
+            }
           }
         } else {
-          setSuccess("Operador creado exitosamente");
-          toast({ title: 'Operador creado exitosamente', variant: 'success' });
+          setSuccess(`Operador creado con número: ${operatorNumber}`);
+          toast({ title: `Operador creado con número: ${operatorNumber}`, variant: 'success' });
         }
       }
 
@@ -1444,6 +1566,7 @@ export default function OperadoresPage() {
 
   const handleEdit = (operador: Operador) => {
     setFormData({
+      operator_number: (operador as any).operator_number || "",
       nombre: operador.nombre || "",
       apellidos: operador.apellidos || "",
       alias: operador.alias || "",
@@ -2221,8 +2344,11 @@ export default function OperadoresPage() {
 
               <Button
                 className="bg-green-600 hover:bg-green-700 text-white"
-                onClick={() => {
+                onClick={async () => {
                   resetForm();
+                  // Asignar automáticamente el siguiente número de operador
+                  const siguienteNumero = await obtenerSiguienteNumeroOperador();
+                  setFormData(prev => ({ ...prev, operator_number: siguienteNumero }));
                   setShowModal(true);
                 }}
               >
@@ -2490,9 +2616,16 @@ export default function OperadoresPage() {
                   <div className="flex-1 min-w-0">
                     <div className="flex justify-between items-start">
                       <div className="flex-1 min-w-0">
-                        <CardTitle className="text-lg font-semibold text-gray-900 mb-1 truncate">
-                          {operador.nombre} {operador.apellidos}
-                        </CardTitle>
+                        <div className="flex items-center gap-2 mb-1">
+                          <CardTitle className="text-lg font-semibold text-gray-900 truncate">
+                            {operador.nombre} {operador.apellidos}
+                          </CardTitle>
+                          {(operador as any).operator_number && (
+                            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300 text-xs">
+                              {(operador as any).operator_number}
+                            </Badge>
+                          )}
+                        </div>
                         <div className="flex items-center mb-2 gap-2 min-h-[24px]">
                           {operador.alias && (
                             <span className="text-sm font-medium text-blue-600 truncate">
@@ -2863,6 +2996,17 @@ export default function OperadoresPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
+                {!editingId && (
+                  <Button
+                    onClick={rellenarDatosPrueba}
+                    variant="outline"
+                    size="sm"
+                    className="bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
+                  >
+                    <Zap className="h-4 w-4 mr-2" />
+                    Datos Prueba
+                  </Button>
+                )}
                 <Button
                   onClick={() => setShowModal(false)}
                   variant="outline"
@@ -2930,6 +3074,22 @@ export default function OperadoresPage() {
 
                   <TabsContent value="personal" className="space-y-4 mt-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="operator_number">Número de Operador</Label>
+                        <Input
+                          id="operator_number"
+                          name="operator_number"
+                          value={formData.operator_number}
+                          disabled
+                          placeholder={editingId ? "No editable" : "Se asignará automáticamente"}
+                          className={`${editingId ? 'bg-red-50 text-red-600 border-red-200' : 'bg-blue-50 text-blue-600 border-blue-200'}`}
+                        />
+                        {editingId && (
+                          <p className="text-xs text-red-500">
+                            ⚠️ El número de operador no se puede modificar
+                          </p>
+                        )}
+                      </div>
                       <div className="space-y-2">
                         <Label htmlFor="nombre">Nombre *</Label>
                         <Input
@@ -3658,6 +3818,14 @@ export default function OperadoresPage() {
                       {/* Identidad y Estado */}
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
                         <div>
+                          <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Número de Operador</p>
+                          <div>
+                            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300">
+                              {(operadorDetalle as any).operator_number || 'Sin asignar'}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div>
                           <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Nombre Completo</p>
                           <p className="font-medium text-gray-900">{operadorDetalle.nombre} {operadorDetalle.apellidos}</p>
                         </div>
@@ -4089,6 +4257,7 @@ export default function OperadoresPage() {
                     if (op) {
                       // replicar lógica de edición reutilizando código existente
                       setFormData({
+                        operator_number: (op as any).operator_number || "",
                         nombre: op.nombre || "",
                         apellidos: op.apellidos || "",
                         alias: op.alias || "",

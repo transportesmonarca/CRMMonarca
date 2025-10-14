@@ -49,6 +49,8 @@ import {
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
 import { useToast } from "@/hooks/use-toast";
+import ModalUbicacionOperador from "@/components/ModalUbicacionOperador";
+import { obtenerUltimaUbicacionOperador, UbicacionConOperador } from "@/lib/ubicacion";
 import { useSearchParams } from "next/navigation";
 import {
   supabase,
@@ -298,6 +300,13 @@ export default function AsignarOperadoresPage() {
     null
   );
   const [activeTab, setActiveTab] = useState("general");
+  
+  // Estados para funcionalidad de ubicación
+  const [showUbicacionModal, setShowUbicacionModal] = useState(false);
+  const [ubicacionOperador, setUbicacionOperador] = useState<UbicacionConOperador | null>(null);
+  const [loadingUbicacion, setLoadingUbicacion] = useState(false);
+  const [errorUbicacion, setErrorUbicacion] = useState<string | null>(null);
+  
   // Dialog para archivar desde Asignación (Registros Completados)
   const [showArchivarAsignacionDialog, setShowArchivarAsignacionDialog] = useState(false);
   const [embarqueAArchivarAsignacion, setEmbarqueAArchivarAsignacion] = useState<Embarque | null>(null);
@@ -791,6 +800,78 @@ export default function AsignarOperadoresPage() {
     } finally {
       setSaving(false);
     }
+  };
+
+  // Función para manejar la consulta de ubicación del operador
+  const handleMostrarUbicacion = async (embarque: Embarque) => {
+    console.log('🔍 [DEBUG] ====== INICIO handleMostrarUbicacion ======');
+    console.log('🔍 [DEBUG] Embarque completo:', embarque);
+    console.log('🔍 [DEBUG] Embarque.folio:', embarque.folio);
+    console.log('🔍 [DEBUG] Embarque.operador:', embarque.operador);
+    
+    try {
+      setLoadingUbicacion(true);
+      setErrorUbicacion(null);
+      setShowUbicacionModal(true);
+      console.log('✅ [DEBUG] Modal abierto, loading activado');
+
+      // Verificar que el embarque tenga operador asignado
+      if (!embarque.operador) {
+        console.error('❌ [DEBUG] El embarque no tiene operador');
+        setErrorUbicacion('Este embarque no tiene un operador asignado.');
+        return;
+      }
+
+      console.log('✅ [DEBUG] Operador existe:', embarque.operador);
+      console.log('🔍 [DEBUG] Operador.operator_number:', embarque.operador.operator_number);
+
+      // Verificar que el operador tenga número asignado
+      if (!embarque.operador.operator_number) {
+        console.error('❌ [DEBUG] El operador no tiene operator_number');
+        setErrorUbicacion('Este operador no tiene un número asignado. Actualice primero el número del operador.');
+        return;
+      }
+
+      console.log('🔍 [DEBUG] Llamando a obtenerUltimaUbicacionOperador con:', embarque.operador.operator_number);
+
+      // Consultar la última ubicación del operador usando operator_number
+      const ubicacion = await obtenerUltimaUbicacionOperador(embarque.operador.operator_number);
+      
+      console.log('🔍 [DEBUG] Resultado de obtenerUltimaUbicacionOperador:', ubicacion);
+
+      if (!ubicacion) {
+        console.warn('⚠️  [DEBUG] No se encontró ubicación para el operador');
+        setErrorUbicacion(`No se encontró ubicación para el operador ${embarque.operador.operator_number}. Es posible que no haya compartido su ubicación recientemente.`);
+        return;
+      }
+
+      console.log('✅ [DEBUG] Ubicación encontrada!');
+      console.log('✅ [DEBUG] Latitud:', ubicacion.latitude);
+      console.log('✅ [DEBUG] Longitud:', ubicacion.longitude);
+      console.log('✅ [DEBUG] Operator:', ubicacion.operador);
+      
+      setUbicacionOperador(ubicacion);
+      console.log('✅ [DEBUG] Ubicación cargada exitosamente en el estado');
+      console.log('🔍 [DEBUG] ====== FIN handleMostrarUbicacion ======');
+
+    } catch (error) {
+      console.error('❌ [DEBUG] Error obteniendo ubicación:', error);
+      setErrorUbicacion(
+        error instanceof Error 
+          ? error.message 
+          : 'Error desconocido al obtener la ubicación del operador'
+      );
+    } finally {
+      setLoadingUbicacion(false);
+      console.log('🏁 [DEBUG] Loading desactivado');
+    }
+  };
+
+  const handleCerrarUbicacion = () => {
+    setShowUbicacionModal(false);
+    setUbicacionOperador(null);
+    setErrorUbicacion(null);
+    setLoadingUbicacion(false);
   };
 
   // Cargar datos desde Supabase
@@ -3682,6 +3763,20 @@ export default function AsignarOperadoresPage() {
                           Km
                         </Button>
                       )}
+                      {/* Botón Ubicación - nuevo botón para tracking/localización */}
+                      {(embarque.estado?.startsWith("asignado") || 
+                        embarque.estado?.startsWith("en-transito") || 
+                        embarque.estado?.startsWith("listo-para-asignar")) && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleMostrarUbicacion(embarque)}
+                          disabled={loadingUbicacion}
+                        >
+                          <MapPin className="h-4 w-4 mr-1" />
+                          {loadingUbicacion ? "Cargando..." : "Ubicación"}
+                        </Button>
+                      )}
                       {embarque.estado?.startsWith("asignado") && (
                         <Button
                           variant="outline"
@@ -4313,6 +4408,11 @@ export default function AsignarOperadoresPage() {
                                       <div className="flex items-center justify-between w-full">
                                         <div className="flex items-center gap-2">
                                           <span>
+                                            {(operador as any).operator_number && (
+                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold mr-2">
+                                                {(operador as any).operator_number}
+                                              </span>
+                                            )}
                                             {operador.nombre} {operador.apellidos}
                                           </span>
                                           {asignadosPorOperador[operador.id] > 0 && (
@@ -5090,6 +5190,11 @@ export default function AsignarOperadoresPage() {
                                   ? `${embarqueDetalle.operador.nombre} ${embarqueDetalle.operador.apellidos}`
                                   : "Sin asignar"}
                               </p>
+                              {embarqueDetalle.operador?.operator_number && (
+                                <p className="text-sm text-blue-600 font-medium">
+                                  Número: {embarqueDetalle.operador.operator_number}
+                                </p>
+                              )}
                               {embarqueDetalle.operador?.telefono && (
                                 <p className="text-sm text-gray-600">
                                   Teléfono: {embarqueDetalle.operador.telefono}
@@ -5718,6 +5823,11 @@ export default function AsignarOperadoresPage() {
                                       <div className="flex items-center justify-between w-full">
                                         <div className="flex items-center gap-2">
                                           <span className="font-medium">
+                                            {(operador as any).operator_number && (
+                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold mr-2">
+                                                {(operador as any).operator_number}
+                                              </span>
+                                            )}
                                             {operador.nombre} {operador.apellidos}
                                           </span>
                                           {asignadosPorOperador[operador.id] > 0 && (
@@ -6742,6 +6852,14 @@ export default function AsignarOperadoresPage() {
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Modal de ubicación del operador */}
+    <ModalUbicacionOperador
+      isOpen={showUbicacionModal}
+      onClose={handleCerrarUbicacion}
+      ubicacion={ubicacionOperador}
+      operatorNumber={ubicacionOperador?.operator_number || ubicacionOperador?.operador?.operator_number || 'N/A'}
+    />
     </>
   );
 }
