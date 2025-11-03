@@ -7,6 +7,10 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const supabase = getSupabaseAdmin()
     const { data: link } = await supabase.from('public_links').select('*').eq('token', token).single()
     if (!link) return NextResponse.json({ error: 'invalid_token' }, { status: 404 })
+    
+    // Verificar si la liga está activa
+    if (link.activo === false) return NextResponse.json({ error: 'expired', message: 'Esta liga ha sido desactivada porque el embarque fue finalizado o cancelado' }, { status: 410 })
+    
     if (new Date(link.expires_at) < new Date()) return NextResponse.json({ error: 'expired' }, { status: 410 })
 
     const embarqueId = link.embarque_id

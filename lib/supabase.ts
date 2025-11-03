@@ -89,24 +89,12 @@ export interface Cliente {
   contacto_principal?: string;
 }
 
-export interface RepresentanteCliente {
-  id: string;
-  cliente_id: string;
-  nombre: string;
-  apellidos?: string;
-  telefono?: string;
-  email?: string;
-  puesto?: string;
-  activo: boolean;
-  fecha_creacion: string;
-  updated_at: string;
-}
+// ❌ RepresentanteCliente eliminado - usar ContactoCliente como única interfaz
 
 export interface ContactoCliente {
   id: string;
   cliente_id: string;
   nombre: string;
-  apellidos?: string;
   telefono?: string;
   email?: string;
   puesto?: string;
@@ -114,8 +102,8 @@ export interface ContactoCliente {
   activo: boolean;
   fecha_creacion: string;
   updated_at: string;
-  // Campo adicional usado en la UI
   notas?: string;
+  tipo_contacto?: 'contacto' | 'representante' | 'principal'; // Nuevo campo para diferenciar tipos
 }
 
 export interface TipoServicio {
@@ -165,6 +153,23 @@ export interface MarcaCamion {
   updated_at: string;
 }
 
+export interface VerificacionCamion {
+  id?: string;
+  camion_id: string;
+  fecha_verificacion: string;
+  fecha_vencimiento?: string;
+  tipo_verificacion: string;
+  lugar_verificacion?: string;
+  numero_certificado?: string;
+  resultado: string;
+  observaciones?: string;
+  recordatorio_enviado?: boolean;
+  activo?: boolean;
+  creado_por?: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
 export interface MarcaRemolque {
   id: string;
   nombre: string;
@@ -194,6 +199,24 @@ export interface Remolque {
   comentarios?: string;
   activo?: boolean;
   fecha_registro: string;
+  updated_at: string;
+}
+
+export interface DocumentoRemolque {
+  id: string;
+  remolque_id: string;
+  tipo_documento: string;
+  numero_documento?: string;
+  nombre_archivo: string;
+  url_blob: string;
+  pathname: string;
+  tamano_bytes?: number;
+  tipo_mime?: string;
+  fecha_vencimiento?: string;
+  notas?: string;
+  activo: boolean;
+  subido_por?: string;
+  created_at: string;
   updated_at: string;
 }
 
@@ -402,35 +425,136 @@ const generarFolioFallback = (): string => {
   return `EMB${año}${mes}${dia}${hora}${minuto}${segundo}`;
 };
 
-// Función para obtener representantes de un cliente
-export const obtenerRepresentantesCliente = async (
-  clienteId: string
-): Promise<RepresentanteCliente[]> => {
+// 🎯 FUNCIONES PARA TIPOS DE CONTACTOS
+
+// Obtener contactos por tipo específico
+export const obtenerContactosPorTipo = async (
+  clienteId: string,
+  tipo: 'contacto' | 'representante' | 'principal'
+): Promise<ContactoCliente[]> => {
   try {
     const { data, error } = await supabase
-      .from("representantes_clientes")
+      .from("contactos_clientes")
       .select("*")
       .eq("cliente_id", clienteId)
+      .eq("tipo_contacto", tipo)
       .eq("activo", true)
       .order("nombre");
 
     if (error) {
-      console.error("Error obteniendo representantes:", error);
+      console.error(`Error obteniendo ${tipo}s:`, error);
       return [];
     }
 
     return data || [];
   } catch (error) {
-    console.error("Error:", error);
+    console.error(`Error en obtenerContactosPorTipo(${tipo}):`, error);
     return [];
   }
 };
 
+// Obtener solo representantes de un cliente
+export const obtenerRepresentantesCliente = async (
+  clienteId: string
+): Promise<ContactoCliente[]> => {
+  return obtenerContactosPorTipo(clienteId, 'representante');
+};
+
+// Obtener contacto principal de un cliente
+export const obtenerContactoPrincipal = async (
+  clienteId: string
+): Promise<ContactoCliente | null> => {
+  const contactos = await obtenerContactosPorTipo(clienteId, 'principal');
+  return contactos.length > 0 ? contactos[0] : null;
+};
+
 // Función para obtener contactos de un cliente
+// Función simplificada para obtener contactos SOLO de tabla contactos_clientes
+export const obtenerContactosClienteTabla = async (
+  clienteId: string
+): Promise<ContactoCliente[]> => {
+  try {
+    console.log("📋 [TABLA] Obteniendo contactos para cliente:", clienteId);
+    
+    if (!clienteId || clienteId.trim() === '') {
+      console.error("❌ Cliente ID no válido:", clienteId);
+      return [];
+    }
+    
+    const { data, error } = await supabase
+      .from("contactos_clientes")
+      .select("*")
+      .eq("cliente_id", clienteId)
+      .eq("activo", true)
+      .order("tipo_contacto", { ascending: true }) // principal -> representante -> contacto
+      .order("es_principal", { ascending: false })
+      .order("nombre");
+
+    if (error) {
+      console.error("❌ Error obteniendo contactos:", error.message);
+      return [];
+    }
+
+    console.log(`✅ [TABLA] ${data?.length || 0} contactos obtenidos`);
+    return data || [];
+  } catch (error) {
+    console.error("💥 [TABLA] Error:", error);
+    return [];
+  }
+};
+
 export const obtenerContactosCliente = async (
   clienteId: string
 ): Promise<ContactoCliente[]> => {
   try {
+    console.log("📋 Obteniendo contactos para cliente:", clienteId);
+    
+    // Validar que el clienteId sea válido
+    if (!clienteId || clienteId.trim() === '') {
+      console.error("❌ Cliente ID no válido:", clienteId);
+      return [];
+    }
+    
+    // Primero intentar con JSON
+    try {
+      console.log("🔄 Intentando obtener desde campo JSON...");
+      const { data: clienteData, error } = await supabase
+        .from("clientes")
+        .select("contactos_json")
+        .eq("id", clienteId)
+        .single();
+        
+      if (!error && clienteData?.contactos_json && Array.isArray(clienteData.contactos_json)) {
+        console.log("✅ Contactos obtenidos desde JSON");
+        const contactos = clienteData.contactos_json.map((c: any, index: number) => ({
+          id: c.id || `json-${Date.now()}-${index}`,
+          cliente_id: clienteId,
+          nombre: c.nombre || "",
+          apellidos: c.apellidos || "",
+          telefono: c.telefono || "",
+          email: c.email || "",
+          puesto: c.puesto || "",
+          es_principal: Boolean(c.es_principal),
+          activo: true,
+          fecha_creacion: c.fecha_creacion || new Date().toISOString(),
+          updated_at: c.updated_at || new Date().toISOString(),
+          notas: c.notas || ""
+        }));
+        
+        console.log(`� Procesados ${contactos.length} contactos desde JSON`);
+        return contactos;
+      }
+      
+      if (error) {
+        console.log("⚠️ Campo contactos_json no disponible, usando tabla contactos_clientes como fallback");
+        console.log("Error JSON:", error.message);
+      }
+    } catch (jsonError) {
+      console.log("⚠️ Error accediendo campo JSON, usando tabla contactos_clientes como fallback");
+    }
+    
+    // Fallback: usar tabla contactos_clientes
+    console.log("� Usando tabla contactos_clientes como fallback...");
     const { data, error } = await supabase
       .from("contactos_clientes")
       .select("*")
@@ -440,13 +564,23 @@ export const obtenerContactosCliente = async (
       .order("nombre");
 
     if (error) {
-      console.error("Error obteniendo contactos:", error);
+      console.error("❌ Error obteniendo contactos de tabla:");
+      console.error("- Error message:", error.message);
+      console.error("- Error details:", error.details);
+      console.error("- Error hint:", error.hint);
+      console.error("- Error code:", error.code);
+      console.error("- Cliente ID usado:", clienteId);
       return [];
     }
 
+    console.log(`✅ Obtenidos ${data?.length || 0} contactos desde tabla contactos_clientes`);
     return data || [];
   } catch (error) {
-    console.error("Error:", error);
+    console.error("💥 Excepción obteniendo contactos:");
+    console.error("- Error:", error);
+    console.error("- Tipo:", typeof error);
+    console.error("- Stack:", (error as any)?.stack);
+    console.error("- Cliente ID:", clienteId);
     return [];
   }
 };
@@ -579,15 +713,550 @@ export const guardarFormasFacturacion = async (
   }
 };
 
-// Función para guardar contactos de un cliente
+// Función para agregar columna contactos_json si no existe
+export const agregarColumnaContactosJSON = async () => {
+  try {
+    console.log("🔧 Intentando agregar columna contactos_json...");
+    
+    // Nota: En Supabase, necesitas hacer esto desde el dashboard o SQL editor
+    console.log("💡 Para agregar la columna contactos_json:");
+    console.log("1. Ve al dashboard de Supabase");
+    console.log("2. Abre el SQL Editor");
+    console.log("3. Ejecuta: ALTER TABLE clientes ADD COLUMN IF NOT EXISTS contactos_json JSONB;");
+    console.log("4. Ejecuta: CREATE INDEX IF NOT EXISTS idx_clientes_contactos_json ON clientes USING GIN (contactos_json);");
+    
+    return false; // No podemos hacer ALTER TABLE desde el cliente JavaScript
+  } catch (error) {
+    console.error("💥 Error:", error);
+    return false;
+  }
+};
+
+// Función de diagnóstico para verificar la conexión a Supabase y estructura de tabla
+export const diagnosticarConexionSupabase = async () => {
+  try {
+    console.log("🔧 Diagnóstico de conexión a Supabase...");
+    
+    // 1. Probar conexión básica
+    const { data: basicData, error: basicError } = await supabase
+      .from("clientes")
+      .select("id, nombre")
+      .limit(1);
+      
+    if (basicError) {
+      console.error("❌ Error en conexión básica a Supabase:", {
+        message: basicError.message,
+        details: basicError.details,
+        hint: basicError.hint,
+        code: basicError.code
+      });
+      return false;
+    }
+    
+    console.log("✅ Conexión básica exitosa:", basicData);
+    
+    // 2. Probar acceso al campo contactos_json
+    console.log("🔍 Verificando campo contactos_json...");
+    const { data: jsonData, error: jsonError } = await supabase
+      .from("clientes")
+      .select("id, nombre, contactos_json")
+      .limit(1);
+      
+    if (jsonError) {
+      console.error("❌ Error accediendo campo contactos_json:", {
+        message: jsonError.message,
+        details: jsonError.details,
+        hint: jsonError.hint,
+        code: jsonError.code
+      });
+      
+      if (jsonError.message?.includes("column") && jsonError.message?.includes("does not exist")) {
+        console.error("🚨 PROBLEMA: El campo 'contactos_json' no existe en la tabla 'clientes'");
+        console.log("💡 SOLUCIÓN: Necesitas agregar la columna 'contactos_json' de tipo JSON a la tabla 'clientes' en Supabase");
+      }
+      
+      return false;
+    }
+    
+    console.log("✅ Campo contactos_json accesible:", jsonData);
+    return true;
+  } catch (error) {
+    console.error("💥 Excepción en diagnóstico:", error);
+    return false;
+  }
+};
+
+// Función específica para diagnosticar la tabla contactos_clientes
+export const diagnosticarTablaContactos = async () => {
+  try {
+    console.log("🔍 Diagnosticando tabla contactos_clientes...");
+    
+    // 1. Verificar si la tabla existe y obtener su estructura
+    console.log("📊 Verificando estructura de tabla...");
+    
+    // 2. Probar inserción de prueba muy simple
+    const contactoPrueba = {
+      cliente_id: '00000000-0000-0000-0000-000000000000',
+      nombre: 'Prueba Diagnóstico',
+      telefono: '1234567890',
+      email: 'prueba@test.com',
+      puesto: 'Test',
+      es_principal: false,
+      activo: true
+    };
+    
+    console.log("🧪 Probando inserción simple...");
+    const { data: insertData, error: insertError } = await supabase
+      .from("contactos_clientes")
+      .insert([contactoPrueba])
+      .select();
+      
+    if (insertError) {
+      console.error("❌ Error en inserción de prueba:", {
+        message: insertError.message,
+        details: insertError.details,
+        hint: insertError.hint,
+        code: insertError.code
+      });
+      
+      // Analizar tipos específicos de error
+      if (insertError.message?.includes("column") && insertError.message?.includes("does not exist")) {
+        console.error("🚨 PROBLEMA: Columna faltante en tabla contactos_clientes");
+      } else if (insertError.message?.includes("violates") || insertError.message?.includes("constraint")) {
+        console.error("🚨 PROBLEMA: Violación de constraint en tabla contactos_clientes");
+      } else if (insertError.message?.includes("permission")) {
+        console.error("🚨 PROBLEMA: Sin permisos para insertar en tabla contactos_clientes");
+      }
+      
+      return false;
+    } else {
+      console.log("✅ Inserción de prueba exitosa:", insertData);
+      
+      // Limpiar el registro de prueba
+      console.log("🧹 Limpiando registro de prueba...");
+      await supabase
+        .from("contactos_clientes")
+        .delete()
+        .eq("cliente_id", '00000000-0000-0000-0000-000000000000');
+    }
+    
+    // 3. Verificar conteo actual
+    const { count, error: countError } = await supabase
+      .from("contactos_clientes")
+      .select("*", { count: 'exact', head: true });
+      
+    if (countError) {
+      console.error("❌ Error obteniendo conteo:", countError);
+    } else {
+      console.log("📈 Total de contactos en la tabla:", count);
+    }
+    
+    // 4. Probar inserción múltiple pequeña
+    const contactosPrueba = [
+      {
+        cliente_id: '00000000-0000-0000-0000-000000000001',
+        nombre: 'Prueba Múltiple 1',
+        telefono: '1111111111',
+        email: 'prueba1@test.com',
+        puesto: 'Test 1',
+        es_principal: true,
+        activo: true
+      },
+      {
+        cliente_id: '00000000-0000-0000-0000-000000000001',
+        nombre: 'Prueba Múltiple 2',
+        telefono: '2222222222',
+        email: 'prueba2@test.com',
+        puesto: 'Test 2',
+        es_principal: false,
+        activo: true
+      }
+    ];
+    
+    console.log("🧪 Probando inserción múltiple...");
+    const { data: multipleData, error: multipleError } = await supabase
+      .from("contactos_clientes")
+      .insert(contactosPrueba)
+      .select();
+      
+    if (multipleError) {
+      console.error("❌ Error en inserción múltiple:", {
+        message: multipleError.message,
+        details: multipleError.details,
+        hint: multipleError.hint,
+        code: multipleError.code
+      });
+    } else {
+      console.log("✅ Inserción múltiple exitosa:", multipleData);
+      
+      // Limpiar registros de prueba
+      console.log("🧹 Limpiando registros de prueba múltiple...");
+      await supabase
+        .from("contactos_clientes")
+        .delete()
+        .eq("cliente_id", '00000000-0000-0000-0000-000000000001');
+    }
+    
+    return true;
+  } catch (error) {
+    console.error("💥 Excepción en diagnóstico de tabla:", error);
+    return false;
+  }
+};
+
+// Función auxiliar para garantizar que la columna contactos_json existe
+const asegurarColumnaContactosJson = async (): Promise<boolean> => {
+  try {
+    console.log("🔍 Verificando existencia de columna contactos_json...");
+    
+    // Probar si la columna existe haciendo una consulta simple
+    const { data, error } = await supabase
+      .from("clientes")
+      .select("contactos_json")
+      .limit(1);
+      
+    if (error && error.message?.includes("column") && error.message?.includes("does not exist")) {
+      console.log("❌ Columna contactos_json no existe, intentando crearla...");
+      
+      // Intentar crear la columna usando RPC si existe
+      try {
+        const { error: rpcError } = await supabase.rpc('crear_columna_contactos_json');
+        if (!rpcError) {
+          console.log("✅ Columna contactos_json creada exitosamente");
+          return true;
+        }
+      } catch (rpcError) {
+        console.log("⚠️ RPC no disponible, columna debe crearse manualmente");
+      }
+      
+      console.log("📝 ACCIÓN REQUERIDA: Ejecutar en Supabase SQL Editor:");
+      console.log("   ALTER TABLE clientes ADD COLUMN IF NOT EXISTS contactos_json JSON;");
+      return false;
+    }
+    
+    console.log("✅ Columna contactos_json existe y es accesible");
+    return true;
+  } catch (error) {
+    console.error("❌ Error verificando columna contactos_json:", error);
+    return false;
+  }
+};
+
+// Función auxiliar para guardar solo en tabla normalizada (fallback completo)
+const guardarSoloEnTabla = async (clienteId: string, contactosJSON: any[]): Promise<boolean> => {
+  try {
+    console.log("🎯 FALLBACK: Guardando solo en tabla normalizada...");
+    
+    // Limpiar contactos existentes
+    await supabase
+      .from("contactos_clientes")
+      .delete()
+      .eq("cliente_id", clienteId);
+    
+    // Preparar contactos para tabla normalizada
+    const contactosTabla = contactosJSON.map(contacto => ({
+      cliente_id: clienteId,
+      nombre: contacto.nombre,
+      telefono: contacto.telefono,
+      email: contacto.email,
+      puesto: contacto.puesto,
+      es_principal: contacto.es_principal,
+      activo: true
+    }));
+    
+    // Insertar en lotes pequeños
+    const BATCH_SIZE = 10;
+    let exitoso = 0;
+    let errores = 0;
+    
+    for (let i = 0; i < contactosTabla.length; i += BATCH_SIZE) {
+      const batch = contactosTabla.slice(i, i + BATCH_SIZE);
+      
+      const { error: batchError } = await supabase
+        .from("contactos_clientes")
+        .insert(batch);
+        
+      if (batchError) {
+        console.error(`❌ Error en lote ${Math.floor(i/BATCH_SIZE) + 1}:`, batchError.message);
+        errores += batch.length;
+        
+        // Intentar insertar uno por uno
+        for (const contacto of batch) {
+          const { error: individualError } = await supabase
+            .from("contactos_clientes")
+            .insert([contacto]);
+            
+          if (!individualError) {
+            exitoso++;
+          }
+        }
+      } else {
+        exitoso += batch.length;
+        console.log(`✅ Lote ${Math.floor(i/BATCH_SIZE) + 1} insertado: ${batch.length} contactos`);
+      }
+    }
+    
+    console.log(`📊 Resultado final: ${exitoso} exitosos, ${errores} errores`);
+    return exitoso > 0;
+    
+  } catch (error) {
+    console.error("❌ Error en fallback de tabla:", error);
+    return false;
+  }
+};
+
+// Función auxiliar para guardar en tabla sin bloquear
+const guardarEnTablaSinBloquear = async (clienteId: string, contactosJSON: any[]) => {
+  try {
+    // Limpiar contactos existentes
+    await supabase
+      .from("contactos_clientes")
+      .delete()
+      .eq("cliente_id", clienteId);
+    
+    // Preparar e insertar en lotes pequeños
+    const contactosTabla = contactosJSON.map(contacto => ({
+      cliente_id: clienteId,
+      nombre: contacto.nombre,
+      telefono: contacto.telefono,
+      email: contacto.email,
+      puesto: contacto.puesto,
+      es_principal: contacto.es_principal,
+      activo: true
+    }));
+    
+    const BATCH_SIZE = 5; // Lotes muy pequeños para evitar errores
+    for (let i = 0; i < contactosTabla.length; i += BATCH_SIZE) {
+      const batch = contactosTabla.slice(i, i + BATCH_SIZE);
+      
+      const { error } = await supabase
+        .from("contactos_clientes")
+        .insert(batch);
+      
+      if (error) {
+        console.log(`⚠️ Cache lote ${Math.floor(i/BATCH_SIZE) + 1} falló: ${error.message}`);
+        break; // No continuar si hay errores en cache
+      }
+    }
+    
+    console.log("✅ Cache en tabla completado");
+  } catch (error) {
+    console.log("⚠️ Error en cache de tabla (no crítico):", error);
+  }
+};
+
+// Función NUEVA Y ROBUSTA para guardar contactos - REEMPLAZA la anterior
+export const guardarContactosClienteRobusto = async (
+  clienteId: string,
+  contactos: any[]
+): Promise<boolean> => {
+  try {
+    console.log("💾 [TABLA] Guardando contactos en tabla contactos_clientes:", { 
+      clienteId, 
+      cantidad_original: contactos.length,
+      timestamp: new Date().toISOString()
+    });
+    
+    // 1. VALIDACIONES BÁSICAS
+    if (!clienteId || clienteId.trim() === '') {
+      console.error("❌ Cliente ID no válido:", clienteId);
+      return false;
+    }
+    
+    if (!contactos || contactos.length === 0) {
+      console.log("ℹ️ No hay contactos para guardar");
+      return true;
+    }
+    
+    // 2. PREPARAR CONTACTOS VÁLIDOS PARA LA TABLA
+    const contactosValidos = contactos
+      .filter(c => c.nombre?.trim() || c.telefono?.trim() || c.email?.trim())
+      .map((contacto, index) => {
+        // Generar UUID válido si no existe o es temporal
+        let contactoId = contacto.id;
+        if (!contactoId || contactoId.startsWith('temp-') || contactoId.startsWith('contact-')) {
+          // Generar UUID v4 simple
+          contactoId = 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+            const r = Math.random() * 16 | 0;
+            const v = c == 'x' ? r : (r & 0x3 | 0x8);
+            return v.toString(16);
+          });
+        }
+        
+        const contactoData = {
+          id: contactoId,
+          cliente_id: clienteId,
+          nombre: contacto.nombre?.trim() || "Sin nombre",
+          telefono: contacto.telefono?.trim() || null,
+          email: contacto.email?.trim() || null,
+          puesto: contacto.puesto?.trim() || null,
+          es_principal: contactos.length === 1 ? true : (contacto.es_principal || index === 0),
+          activo: true,
+          fecha_creacion: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        
+        return contactoData;
+      });
+    
+    console.log(`✅ ${contactosValidos.length} contactos válidos preparados para tabla`);
+    
+    if (contactosValidos.length === 0) {
+      console.log("ℹ️ No hay contactos válidos para guardar después del filtrado");
+      return true;
+    }
+    
+    // 3. VALIDAR QUE EL CLIENTE EXISTE ANTES DE INSERTAR CONTACTOS
+    console.log("🔍 Verificando que el cliente existe...");
+    const { data: clienteExiste, error: clienteError } = await supabase
+      .from("clientes")
+      .select("id, nombre")
+      .eq("id", clienteId)
+      .single();
+    
+    if (clienteError || !clienteExiste) {
+      console.error("❌ Cliente no encontrado:", clienteId);
+      console.error("❌ Error:", clienteError);
+      return false;
+    }
+    
+    console.log("✅ Cliente encontrado:", clienteExiste.nombre);
+    
+    // 4. ESTRATEGIA ÚNICA: GUARDAR DIRECTAMENTE EN TABLA NORMALIZADA
+    console.log("🎯 Guardando contactos en tabla contactos_clientes...");
+    
+    // Paso 1: Desactivar contactos existentes del cliente
+    console.log("🔄 Desactivando contactos existentes...");
+    const { error: updateError } = await supabase
+      .from("contactos_clientes")
+      .update({ 
+        activo: false, 
+        updated_at: new Date().toISOString() 
+      })
+      .eq("cliente_id", clienteId);
+
+    if (updateError) {
+      console.warn("⚠️ Error desactivando contactos existentes:", updateError.message);
+    }
+    
+    // Paso 2: Insertar nuevos contactos en lotes optimizados
+    const BATCH_SIZE = 20; // Lotes de 20 para mejor rendimiento
+    let totalInsertados = 0;
+    
+    for (let i = 0; i < contactosValidos.length; i += BATCH_SIZE) {
+      const batch = contactosValidos.slice(i, i + BATCH_SIZE);
+      console.log(`� Insertando lote ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(contactosValidos.length/BATCH_SIZE)} (${batch.length} contactos)`);
+      
+      const { data: insertData, error: insertError } = await supabase
+        .from("contactos_clientes")
+        .insert(batch)
+        .select("id, nombre");
+      
+      if (insertError) {
+        console.warn("⚠️ Error insertando lote completo:", insertError.message);
+        
+        // Intentar insertar uno por uno como fallback
+        for (const contacto of batch) {
+          try {
+            const { error: individualError } = await supabase
+              .from("contactos_clientes")
+              .insert([contacto])
+              .select("id");
+            
+            if (!individualError) {
+              totalInsertados++;
+            }
+          } catch (e) {
+            // Ignorar errores individuales silenciosamente
+          }
+        }
+      } else {
+        totalInsertados += batch.length;
+        console.log(`✅ Lote insertado: ${batch.length} contactos`);
+      }
+    }
+    
+    console.log(`🎬 Completado: ${totalInsertados}/${contactosValidos.length} contactos guardados`);
+    
+    // Retornar true si al menos el 80% de contactos se guardaron exitosamente
+    const porcentajeExito = (totalInsertados / contactosValidos.length) * 100;
+    if (porcentajeExito >= 80) {
+      console.log(`✅ Guardado exitoso (${porcentajeExito.toFixed(1)}%)`);
+      return true;
+    } else if (totalInsertados > 0) {
+      console.warn(`⚠️ Guardado parcial (${porcentajeExito.toFixed(1)}%)`);
+      return true; // Aún retornar true si al menos algunos se guardaron
+    } else {
+      console.error("❌ No se pudo guardar ningún contacto");
+      return false;
+    }
+    
+  } catch (error) {
+    console.warn("⚠️ Error en guardarContactosClienteRobusto:", String(error));
+    return false;
+  }
+};
+
+// Función para guardar contactos de un cliente usando estrategia híbrida optimizada
 export const guardarContactosCliente = async (
   clienteId: string,
   contactos: any[]
 ): Promise<boolean> => {
   try {
-    console.log("Iniciando guardarContactosCliente con:", { clienteId, contactos });
+    console.log("💾 Guardando contactos para cliente:", { clienteId, cantidad: contactos.length });
     
-    // Primero, desactivar todos los contactos existentes
+    // Validar que clienteId no esté vacío
+    if (!clienteId || clienteId.trim() === '') {
+      console.error("❌ Cliente ID no válido:", clienteId);
+      return false;
+    }
+    
+    // Preparar contactos para guardar
+    const contactosJSON = contactos
+      .filter(c => c.nombre?.trim() || c.telefono?.trim() || c.email?.trim())
+      .map((contacto, index) => ({
+        id: contacto.id || `contact-${Date.now()}-${index}`,
+        nombre: contacto.nombre?.trim() || "",
+        apellidos: contacto.apellidos?.trim() || "",
+        telefono: contacto.telefono?.trim() || "",
+        email: contacto.email?.trim() || "",
+        puesto: contacto.puesto?.trim() || "",
+        es_principal: contactos.length === 1 ? true : (contacto.es_principal || index === 0),
+        activo: true,
+        notas: contacto.notas?.trim() || "",
+        fecha_creacion: contacto.fecha_creacion || new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      }));
+    
+    console.log(`📋 Preparando ${contactosJSON.length} contactos válidos para guardar`);
+    
+    // ESTRATEGIA 1: Guardar en JSON (PRIORITARIO - siempre funciona)
+    console.log("🎯 PASO 1: Guardando en campo JSON (estrategia principal)...")
+    try {
+      console.log("🔄 Intentando guardar en campo JSON...");
+      const { error } = await supabase
+        .from("clientes")
+        .update({ 
+          contactos_json: contactosJSON,
+          updated_at: new Date().toISOString()
+        })
+        .eq("id", clienteId);
+      
+      if (!error) {
+        console.log("✅ Contactos guardados como JSON exitosamente");
+        return true;
+      }
+      
+      console.log("⚠️ Campo JSON no disponible, usando tabla contactos_clientes como fallback");
+      console.log("Error JSON:", error.message);
+    } catch (jsonError) {
+      console.log("⚠️ Error guardando en JSON, usando tabla contactos_clientes como fallback");
+    }
+    
+    // Fallback: usar tabla contactos_clientes
+    console.log("🔄 Usando tabla contactos_clientes como fallback...");
+    
+    // Desactivar contactos existentes
     const { error: updateError } = await supabase
       .from("contactos_clientes")
       .update({ activo: false, updated_at: new Date().toISOString() })
@@ -595,56 +1264,107 @@ export const guardarContactosCliente = async (
 
     if (updateError) {
       console.error("Error desactivando contactos:", updateError);
-      console.error("Cliente ID:", clienteId);
-      console.error("Error message:", updateError.message);
-      console.error("Error details:", updateError.details);
-      return false;
     }
 
-    // Luego, insertar los nuevos contactos
-    // IMPORTANTE: nombre es requerido (NOT NULL), así que necesitamos que cada contacto tenga un nombre válido
-    const contactosParaInsertar = contactos
-      .filter(
-        (c) =>
-          c.nombre.trim() ||
-          c.telefono.trim() ||
-          c.email.trim() ||
-          (c.puesto && c.puesto.trim())
-      )
-      .map((contacto, index) => ({
+    // Insertar nuevos contactos en tabla por lotes para evitar límites
+    if (contactosJSON.length > 0) {
+      const contactosParaTabla = contactosJSON.map((c, index) => ({
         cliente_id: clienteId,
-        nombre: contacto.nombre.trim() || "Sin nombre", // Asegurar que siempre haya un nombre válido
-        telefono: contacto.telefono.trim() || null,
-        email: contacto.email.trim() || null,
-        puesto: contacto.puesto?.trim() || null,
-        es_principal: index === 0, // El primer contacto es principal
+        nombre: c.nombre || "Sin nombre",
+        apellidos: c.apellidos || null,
+        telefono: c.telefono || null,
+        email: c.email || null,
+        puesto: c.puesto || null,
+        es_principal: index === 0, // Solo el primero es principal
         activo: true,
+        fecha_creacion: new Date().toISOString(),
+        updated_at: new Date().toISOString()
       }));
-
-    console.log("Contactos para insertar:", contactosParaInsertar);
-    
-    if (contactosParaInsertar.length > 0) {
-      const { error: insertError } = await supabase
-        .from("contactos_clientes")
-        .insert(contactosParaInsertar);
-
-      if (insertError) {
-        console.error("Error insertando contactos:", insertError);
-        console.error("Datos que se intentaron insertar:", contactosParaInsertar);
-        console.error("Error message:", insertError.message);
-        console.error("Error details:", insertError.details);
-        return false;
+      
+      console.log(`📋 Insertando ${contactosParaTabla.length} contactos en tabla contactos_clientes`);
+      console.log("Ejemplo de contacto:", JSON.stringify(contactosParaTabla[0], null, 2));
+      
+      // Insertar por lotes de 50 para evitar timeouts
+      const BATCH_SIZE = 50;
+      for (let i = 0; i < contactosParaTabla.length; i += BATCH_SIZE) {
+        const batch = contactosParaTabla.slice(i, i + BATCH_SIZE);
+        console.log(`🔄 Insertando lote ${Math.floor(i/BATCH_SIZE) + 1}/${Math.ceil(contactosParaTabla.length/BATCH_SIZE)} (${batch.length} contactos)`);
+        
+        const { error: insertError } = await supabase
+          .from("contactos_clientes")
+          .insert(batch);
+        
+        if (insertError) {
+          console.error("❌ Error insertando lote en tabla contactos_clientes:");
+          console.error("- Message:", insertError.message);
+          console.error("- Details:", insertError.details);
+          console.error("- Hint:", insertError.hint);
+          console.error("- Code:", insertError.code);
+          console.error("- Lote fallido:", JSON.stringify(batch[0], null, 2));
+          
+          // Intentar diferentes estrategias según el tipo de error
+          if (insertError.message?.includes("column") && insertError.message?.includes("does not exist")) {
+            console.log("🔧 Error de columna faltante - intentando inserción con campos básicos...");
+            
+            const contactosBasicos = batch.map(c => ({
+              cliente_id: c.cliente_id,
+              nombre: c.nombre,
+              telefono: c.telefono,
+              email: c.email,
+              puesto: c.puesto,
+              es_principal: c.es_principal,
+              activo: true
+            }));
+            
+            const { error: basicError } = await supabase
+              .from("contactos_clientes")
+              .insert(contactosBasicos);
+              
+            if (basicError) {
+              console.error("❌ Error con inserción básica también:", {
+                message: basicError.message,
+                details: basicError.details,
+                hint: basicError.hint,
+                code: basicError.code
+              });
+              return false;
+            } else {
+              console.log("✅ Inserción básica exitosa para este lote");
+            }
+          } else if (insertError.message?.includes("violates") || insertError.message?.includes("constraint")) {
+            console.log("🔧 Error de constraint - intentando inserción uno por uno...");
+            
+            // Intentar insertar uno por uno para identificar el registro problemático
+            for (let j = 0; j < batch.length; j++) {
+              const contactoIndividual = batch[j];
+              const { error: individualError } = await supabase
+                .from("contactos_clientes")
+                .insert([contactoIndividual]);
+                
+              if (individualError) {
+                console.error(`❌ Error insertando contacto ${j + 1}:`, {
+                  contacto: contactoIndividual,
+                  error: individualError.message
+                });
+                // Continuar con los demás contactos
+              } else {
+                console.log(`✅ Contacto ${j + 1} insertado exitosamente`);
+              }
+            }
+          } else {
+            console.error("❌ Error no manejado en inserción de contactos");
+            return false;
+          }
+        } else {
+          console.log(`✅ Lote ${Math.floor(i/BATCH_SIZE) + 1} insertado exitosamente`);
+        }
       }
     }
-
-    console.log("Contactos guardados exitosamente");
+    
+    console.log("✅ Contactos guardados en tabla contactos_clientes exitosamente");
     return true;
   } catch (error) {
-    console.error("Error guardando contactos:", error);
-    console.error("Tipo de error:", typeof error);
-    console.error("Stack trace:", (error as any)?.stack);
-    console.error("Cliente ID:", clienteId);
-    console.error("Contactos recibidos:", contactos);
+    console.error("💥 Error en guardarContactosCliente:", error);
     return false;
   }
 };

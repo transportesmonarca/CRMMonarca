@@ -241,32 +241,16 @@ export default function EmbarqueReporteClientePage() {
           <CardContent>
             {/* Información del embarque */}
             <div className="bg-gray-50 border rounded p-4 mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                 <div>
                   <Label className="text-sm font-medium text-gray-600">Folio</Label>
                   <p className="text-sm">{embarque.folio || '—'}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-600">Operador</Label>
-                  <p className="text-sm">{embarque.operador ? `${embarque.operador.nombre || ''} ${embarque.operador.apellidos || ''}`.trim() : (embarque.operador_nombre || '—')}</p>
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-gray-600">No. Tractocamión</Label>
-                  <p className="text-sm">{(embarque.camion && (embarque.camion.numero_economico || embarque.camion.placas)) || embarque.camion_numero_economico || embarque.camion_placas || '—'}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-gray-600">No. Remolque</Label>
                   <p className="text-sm">
                     {embarque.remolque?.numero_economico || (embarque as any).remolque_numero_economico || embarque.remolque?.placas || (embarque as any).remolque_placa || '—'}
                   </p>
-                </div>
-              </div>
-              
-              {/* Segunda fila alineada */}
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                <div>
-                  <Label className="text-sm font-medium text-gray-600">Tipo de Servicio</Label>
-                  <p className="text-sm">{tipoServicioText || embarque.tipo_servicio_id || '—'}</p>
                 </div>
                 <div>
                   <Label className="text-sm font-medium text-gray-600">No. Load</Label>
@@ -275,9 +259,6 @@ export default function EmbarqueReporteClientePage() {
                 <div>
                   <Label className="text-sm font-medium text-gray-600">No. Carta Porte</Label>
                   <p className="text-sm">{embarque.carta_porte || (embarque as any).numero_carta_porte || (embarque as any).cartaporte || '—'}</p>
-                </div>
-                <div>
-                  {/* Espacio vacío para mantener alineación */}
                 </div>
               </div>
             </div>

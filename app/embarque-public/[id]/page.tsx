@@ -13,6 +13,8 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
 // Camera icon removed per UX request
 import { supabase, obtenerFotosEmbarque } from "@/lib/supabase"
 import { formatDateMatamoros } from '@/lib/date-utils'
@@ -28,6 +30,8 @@ export default function EmbarquePublicPage() {
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [confirmType, setConfirmType] = useState<"contact"|"thanks"|"custom"|null>(null)
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
+  const [googleMapsLink, setGoogleMapsLink] = useState('')
+  const [savingMapsLink, setSavingMapsLink] = useState(false)
 
   // Seguridad/UX: en la vista pública no permitimos subir archivos.
   // - Eliminamos del DOM cualquier control marcado con la clase `upload-cta` o el atributo `data-upload`.
@@ -77,14 +81,324 @@ export default function EmbarquePublicPage() {
   const handleDownloadPDF = () => {
     if (!embarque) { toast({ title: 'No hay información', variant: 'destructive' }); return }
     try {
-      const printable = document.getElementById('embarque-printable')
-      const html = printable ? printable.innerHTML : document.body.innerHTML
+      // Clonar el contenido completo de la página para impresión
+      const mainElement = document.querySelector('main')
+      if (!mainElement) { toast({ title: 'Error: No se encontró el contenido', variant: 'destructive' }); return }
+      
+      // Crear una copia del contenido
+      const clonedContent = mainElement.cloneNode(true) as HTMLElement
+      
+      // Remover botones de acción que no deben aparecer en PDF
+      clonedContent.querySelectorAll('button').forEach(btn => {
+        const text = btn.textContent?.toLowerCase() || ''
+        // Mantener solo los botones informativos, remover los de acción
+        if (text.includes('descargar') || text.includes('comentario') || text.includes('enterado') || text.includes('contácten')) {
+          btn.remove()
+        }
+      })
+      
+      // Obtener el HTML limpio
+      const htmlContent = clonedContent.innerHTML
+      
       const win = window.open('', '_blank')
       if (!win) { toast({ title: 'No se pudo abrir ventana', variant: 'destructive' }); return }
-      win.document.write(`\n<html><head><title>Embarque ${embarque?.folio || ''}</title><meta name="viewport" content="width=device-width,initial-scale=1" /></head><body><div>${html}</div></body></html>`)
+      
+      // Estilos completos que replican exactamente la página web
+      const styles = `
+        <style>
+          @page { 
+            margin: 0.5in;
+            size: letter;
+          }
+          
+          * {
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
+            box-sizing: border-box;
+          }
+          
+          body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            color: #111827;
+            line-height: 1.6;
+            margin: 0;
+            padding: 12px;
+            background: #f9fafb;
+          }
+          
+          /* Typography */
+          .text-xs { font-size: 0.75rem !important; line-height: 1rem !important; }
+          .text-sm { font-size: 0.875rem !important; line-height: 1.25rem !important; }
+          .text-base { font-size: 1rem !important; line-height: 1.5rem !important; }
+          .text-lg { font-size: 1.125rem !important; line-height: 1.75rem !important; }
+          .text-xl { font-size: 1.25rem !important; line-height: 1.75rem !important; }
+          
+          .font-bold { font-weight: 700 !important; }
+          .font-semibold { font-weight: 600 !important; }
+          .font-medium { font-weight: 500 !important; }
+          
+          /* Colors */
+          .text-gray-400 { color: #9CA3AF !important; }
+          .text-gray-500 { color: #6B7280 !important; }
+          .text-gray-600 { color: #4B5563 !important; }
+          .text-gray-700 { color: #374151 !important; }
+          .text-gray-900 { color: #111827 !important; }
+          .text-blue-600 { color: #2563EB !important; }
+          .text-blue-700 { color: #1D4ED8 !important; }
+          
+          .bg-white { background-color: #FFFFFF !important; }
+          .bg-gray-50 { background-color: #F9FAFB !important; }
+          .bg-gray-100 { background-color: #F3F4F6 !important; }
+          
+          /* Layout */
+          .rounded { border-radius: 0.375rem !important; }
+          .rounded-lg { border-radius: 0.5rem !important; }
+          .shadow { box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06) !important; }
+          .border { border: 1px solid #E5E7EB !important; }
+          
+          .uppercase { text-transform: uppercase !important; }
+          .underline { text-decoration: underline !important; }
+          .break-all { word-break: break-all !important; }
+          .whitespace-pre-wrap { white-space: pre-wrap !important; }
+          
+          /* Spacing */
+          .p-2 { padding: 0.5rem !important; }
+          .p-3 { padding: 0.75rem !important; }
+          .p-6 { padding: 1.5rem !important; }
+          .px-3 { padding-left: 0.75rem !important; padding-right: 0.75rem !important; }
+          .px-6 { padding-left: 1.5rem !important; padding-right: 1.5rem !important; }
+          .px-8 { padding-left: 2rem !important; padding-right: 2rem !important; }
+          .py-1 { padding-top: 0.25rem !important; padding-bottom: 0.25rem !important; }
+          .pb-6 { padding-bottom: 1.5rem !important; }
+          .pb-8 { padding-bottom: 2rem !important; }
+          
+          .m-0 { margin: 0 !important; }
+          .mt-1 { margin-top: 0.25rem !important; }
+          .mt-2 { margin-top: 0.5rem !important; }
+          .mt-3 { margin-top: 0.75rem !important; }
+          .mt-4 { margin-top: 1rem !important; }
+          .mt-6 { margin-top: 1.5rem !important; }
+          .mb-2 { margin-bottom: 0.5rem !important; }
+          .mb-3 { margin-bottom: 0.75rem !important; }
+          
+          .space-y-2 > * + * { margin-top: 0.5rem !important; }
+          .space-y-4 > * + * { margin-top: 1rem !important; }
+          
+          /* Flexbox */
+          .flex { display: flex !important; }
+          .flex-col { flex-direction: column !important; }
+          .flex-1 { flex: 1 1 0% !important; }
+          .items-center { align-items: center !important; }
+          .items-start { align-items: flex-start !important; }
+          .items-end { align-items: flex-end !important; }
+          .justify-center { justify-content: center !important; }
+          .justify-between { justify-content: space-between !important; }
+          .gap-2 { gap: 0.5rem !important; }
+          .gap-4 { gap: 1rem !important; }
+          
+          /* Grid - CORREGIDO para PDF */
+          .grid { display: grid !important; }
+          .grid-cols-1 { grid-template-columns: repeat(1, minmax(0, 1fr)) !important; }
+          .grid-cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+          .grid-cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; }
+          
+          /* Responsive grid - aplicar siempre en PDF */
+          .md\\:grid-cols-5 { grid-template-columns: repeat(5, minmax(0, 1fr)) !important; }
+          .md\\:col-span-1 { 
+            grid-column: span 1 / span 1 !important; 
+            text-align: left !important;
+          }
+          .md\\:col-span-4 { 
+            grid-column: span 4 / span 4 !important; 
+          }
+          .md\\:col-span-5 { grid-column: span 5 / span 5 !important; }
+          .lg\\:col-span-5 { grid-column: span 5 / span 5 !important; }
+          
+          /* Columnas específicas con alineación correcta */
+          .md\\:col-span-1 > * {
+            text-align: left !important;
+          }
+          
+          .md\\:col-span-4.flex.flex-col.items-end {
+            align-items: flex-end !important;
+            text-align: right !important;
+          }
+          
+          .md\\:col-span-4.flex.flex-col.items-end > * {
+            text-align: right !important;
+          }
+          
+          /* Text alignment */
+          .text-center { text-align: center !important; }
+          .text-right { text-align: right !important; }
+          .text-left { text-align: left !important; }
+          
+          /* Labels siempre alineados a la izquierda */
+          label { 
+            text-align: left !important; 
+            display: block !important;
+            white-space: nowrap !important;
+          }
+          
+          /* Leading */
+          .leading-tight { line-height: 1.25 !important; }
+          
+          /* Width */
+          .w-full { width: 100% !important; }
+          .w-auto { width: auto !important; }
+          .max-w-5xl { max-width: 64rem !important; margin-left: auto !important; margin-right: auto !important; }
+          .min-w-\\[140px\\] { min-width: 140px !important; }
+          
+          /* Evitar saltos de línea indeseados */
+          .uppercase.tracking-wide {
+            white-space: nowrap !important;
+          }
+          
+          /* Height */
+          .h-10 { height: 2.5rem !important; }
+          .h-12 { height: 3rem !important; }
+          .h-48 { height: 12rem !important; }
+          
+          /* Images */
+          img { 
+            max-width: 100% !important; 
+            height: auto !important;
+            display: block !important;
+          }
+          
+          /* Hide interactive elements */
+          button, 
+          [role="button"],
+          .cursor-pointer,
+          a[href*="download"],
+          svg { 
+            display: none !important; 
+          }
+          
+          /* Links visibility */
+          a { 
+            color: #1D4ED8 !important;
+            text-decoration: underline !important;
+          }
+          
+          /* Preserve backgrounds and borders */
+          pre {
+            margin: 0 !important;
+            font-family: inherit !important;
+            white-space: pre-wrap !important;
+          }
+          
+          /* Page breaks */
+          .page-break-before { page-break-before: always !important; }
+          .page-break-after { page-break-after: always !important; }
+          .page-break-inside-avoid { page-break-inside: avoid !important; }
+          
+          /* Evitar saltos de página dentro de elementos importantes */
+          .grid, .flex, label, p {
+            page-break-inside: avoid !important;
+          }
+          
+          /* Card específico */
+          .min-h-screen { min-height: auto !important; }
+          
+          /* Asegurar que los divs no colapsen */
+          div { display: block !important; }
+          .hidden { display: none !important; }
+          
+          /* Corregir alineación de grid items */
+          .grid > div {
+            text-align: left !important;
+          }
+          
+          /* Específicamente para peso y remolque - alinear a la izquierda */
+          .grid > div:has(label) {
+            text-align: left !important;
+          }
+          
+          .grid > div > label {
+            text-align: left !important;
+          }
+          
+          .grid > div > p,
+          .grid > div > div {
+            text-align: left !important;
+          }
+          
+          /* Peso y Remolque en la misma línea - peso izquierda, remolque derecha */
+          .flex.flex-col.sm\\:flex-row.items-center.sm\\:justify-between,
+          .sm\\:flex-row.items-center.sm\\:justify-between {
+            display: flex !important;
+            flex-direction: row !important;
+            justify-content: space-between !important;
+            align-items: flex-start !important;
+            width: 100% !important;
+          }
+          
+          /* Peso siempre a la izquierda */
+          .flex.flex-col.sm\\:flex-row.items-center.sm\\:justify-between > div:first-child,
+          .sm\\:flex-row.items-center.sm\\:justify-between > div:first-child {
+            text-align: left !important;
+            align-self: flex-start !important;
+          }
+          
+          /* Remolque siempre a la derecha */
+          .flex.flex-col.sm\\:flex-row.items-center.sm\\:justify-between > div:last-child,
+          .sm\\:flex-row.items-center.sm\\:justify-between > div:last-child {
+            text-align: right !important;
+            align-self: flex-end !important;
+          }
+          
+          .flex.flex-col.sm\\:flex-row.items-center.sm\\:justify-between > div:last-child label,
+          .sm\\:flex-row.items-center.sm\\:justify-between > div:last-child label {
+            text-align: right !important;
+          }
+          
+          /* Responsive overrides para PDF - aplicar desktop siempre */
+          .sm\\:p-6 { padding: 1.5rem !important; }
+          .sm\\:pb-8 { padding-bottom: 2rem !important; }
+          .sm\\:px-6 { padding-left: 1.5rem !important; padding-right: 1.5rem !important; }
+          .sm\\:px-8 { padding-left: 2rem !important; padding-right: 2rem !important; }
+          .sm\\:text-xl { font-size: 1.25rem !important; line-height: 1.75rem !important; }
+          .sm\\:text-lg { font-size: 1.125rem !important; line-height: 1.75rem !important; }
+          .sm\\:h-12 { height: 3rem !important; }
+          
+          @media print {
+            body { background: white !important; }
+            .shadow { box-shadow: none !important; border: 1px solid #E5E7EB !important; }
+          }
+        </style>
+      `
+      
+      win.document.write(`
+        <!DOCTYPE html>
+        <html>
+          <head>
+            <meta charset="UTF-8">
+            <title>Embarque ${embarque?.folio || ''} - Transportes Monarca</title>
+            <meta name="viewport" content="width=device-width,initial-scale=1" />
+            ${styles}
+          </head>
+          <body>
+            ${htmlContent}
+          </body>
+        </html>
+      `)
       win.document.close()
-      setTimeout(() => { try { win.print(); win.close() } catch (e) { /* ignore */ } }, 600)
-    } catch (e) { console.error('Error generando PDF', e); toast({ title: 'Error al generar PDF', variant: 'destructive' }) }
+      
+      // Esperar a que las imágenes carguen antes de imprimir
+      setTimeout(() => { 
+        try { 
+          win.focus()
+          win.print()
+          // No cerrar automáticamente para que el usuario pueda ver el resultado
+        } catch (e) { 
+          console.error('Error printing:', e)
+        } 
+      }, 1000)
+    } catch (e) { 
+      console.error('Error generando PDF', e)
+      toast({ title: 'Error al generar PDF', variant: 'destructive' }) 
+    }
   }
 
   useEffect(() => {
@@ -147,6 +461,7 @@ export default function EmbarquePublicPage() {
           }
           setEmbarque(emb)
           setFotos(json.fotos || [])
+          setGoogleMapsLink(emb?.google_maps_link || '')
           setErrorMsg(null)
         }
       } catch (e) {
@@ -156,6 +471,44 @@ export default function EmbarquePublicPage() {
     }
     cargar()
   }, [id])
+
+  const handleSaveGoogleMapsLink = async () => {
+    if (!id) return
+    try {
+      setSavingMapsLink(true)
+      const { error } = await supabase
+        .from('embarques')
+        .update({ google_maps_link: googleMapsLink || null })
+        .eq('id', id)
+      
+      if (error) {
+        console.warn('⚠️ Error guardando Google Maps link:')
+        console.warn('Message:', error.message)
+        console.warn('Details:', error.details)
+        console.warn('Hint:', error.hint)
+        console.warn('Code:', error.code)
+        throw error
+      }
+      
+      toast({ title: 'Guardado', description: 'La dirección de Google Maps se guardó correctamente.' })
+      setEmbarque((prev: any) => ({ ...prev, google_maps_link: googleMapsLink }))
+    } catch (e: any) {
+      console.warn('⚠️ Exception guardando Google Maps link')
+      console.warn('Message:', e?.message || 'Sin mensaje')
+      console.warn('Code:', e?.code || 'Sin código')
+      
+      const errorMsg = e?.message || e?.details || 'No se pudo guardar la dirección'
+      toast({ 
+        title: 'Error', 
+        description: errorMsg.includes('column') 
+          ? 'La columna google_maps_link no existe. Por favor ejecuta el script SQL de migración.'
+          : errorMsg,
+        variant: 'destructive' 
+      })
+    } finally {
+      setSavingMapsLink(false)
+    }
+  }
 
   useEffect(() => {
     const fetchTipo = async () => {
@@ -240,14 +593,13 @@ export default function EmbarquePublicPage() {
             <div className="flex flex-col space-y-4 w-full">
               {/* Logo y título - completamente centrados */}
               <div className="flex flex-col items-center justify-center w-full">
-                <CardTitle className="flex flex-col items-center">
+                <div className="flex flex-col items-center">
                   <img src="/monarca-logo.png" alt="Monarca" className="h-10 sm:h-12 w-auto" />
-                  <div className="mt-3 text-lg sm:text-xl font-semibold text-gray-900 text-center leading-tight">
+                  <CardTitle className="mt-3 text-lg sm:text-xl font-semibold text-gray-900 text-center leading-tight">
                     Transportes Internacionales Monarca
-                  </div>
-                  <span className="mt-2 text-lg font-semibold text-gray-900">Información del Embarque</span>
-                </CardTitle>
-                <CardDescription className="mt-1 text-center text-base">Vista pública para permisionarios</CardDescription>
+                  </CardTitle>
+                  <span className="mt-2 text-lg font-normal text-gray-900">Información del Embarque</span>
+                </div>
               </div>
               
 
@@ -264,7 +616,7 @@ export default function EmbarquePublicPage() {
             <div id="embarque-printable">
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 px-6 sm:px-8">
                 <div className="md:col-span-1">
-                  <Label className="text-xs font-medium text-black uppercase tracking-wide">Fecha creación</Label>
+                  <Label className="text-xs font-semibold text-black uppercase tracking-wide">Fecha creación</Label>
                   <p className="text-xs font-medium text-black mb-3">
                     {(embarque?.fecha_creacion || embarque?.created_at) ? formatDateTime(embarque?.fecha_creacion || embarque?.created_at) : '—'}
                   </p>
@@ -272,7 +624,7 @@ export default function EmbarquePublicPage() {
                   <p className="text-sm font-bold text-gray-900">{embarque.folio || '—'}</p>
                 </div>
                 <div className="md:col-span-4 flex flex-col items-end">
-                  <Label className="text-xs font-medium text-black uppercase tracking-wide">Fecha expiración</Label>
+                  <Label className="text-xs font-semibold text-black uppercase tracking-wide">Fecha expiración</Label>
                   <p className="text-xs font-medium text-black mb-3">
                     {embarque?.fecha_expiracion ? formatDateTime(embarque.fecha_expiracion) : '—'}
                   </p>
@@ -285,6 +637,21 @@ export default function EmbarquePublicPage() {
                     <Label className="text-sm font-semibold text-gray-900">Liga de referencia</Label>
                     <div className="mt-1">
                       <a href={embarque.reporte_cliente_url} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all text-sm">{embarque.reporte_cliente_url}</a>
+                    </div>
+                  </div>
+                )}
+                {/* Enlace de Google Maps (si existe) */}
+                {embarque?.google_maps_link && (
+                  <div className="md:col-span-5 mt-2">
+                    <Label className="text-sm font-semibold text-gray-900">Ubicación de referencia (Google Maps)</Label>
+                    <div className="mt-1 flex items-center gap-2">
+                      <a href={embarque.google_maps_link} target="_blank" rel="noreferrer" className="text-blue-700 underline break-all text-sm flex-1">{embarque.google_maps_link}</a>
+                      <button
+                        onClick={() => window.open(embarque.google_maps_link, '_blank')}
+                        className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded text-xs font-medium whitespace-nowrap"
+                      >
+                        Abrir Maps
+                      </button>
                     </div>
                   </div>
                 )}
@@ -400,6 +767,42 @@ export default function EmbarquePublicPage() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Campo para agregar/editar dirección de Google Maps */}
+        <div className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm font-semibold">📍 Dirección de Google Maps</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="flex gap-2">
+                <Input
+                  type="url"
+                  placeholder="https://maps.google.com/..."
+                  value={googleMapsLink}
+                  onChange={(e) => setGoogleMapsLink(e.target.value)}
+                  className="flex-1"
+                />
+                <Button
+                  onClick={handleSaveGoogleMapsLink}
+                  disabled={savingMapsLink}
+                  className="bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  {savingMapsLink ? 'Guardando...' : 'Guardar'}
+                </Button>
+                {googleMapsLink && (
+                  <Button
+                    variant="outline"
+                    onClick={() => window.open(googleMapsLink, '_blank')}
+                    className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                  >
+                    Abrir Maps
+                  </Button>
+                )}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <div className="mt-6">
           <Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -58,10 +58,11 @@ import {
   ImageIcon,
   Save,
   CheckCircle,
+  RefreshCw,
   X,
   Info,
 } from "lucide-react";
-import type { Camion, MarcaCamion } from "@/lib/supabase";
+import type { Camion, MarcaCamion, VerificacionCamion } from "@/lib/supabase";
 
 interface Comentario {
   id: string;
@@ -196,6 +197,22 @@ export default function CamionesPage() {
     useState(false);
   const [registrosKilometrajeTableExists, setRegistrosKilometrajeTableExists] =
     useState(true);
+    
+  // Estados para edición rápida de seguros
+  const [editandoSeguroMexicano, setEditandoSeguroMexicano] = useState(false);
+  const [editandoSeguroAmericano, setEditandoSeguroAmericano] = useState(false);
+  const [nuevaFechaSeguroMX, setNuevaFechaSeguroMX] = useState('');
+  const [nuevaFechaSeguroUS, setNuevaFechaSeguroUS] = useState('');
+  const [comentarioSeguroMX, setComentarioSeguroMX] = useState('');
+  const [comentarioSeguroUS, setComentarioSeguroUS] = useState('');
+  const [showModalRenovarSeguro, setShowModalRenovarSeguro] = useState(false);
+  const [tipoSeguroRenovar, setTipoSeguroRenovar] = useState<'mexicano' | 'americano' | null>(null);
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
+  
+  // Estados para confirmación de eliminación de verificación
+  const [verificacionAEliminar, setVerificacionAEliminar] = useState<string | null>(null);
+  const [showConfirmarEliminarVerificacion, setShowConfirmarEliminarVerificacion] = useState(false);
+  
   const [
     registrosMantenimientoTableExists,
     setRegistrosMantenimientoTableExists,
@@ -357,12 +374,34 @@ export default function CamionesPage() {
   const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
   const [editedCommentText, setEditedCommentText] = useState("");
 
+  // Estados para la gestión de verificaciones
+  const [verificaciones, setVerificaciones] = useState<VerificacionCamion[]>([]);
+  const [loadingVerificaciones, setLoadingVerificaciones] = useState(false);
+  const [showFormVerificacion, setShowFormVerificacion] = useState(false);
+  const [verificacionesTableExists, setVerificacionesTableExists] = useState(true);
+  
+  // Estado global para todas las verificaciones (para alertas en tarjetas)
+  const [todasLasVerificaciones, setTodasLasVerificaciones] = useState<VerificacionCamion[]>([]);
+
+  const [verificacionFormData, setVerificacionFormData] = useState({
+    id: undefined as string | undefined,
+    camion_id: "",
+    fecha_verificacion: "",
+    tipo_verificacion: "",
+    resultado: "",
+    fecha_vencimiento: "",
+    numero_certificado: "",
+    lugar_verificacion: "",
+    observaciones: ""
+  });
+
   // Cargar datos iniciales
   useEffect(() => {
     cargarCamiones();
     cargarMarcas();
     verificarTablaRegistrosKilometraje();
     verificarTablaRegistrosMantenimiento();
+    cargarTodasLasVerificaciones();
   }, []);
 
   // Función para cargar marcas desde la base de datos
@@ -440,6 +479,17 @@ export default function CamionesPage() {
     }
     return {};
   };
+
+  // Crear datos adicionales reactivos que se actualicen cuando cambie camionDetalle
+  const datosAdicionalesReactivos = useMemo(() => {
+    if (!camionDetalle?.observaciones) return {};
+    try {
+      return safeParseObservaciones(camionDetalle.observaciones);
+    } catch (error) {
+      console.error("Error parsing observaciones:", error);
+      return {};
+    }
+  }, [camionDetalle?.observaciones]);
 
   // Limpiar formulario de camión
   // options.resetTab: si es false, preserva el valor actual de activeTab (útil al abrir el detalle luego de editar)
@@ -1011,6 +1061,579 @@ export default function CamionesPage() {
     }
   };
 
+  // Función para cargar todas las verificaciones (para alertas en tarjetas)
+  const cargarTodasLasVerificaciones = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('verificaciones_camiones')
+        .select('*')
+        .eq('activo', true)
+        .order('fecha_verificacion', { ascending: false });
+
+      if (error) {
+        // Si la tabla no existe, simplemente establecer array vacío
+        if (error.code === 'PGRST116' || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+          setTodasLasVerificaciones([]);
+          return;
+        }
+        
+        console.error('Error cargando todas las verificaciones:', error);
+        return;
+      }
+
+      setTodasLasVerificaciones(data || []);
+    } catch (error) {
+      console.error('Error cargando todas las verificaciones:', error);
+      setTodasLasVerificaciones([]);
+    }
+  };
+
+  // Función auxiliar para actualizar la próxima fecha de verificación en el camión
+  const actualizarProximaVerificacionCamion = async (camionId: string, nuevaFechaVencimiento?: string) => {
+    try {
+      let proximaFecha = nuevaFechaVencimiento || null;
+      
+      // Si no se proporciona una fecha específica, buscar la más reciente de las verificaciones activas
+      if (!proximaFecha) {
+        const { data: verificacionesActivas, error: selectError } = await supabase
+          .from('verificaciones_camiones')
+          .select('fecha_vencimiento')
+          .eq('camion_id', camionId)
+          .eq('activo', true)
+          .not('fecha_vencimiento', 'is', null)
+          .order('fecha_vencimiento', { ascending: false })
+          .limit(1);
+        
+        if (selectError) {
+          console.error('Error consultando verificaciones:', {
+            error: selectError,
+            message: selectError.message || 'Error desconocido'
+          });
+          return false;
+        }
+        
+        proximaFecha = verificacionesActivas && verificacionesActivas.length > 0 
+          ? verificacionesActivas[0].fecha_vencimiento 
+          : null;
+      }
+      
+      // Intentar actualizar la columna proxima_verificacion
+      const { error: updateError } = await supabase
+        .from('camiones')
+        .update({ 
+          proxima_verificacion: proximaFecha,
+          updated_at: new Date().toISOString()
+        })
+        .eq('id', camionId);
+
+      if (updateError) {
+        // Si el error es porque la columna no existe, no es un error crítico
+        if (updateError.code === '42703' && updateError.message?.includes('proxima_verificacion')) {
+          console.warn('⚠️ Columna proxima_verificacion no existe en tabla camiones');
+          console.log('💡 Ejecuta este SQL en Supabase para agregar la columna:');
+          console.log('   ALTER TABLE camiones ADD COLUMN IF NOT EXISTS proxima_verificacion DATE;');
+          return true; // No es un error crítico, solo falta la columna
+        }
+        
+        console.error('Error actualizando fecha de próxima verificación:', JSON.stringify({
+          error: updateError,
+          camionId,
+          proximaFecha,
+          message: updateError?.message || 'Error desconocido',
+          code: updateError?.code || 'Sin código',
+          details: updateError?.details || 'Sin detalles',
+          hint: updateError?.hint || 'Sin hint'
+        }, null, 2));
+        return false;
+      }
+      
+      return true;
+    } catch (error) {
+      console.error('Error en actualizarProximaVerificacionCamion:', JSON.stringify({
+        error: error,
+        camionId,
+        nuevaFechaVencimiento,
+        message: error instanceof Error ? error.message : 'Error desconocido',
+        stack: error instanceof Error ? error.stack : undefined,
+        errorType: typeof error,
+        errorConstructor: error?.constructor?.name
+      }, null, 2));
+      return false;
+    }
+  };
+
+  // Funciones para renovación de seguros con comentarios
+
+  const iniciarEdicionSeguroMX = () => {
+    setTipoSeguroRenovar('mexicano');
+    // Establecer fecha actual como valor inicial
+    const hoy = new Date();
+    const fechaInicial = new Date(hoy.setFullYear(hoy.getFullYear() + 1)).toISOString().split('T')[0];
+    setNuevaFechaSeguroMX(fechaInicial);
+    setComentarioSeguroMX('');
+    setShowModalRenovarSeguro(true);
+  };
+
+  const iniciarEdicionSeguroUS = () => {
+    setTipoSeguroRenovar('americano');
+    // Establecer fecha actual como valor inicial
+    const hoy = new Date();
+    const fechaInicial = new Date(hoy.setFullYear(hoy.getFullYear() + 1)).toISOString().split('T')[0];
+    setNuevaFechaSeguroUS(fechaInicial);
+    setComentarioSeguroUS('');
+    setShowModalRenovarSeguro(true);
+  };
+
+  const renovarSeguroConComentario = async () => {
+    if (!camionDetalle) return;
+    
+    const esSeguroMexicano = tipoSeguroRenovar === 'mexicano';
+    const nuevaFecha = esSeguroMexicano ? nuevaFechaSeguroMX : nuevaFechaSeguroUS;
+    const comentario = esSeguroMexicano ? comentarioSeguroMX : comentarioSeguroUS;
+    
+    if (!nuevaFecha) {
+      toast({ title: 'Debe seleccionar una fecha válida', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      // Obtener datos actuales directamente de la base de datos
+      const { data: camionActual, error: fetchError } = await supabase
+        .from('camiones')
+        .select('observaciones')
+        .eq('id', camionDetalle.id)
+        .single();
+
+      if (fetchError) {
+        console.error('Error obteniendo datos del camión:', fetchError);
+        toast({ title: 'Error obteniendo datos del camión', variant: 'destructive' });
+        return;
+      }
+
+      const datosActuales = camionActual.observaciones
+        ? safeParseObservaciones(camionActual.observaciones)
+        : {};
+
+      // Preparar el historial de comentarios
+      const historialComentarios = datosActuales.historial_comentarios || [];
+      
+      // Agregar nuevo comentario si se proporcionó uno
+      if (comentario.trim()) {
+        const nuevoComentario = {
+          id: Date.now(),
+          text: `🔄 ${esSeguroMexicano ? 'Seguro Mexicano' : 'Seguro Americano'} renovado hasta ${formatDateMatamoros(nuevaFecha)}. ${comentario}`,
+          date: new Date().toISOString(),
+          tipo: 'renovacion_seguro'
+        };
+        historialComentarios.push(nuevoComentario);
+      }
+
+      // Actualizar los datos con la nueva fecha y comentarios
+      const nuevosObservaciones = {
+        ...datosActuales,
+        [esSeguroMexicano ? 'fecha_vencimiento_seguro_mexicano' : 'fecha_vencimiento_seguro_americano']: nuevaFecha,
+        historial_comentarios: historialComentarios
+      };
+
+      console.log(`Actualizando ${esSeguroMexicano ? 'seguro mexicano' : 'seguro americano'}:`, {
+        camionId: camionDetalle.id,
+        fechaAnterior: esSeguroMexicano ? datosActuales.fecha_vencimiento_seguro_mexicano : datosActuales.fecha_vencimiento_seguro_americano,
+        fechaNueva: nuevaFecha,
+        comentario: comentario,
+        observacionesCompletas: nuevosObservaciones
+      });
+
+      // Actualizar tanto las columnas específicas como el JSON de observaciones
+      const updateData: any = {
+        observaciones: JSON.stringify(nuevosObservaciones),
+        updated_at: new Date().toISOString()
+      };
+
+      if (esSeguroMexicano) {
+        updateData.fecha_vencimiento_seguro_mexicano = nuevaFecha;
+      } else {
+        updateData.fecha_vencimiento_seguro_americano = nuevaFecha;
+      }
+
+      const { error } = await supabase
+        .from('camiones')
+        .update(updateData)
+        .eq('id', camionDetalle.id);
+
+      if (error) {
+        console.error(`Error renovando ${esSeguroMexicano ? 'seguro mexicano' : 'seguro americano'}:`, error);
+        toast({ title: 'Error actualizando el seguro', variant: 'destructive' });
+        return;
+      }
+
+      // Actualizar el estado local
+      setCamionDetalle(prev => {
+        if (!prev) return prev;
+        return {
+          ...prev,
+          observaciones: JSON.stringify(nuevosObservaciones),
+          [esSeguroMexicano ? 'fecha_vencimiento_seguro_mexicano' : 'fecha_vencimiento_seguro_americano']: nuevaFecha
+        };
+      });
+
+      // Actualizar la lista de camiones
+      setCamiones(prev => 
+        prev.map(c => 
+          c.id === camionDetalle.id 
+            ? {
+                ...c, 
+                observaciones: JSON.stringify(nuevosObservaciones),
+                [esSeguroMexicano ? 'fecha_vencimiento_seguro_mexicano' : 'fecha_vencimiento_seguro_americano']: nuevaFecha
+              }
+            : c
+        )
+      );
+
+      // Cerrar modal y limpiar estados
+      setShowModalRenovarSeguro(false);
+      setTipoSeguroRenovar(null);
+      setNuevaFechaSeguroMX('');
+      setNuevaFechaSeguroUS('');
+      setComentarioSeguroMX('');
+      setComentarioSeguroUS('');
+      
+      // Recargar todos los camiones para actualizar las alertas
+      await cargarCamiones();
+      
+      // Actualizar las verificaciones para sincronizar las alertas
+      await cargarTodasLasVerificaciones();
+      
+      toast({ 
+        title: `${esSeguroMexicano ? 'Seguro mexicano' : 'Seguro americano'} renovado exitosamente`,
+        description: comentario.trim() ? 'Se agregó un comentario al historial' : undefined
+      });
+
+    } catch (error) {
+      console.error(`Error renovando ${esSeguroMexicano ? 'seguro mexicano' : 'seguro americano'}:`, error);
+      toast({ title: 'Error inesperado renovando seguro', variant: 'destructive' });
+    }
+  };
+
+  // Función para abrir preview de archivo (solo imágenes)
+  const openFilePreview = (file: any) => {
+    console.log('openFilePreview llamado con:', file);
+    // Solo abrir preview para imágenes
+    const name = (file.nombre_archivo || '').toLowerCase();
+    const mime = (file.tipo_mime || file.contentType || file.content_type || '').toLowerCase();
+    const isImage = name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || mime.startsWith('image');
+    
+    console.log('Es imagen:', isImage, 'URL:', file.display_url);
+    
+    if (isImage) {
+      setSelectedImage(file.display_url);
+    } else {
+      // Para archivos no imagen, abrir en nueva pestaña
+      if (file.display_url) {
+        window.open(file.display_url, '_blank');
+      }
+    }
+  };
+
+  const cancelarEdicionSeguroMX = () => {
+    setEditandoSeguroMexicano(false);
+    setNuevaFechaSeguroMX('');
+  };
+
+  // Función unificada para verificar alertas de verificaciones (usada en tarjetas y modal)
+  const obtenerAlertasVerificaciones = (camion: Camion, verificacionesCamion = verificaciones) => {
+    const alertas = [];
+
+    // PRIORIDAD 1: Verificaciones registradas en el historial
+    if (verificacionesCamion.length > 0) {
+      const verificacionesDelCamion = verificacionesCamion.filter(v => v.camion_id === camion.id);
+      const proximasVerificaciones = verificacionesDelCamion
+        .filter(v => v.fecha_vencimiento && new Date(v.fecha_vencimiento) > new Date())
+        .sort((a, b) => new Date(a.fecha_vencimiento!).getTime() - new Date(b.fecha_vencimiento!).getTime());
+        
+      if (proximasVerificaciones.length > 0) {
+        const proximaVerif = proximasVerificaciones[0];
+        const fechaVencimiento = new Date(proximaVerif.fecha_vencimiento!);
+        const hoy = new Date();
+        const diasRestantes = Math.ceil(
+          (fechaVencimiento.getTime() - hoy.getTime()) / (1000 * 60 * 60 * 24)
+        );
+        
+        if (diasRestantes <= 30 || diasRestantes <= 0) {
+          alertas.push({
+            tipo: "verificacion",
+            dias: Math.abs(diasRestantes),
+            vencido: diasRestantes <= 0,
+            nivel: diasRestantes <= 0 ? "alta" : diasRestantes <= 15 ? "media" : "baja",
+            fecha: formatDateMatamoros(proximaVerif.fecha_vencimiento!),
+            mensaje:
+              diasRestantes <= 0
+                ? `Verificación ${proximaVerif.tipo_verificacion} vencida hace ${Math.abs(diasRestantes)} días`
+                : `Verificación ${proximaVerif.tipo_verificacion} vence en ${diasRestantes} días`,
+          });
+        }
+        
+        // Si hay verificaciones registradas, no usar los datos antiguos
+        return alertas;
+      }
+    }
+
+    // PRIORIDAD 2: Solo si NO hay verificaciones registradas, usar datos antiguos del camión
+    if (camion.observaciones) {
+      try {
+        const datos = safeParseObservaciones(camion.observaciones);
+
+        if (datos.frecuencia_verificacion) {
+          const proximaVerificacion = new Date(datos.frecuencia_verificacion);
+          const hoy = new Date();
+          const diasRestantes = Math.ceil(
+            (proximaVerificacion.getTime() - hoy.getTime()) /
+              (1000 * 60 * 60 * 24)
+          );
+          const th = alertThresholdsCamiones.verificacion;
+          const nivel = th
+            ? calcularNivelAlerta(datos.frecuencia_verificacion, th)
+            : undefined;
+          const mostrar = diasRestantes <= 15 || (th ? nivel !== "ninguna" : false) || diasRestantes <= 0;
+          if (mostrar) {
+            alertas.push({
+              tipo: "verificacion",
+              dias: Math.abs(diasRestantes),
+              vencido: diasRestantes <= 0,
+              nivel: diasRestantes <= 0 ? "alta" : nivel,
+              fecha: formatDateMatamoros(datos.frecuencia_verificacion),
+              mensaje:
+                diasRestantes <= 0
+                  ? `Verificación vencida hace ${Math.abs(diasRestantes)} días`
+                  : `Verificación en ${Math.abs(diasRestantes)} días`,
+            });
+          }
+        }
+      } catch (error) {
+        // Ignorar errores de parsing
+      }
+    }
+
+    return alertas;
+  };
+
+  // Funciones para manejo de verificaciones
+  const verificarVencimientosVerificacion = (camion: Camion) => {
+    // Usar la función unificada
+    return obtenerAlertasVerificaciones(camion);
+  };
+
+  const cargarVerificaciones = async (camionId: string) => {
+    try {
+      setLoadingVerificaciones(true);
+      const { data, error } = await supabase
+        .from('verificaciones_camiones')
+        .select('*')
+        .eq('camion_id', camionId)
+        .eq('activo', true)
+        .order('fecha_verificacion', { ascending: false });
+
+      if (error) {
+        // Si la tabla no existe, simplemente establecer array vacío
+        if (error.code === 'PGRST116' || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+          console.warn('Tabla verificaciones_camiones no existe aún');
+          setVerificaciones([]);
+          setVerificacionesTableExists(false);
+          return;
+        }
+        
+        console.error('Error cargando verificaciones:', error);
+        toast({ title: 'Error cargando verificaciones', variant: 'destructive' });
+        return;
+      }
+
+      setVerificacionesTableExists(true);
+
+      setVerificaciones(data || []);
+    } catch (error) {
+      console.error('Error cargando verificaciones:', error);
+      // Si la tabla no existe, simplemente establecer array vacío
+      setVerificaciones([]);
+    } finally {
+      setLoadingVerificaciones(false);
+    }
+  };
+
+  const guardarVerificacion = async () => {
+    if (!camionDetalle) return;
+    
+    if (!verificacionFormData.fecha_verificacion) {
+      toast({ title: 'La fecha de verificación es obligatoria', variant: 'destructive' });
+      return;
+    }
+
+    try {
+      const verificacionData = {
+        camion_id: camionDetalle.id,
+        fecha_verificacion: verificacionFormData.fecha_verificacion,
+        fecha_vencimiento: verificacionFormData.fecha_vencimiento || null,
+        tipo_verificacion: verificacionFormData.tipo_verificacion,
+        lugar_verificacion: verificacionFormData.lugar_verificacion || null,
+        numero_certificado: verificacionFormData.numero_certificado || null,
+        resultado: verificacionFormData.resultado,
+        observaciones: verificacionFormData.observaciones || null,
+        creado_por: 'Usuario'
+      };
+
+      if (verificacionFormData.id) {
+        // Actualizar verificación existente
+        const { error } = await supabase
+          .from('verificaciones_camiones')
+          .update(verificacionData)
+          .eq('id', verificacionFormData.id);
+
+        if (error) {
+          console.error('Error actualizando verificación:', error);
+          toast({ title: 'Error actualizando verificación', variant: 'destructive' });
+          return;
+        }
+
+        toast({ title: 'Verificación actualizada exitosamente' });
+      } else {
+        // Crear nueva verificación
+        const { error } = await supabase
+          .from('verificaciones_camiones')
+          .insert([verificacionData]);
+
+        if (error) {
+          console.error('Error guardando verificación:', error);
+          toast({ title: 'Error guardando verificación', variant: 'destructive' });
+          return;
+        }
+
+        toast({ title: 'Verificación guardada exitosamente' });
+      }
+
+      // Actualizar fecha de próxima verificación en la tabla camiones
+      if (verificacionFormData.fecha_vencimiento) {
+        const actualizacionExitosa = await actualizarProximaVerificacionCamion(
+          camionDetalle.id, 
+          verificacionFormData.fecha_vencimiento
+        );
+        
+        if (!actualizacionExitosa) {
+          // No bloqueamos el flujo, pero lo reportamos
+          toast({ 
+            title: 'Verificación guardada, pero error actualizando fecha en camión', 
+            variant: 'default' 
+          });
+        }
+      }
+
+      // Recargar verificaciones
+      await cargarVerificaciones(camionDetalle.id);
+      
+      // Recargar todas las verificaciones para actualizar alertas en tarjetas
+      await cargarTodasLasVerificaciones();
+      
+      // Recargar datos del camión para reflejar la nueva fecha de próxima verificación
+      await cargarCamiones();
+      
+      // Actualizar también el detalle del camión en el modal
+      const { data: camionActualizado } = await supabase
+        .from('camiones')
+        .select('*')
+        .eq('id', camionDetalle.id)
+        .single();
+      
+      if (camionActualizado) {
+        setCamionDetalle(camionActualizado);
+      }
+      
+      // Limpiar formulario
+      setVerificacionFormData({
+        id: undefined,
+        camion_id: "",
+        fecha_verificacion: "",
+        tipo_verificacion: "",
+        resultado: "",
+        fecha_vencimiento: "",
+        numero_certificado: "",
+        lugar_verificacion: "",
+        observaciones: ""
+      });
+      setShowFormVerificacion(false);
+
+    } catch (error) {
+      console.error('Error guardando verificación:', error);
+      toast({ title: 'Error inesperado guardando verificación', variant: 'destructive' });
+    }
+  };
+
+  const editarVerificacion = (verificacion: VerificacionCamion) => {
+    setVerificacionFormData({
+      id: verificacion.id,
+      camion_id: verificacion.camion_id,
+      fecha_verificacion: verificacion.fecha_verificacion,
+      fecha_vencimiento: verificacion.fecha_vencimiento || "",
+      tipo_verificacion: verificacion.tipo_verificacion,
+      lugar_verificacion: verificacion.lugar_verificacion || "",
+      numero_certificado: verificacion.numero_certificado || "",
+      resultado: verificacion.resultado,
+      observaciones: verificacion.observaciones || ""
+    });
+    setShowFormVerificacion(true);
+  };
+
+  const iniciarEliminarVerificacion = (verificacionId: string) => {
+    setVerificacionAEliminar(verificacionId);
+    setShowConfirmarEliminarVerificacion(true);
+  };
+
+  const confirmarEliminarVerificacion = async () => {
+    if (!verificacionAEliminar) return;
+
+    try {
+      const { error } = await supabase
+        .from('verificaciones_camiones')
+        .update({ activo: false })
+        .eq('id', verificacionAEliminar);
+
+      if (error) {
+        console.error('Error eliminando verificación:', error);
+        toast({ title: 'Error eliminando verificación', variant: 'destructive' });
+        return;
+      }
+
+      toast({ title: 'Verificación eliminada exitosamente' });
+      
+      // Recargar verificaciones y actualizar fecha de próxima verificación
+      if (camionDetalle) {
+        await cargarVerificaciones(camionDetalle.id);
+        
+        // Recalcular próxima fecha de verificación (busca automáticamente la más reciente)
+        await actualizarProximaVerificacionCamion(camionDetalle.id);
+        
+        // Recargar todas las verificaciones para actualizar alertas en tarjetas
+        await cargarTodasLasVerificaciones();
+        
+        // Recargar datos del camión
+        await cargarCamiones();
+        
+        // Actualizar también el detalle del camión en el modal
+        const { data: camionActualizado } = await supabase
+          .from('camiones')
+          .select('*')
+          .eq('id', camionDetalle.id)
+          .single();
+        
+        if (camionActualizado) {
+          setCamionDetalle(camionActualizado);
+        }
+      }
+    } catch (error) {
+      console.error('Error eliminando verificación:', error);
+      toast({ title: 'Error inesperado eliminando verificación', variant: 'destructive' });
+    } finally {
+      setShowConfirmarEliminarVerificacion(false);
+      setVerificacionAEliminar(null);
+    }
+  };
+
   const eliminarCamion = async (id: string) => {
     try {
       // Obtener información del camión
@@ -1335,33 +1958,9 @@ export default function CamionesPage() {
           }
         }
 
-        // Verificar verificación
-        if (datos.frecuencia_verificacion) {
-          const proximaVerificacion = new Date(datos.frecuencia_verificacion);
-          const hoy = new Date();
-          const diasRestantes = Math.ceil(
-            (proximaVerificacion.getTime() - hoy.getTime()) /
-              (1000 * 60 * 60 * 24)
-          );
-          const th = alertThresholdsCamiones.verificacion;
-          const nivel = th
-            ? calcularNivelAlerta(datos.frecuencia_verificacion, th)
-            : undefined;
-          const mostrar = diasRestantes <= 15 || (th ? nivel !== "ninguna" : false) || diasRestantes <= 0;
-          if (mostrar) {
-            alertas.push({
-              tipo: "verificacion",
-              dias: Math.abs(diasRestantes),
-              vencido: diasRestantes <= 0,
-              nivel: diasRestantes <= 0 ? "alta" : nivel,
-              fecha: formatDateMatamoros(datos.frecuencia_verificacion),
-              mensaje:
-                diasRestantes <= 0
-                  ? `Verificación vencida hace ${Math.abs(diasRestantes)} días`
-                  : `Verificación en ${Math.abs(diasRestantes)} días`,
-            });
-          }
-        }
+        // Verificar verificación - USAR LA MISMA LÓGICA UNIFICADA QUE EL MODAL
+        const alertasVerificacion = obtenerAlertasVerificaciones(camion, todasLasVerificaciones);
+        alertas.push(...alertasVerificacion);
       } catch (error) {
         // Ignorar errores de parsing
       }
@@ -2011,6 +2610,7 @@ export default function CamionesPage() {
     setShowDetallesCamion(true);
     cargarHistorialKilometraje(camion.id);
     cargarHistorialMantenimiento(camion.id);
+    cargarVerificaciones(camion.id);
   };
 
   const limpiarFormularioMantenimiento = () => {
@@ -2438,13 +3038,29 @@ export default function CamionesPage() {
               </DialogTrigger>
               <DialogContent className={`max-w-4xl ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
                 <DialogHeader>
-                    <div>
-                      <DialogTitle>
-                        {editingCamion ? "Editar Camión" : "Nuevo Camión"}
-                      </DialogTitle>
-                      <DialogDescription>
-                        Completa la información del camión
-                      </DialogDescription>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <DialogTitle>
+                          {editingCamion ? "Editar Camión" : "Nuevo Camión"}
+                        </DialogTitle>
+                        <DialogDescription>
+                          Completa la información del camión
+                        </DialogDescription>
+                      </div>
+                      {!editingCamion && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => generarDatosAleatoriosCamion(setFormData, toast)}
+                          className="flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                          </svg>
+                          Auto-completar
+                        </Button>
+                      )}
                     </div>
                 </DialogHeader>
 
@@ -3919,8 +4535,21 @@ export default function CamionesPage() {
         )}
 
         {/* Diálogo de Detalles del Camión */}
-        <Dialog open={showDetallesCamion} onOpenChange={setShowDetallesCamion}>
-          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
+        <Dialog open={showDetallesCamion} onOpenChange={(open) => {
+          setShowDetallesCamion(open);
+          if (!open) {
+            // Resetear estados al cerrar el modal
+            setEditandoSeguroMexicano(false);
+            setEditandoSeguroAmericano(false);
+            setNuevaFechaSeguroMX('');
+            setNuevaFechaSeguroUS('');
+            setComentarioSeguroMX('');
+            setComentarioSeguroUS('');
+            setShowModalRenovarSeguro(false);
+            setTipoSeguroRenovar(null);
+          }
+        }}>
+          <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="flex items-center space-x-2 text-2xl font-bold">
                 <Truck className="h-6 w-6" />
@@ -3968,7 +4597,17 @@ export default function CamionesPage() {
                           : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
                       }`}
                     >
-                      Documentos y Seguros
+                      Seguros
+                    </button>
+                    <button
+                      onClick={() => setActiveTab("verificaciones")}
+                      className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                        activeTab === "verificaciones"
+                          ? "border-blue-500 text-blue-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                      }`}
+                    >
+                      Verificaciones
                     </button>
                     <button
                       onClick={() => setActiveTab("kilometraje")}
@@ -3989,16 +4628,6 @@ export default function CamionesPage() {
                       }`}
                     >
                       Mantenimiento
-                    </button>
-                    <button
-                      onClick={() => setActiveTab("fechas-control")}
-                      className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                        activeTab === "fechas-control"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                      }`}
-                    >
-                      Fechas Control
                     </button>
                     <button
                       onClick={() => setActiveTab("comentarios-detalle")}
@@ -4039,9 +4668,7 @@ export default function CamionesPage() {
                                 <span className="font-medium text-gray-600">
                                   Número Económico:
                                 </span>
-            <p className="font-semibold">
-                                  {camionDetalle.numero_economico}
-                                </p>
+                                <p>{camionDetalle.numero_economico}</p>
                               </div>
                               <div>
                                 <span className="font-medium text-gray-600">Marca:</span>
@@ -4050,6 +4677,10 @@ export default function CamionesPage() {
                               <div>
                                 <span className="font-medium text-gray-600">Modelo:</span>
                                 <p>{camionDetalle.modelo || "No especificado"}</p>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-600">Alta del tracto<br />camión en el sistema:</span>
+                                <p>{formatDateMatamoros(camionDetalle.fecha_registro)}</p>
                               </div>
                             </div>
                             <div className="space-y-3">
@@ -4064,6 +4695,14 @@ export default function CamionesPage() {
                               <div>
                                 <span className="font-medium text-gray-600">Estado:</span>
                                 <div className="mt-1">{getEstadoBadge(camionDetalle.estado)}</div>
+                              </div>
+                              <div>
+                                <span className="font-medium text-gray-600">Última actualización del tracto<br />camión en el sistema:</span>
+                                <p>
+                                  {camionDetalle.updated_at
+                                    ? formatDateMatamoros(camionDetalle.updated_at)
+                                    : "No disponible"}
+                                </p>
                               </div>
                             </div>
                           </div>
@@ -4283,23 +4922,62 @@ export default function CamionesPage() {
 
                         return (
                           <div className="space-y-4">
-                            <h3 className="text-sm font-semibold text-gray-900">Adjuntos del Registro</h3>
-                            {images.length > 0 ? (
-                              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                            {images.length > 0 && (
+                              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
                                 {images.map((img: any, i: number) => (
-                                  <div key={i} className="flex flex-col bg-white border rounded overflow-hidden">
-                                    <div className="h-32 w-full flex items-center justify-center bg-gray-50">
-                                      <img src={img.display_url} alt={img.nombre_archivo || `imagen-${i}`} className="h-32 w-full object-cover" onError={(e: any) => { e.currentTarget.src = '/placeholder.jpg' }} />
+                                  <div key={i} className="rounded-lg border border-gray-200 bg-white p-3">
+                                    {/* Área de vista previa clickable - imagen más grande */}
+                                    <div
+                                      className="group relative block cursor-pointer"
+                                      onClick={() => setSelectedImage(img.display_url)}
+                                    >
+                                      <img
+                                        src={img.display_url}
+                                        alt={img.nombre_archivo || `imagen-${i}`}
+                                        className="w-full h-48 object-cover rounded-md shadow-sm transition-transform duration-300 group-hover:scale-[1.02]"
+                                        onError={(e: any) => { e.currentTarget.src = '/placeholder.jpg' }}
+                                      />
+                                      <div className="pointer-events-none absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 rounded-md flex items-center justify-center">
+                                        <Eye className="h-8 w-8 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                      </div>
+                                      {/* Botón de preview en la esquina superior */}
+                                      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <Button 
+                                          variant="secondary" 
+                                          size="sm" 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setSelectedImage(img.display_url);
+                                          }}
+                                          className="h-8 w-8 p-0 bg-white/90 hover:bg-white shadow-md"
+                                        >
+                                          <Eye className="h-4 w-4" />
+                                        </Button>
+                                      </div>
                                     </div>
-                                    <div className="p-2 flex items-center justify-between">
-                                      <div className="text-xs text-gray-700 truncate">{img.nombre_archivo || img.display_url}</div>
-                                      <Button variant="ghost" size="sm" onClick={() => img.display_url ? window.open(img.display_url, '_blank') : null}>Ver</Button>
+                                    {/* Información del archivo y botón de descarga en la parte inferior */}
+                                    <div className="mt-3">
+                                      <p className="text-sm font-medium text-gray-800 truncate mb-2" title={img.nombre_archivo || 'imagen.jpg'}>
+                                        {img.nombre_archivo || 'imagen.jpg'}
+                                      </p>
+                                      <div className="flex justify-center">
+                                        <Button 
+                                          variant="outline" 
+                                          size="sm" 
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            img.display_url ? window.open(img.display_url, '_blank') : null;
+                                          }}
+                                          className="w-full text-gray-600 hover:text-gray-800"
+                                        >
+                                          <Download className="h-4 w-4 mr-2" />
+                                          Descargar
+                                        </Button>
+                                      </div>
                                     </div>
                                   </div>
                                 ))}
                               </div>
-                            ) : (
-                              <div className="text-sm text-gray-500">No hay imágenes en este registro.</div>
                             )}
 
                             {others.length > 0 && (
@@ -4309,23 +4987,45 @@ export default function CamionesPage() {
                                   {others.map((doc: any, idx: number) => {
                                     const name = doc.nombre_archivo || doc.display_url || 'archivo';
                                     const isPdf = (name || '').toLowerCase().endsWith('.pdf') || (doc.display_url || '').toLowerCase().includes('.pdf');
+                                    
                                     return (
-                                      <div key={idx} className="flex items-center justify-between bg-white border rounded p-3">
-                                        <div className="flex items-center gap-3">
-                                          <div className="w-10 h-10 flex items-center justify-center bg-gray-50 rounded">
-                                            {isPdf ? (
-                                              <svg className="h-6 w-6 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                                <path d="M12 2L7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7l-5-5z" />
-                                                <path d="M7 7h10" />
-                                              </svg>
-                                            ) : (
-                                              <Paperclip className="h-5 w-5 text-gray-600" />
-                                            )}
+                                      <div key={idx} className="group bg-white border rounded-lg p-3 hover:shadow-md transition-shadow cursor-pointer">
+                                        <div 
+                                          className="flex items-center justify-between"
+                                          onClick={() => doc.display_url ? window.open(doc.display_url, '_blank') : null}
+                                        >
+                                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                                            <div className="w-12 h-12 flex items-center justify-center bg-gray-50 rounded-lg group-hover:bg-gray-100 transition-colors">
+                                              {isPdf ? (
+                                                <svg className="h-7 w-7 text-red-600" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                                  <path d="M12 2L7 7v10a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2V7l-5-5z" />
+                                                  <path d="M7 7h10" />
+                                                  <text x="12" y="16" textAnchor="middle" className="text-xs font-bold fill-red-600">PDF</text>
+                                                </svg>
+                                              ) : (
+                                                <Paperclip className="h-6 w-6 text-gray-600" />
+                                              )}
+                                            </div>
+                                            <div className="flex-1 min-w-0">
+                                              <div className="text-sm font-medium text-gray-900 truncate" title={name}>{name}</div>
+                                              <div className="text-xs text-gray-500">
+                                                {isPdf ? 'Documento PDF' : 'Archivo adjunto'}
+                                              </div>
+                                            </div>
                                           </div>
-                                          <div className="text-sm text-gray-700 break-all">{name}</div>
-                                        </div>
-                                        <div>
-                                          <Button variant="ghost" size="sm" onClick={() => doc.display_url ? window.open(doc.display_url, '_blank') : null}>Ver</Button>
+                                          <div className="flex gap-1 ml-2">
+                                            <Button 
+                                              variant="ghost" 
+                                              size="sm" 
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                doc.display_url ? window.open(doc.display_url, '_blank') : null;
+                                              }}
+                                              className="h-8 w-8 p-0"
+                                            >
+                                              <Download className="h-4 w-4" />
+                                            </Button>
+                                          </div>
                                         </div>
                                       </div>
                                     );
@@ -4339,16 +5039,18 @@ export default function CamionesPage() {
                     </div>
                   )}
                       {activeTab === "documentos-detalle" && (() => {
-                        let datosAdicionales: any = {};
-                        if (camionDetalle.observaciones) {
-                          try {
-                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
-                          } catch (error) {
-                            console.error("Error parsing observaciones:", error);
-                          }
-                        }
+                        // Usar los datos adicionales reactivos en lugar de una variable local
+                        const datosAdicionales = datosAdicionalesReactivos;
 
-                        const alertas = verificarVencimientos(camionDetalle);
+                        // Crear un camión temporalmente actualizado para las alertas
+                        const camionActualizado = camionDetalle ? {
+                          ...camionDetalle,
+                          observaciones: JSON.stringify(datosAdicionales)
+                        } : camionDetalle;
+
+                        const todasLasAlertas = camionActualizado ? verificarVencimientos(camionActualizado) : [];
+                        // Filtrar solo alertas de seguros (excluir verificaciones)
+                        const alertas = todasLasAlertas.filter(alerta => alerta.tipo !== 'verificacion');
 
                         return (
                           <>
@@ -4400,10 +5102,24 @@ export default function CamionesPage() {
                                     </p>
                                   </div>
                                   <div>
-                                    <span className="font-medium text-gray-600">
-                                      Fecha de Vencimiento:
-                                    </span>
-                                    <p>{formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_mexicano)}</p>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="font-medium text-gray-600">
+                                        Fecha de Vencimiento:
+                                      </span>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={iniciarEdicionSeguroMX}
+                                        className="px-2 py-1 h-7 text-xs"
+                                      >
+                                        <RefreshCw className="h-3 w-3 mr-1" />
+                                        Renovar
+                                      </Button>
+                                    </div>
+                                    
+                                    <p className="text-sm">
+                                      {formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_mexicano) || 'No especificado'}
+                                    </p>
                                   </div>
                                 </CardContent>
                               </Card>
@@ -4426,40 +5142,28 @@ export default function CamionesPage() {
                                     </p>
                                   </div>
                                   <div>
-                                    <span className="font-medium text-gray-600">
-                                      Fecha de Vencimiento:
-                                    </span>
-                                    <p>{formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_americano)}</p>
+                                    <div className="flex items-center justify-between mb-2">
+                                      <span className="font-medium text-gray-600">
+                                        Fecha de Vencimiento:
+                                      </span>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={iniciarEdicionSeguroUS}
+                                        className="px-2 py-1 h-7 text-xs"
+                                      >
+                                        <RefreshCw className="h-3 w-3 mr-1" />
+                                        Renovar
+                                      </Button>
+                                    </div>
+                                    
+                                    <p className="text-sm">
+                                      {formatDateMatamoros(datosAdicionales.fecha_vencimiento_seguro_americano) || 'No especificado'}
+                                    </p>
                                   </div>
                                 </CardContent>
                               </Card>
                             </div>
-
-                            {/* Verificaciones */}
-                            <Card>
-                              <CardHeader>
-                                <CardTitle className="text-lg flex items-center space-x-2">
-                                  <Calendar className="h-5 w-5" />
-                                  <span>Verificaciones</span>
-                                </CardTitle>
-                              </CardHeader>
-                              <CardContent>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                  <div>
-                                    <span className="font-medium text-gray-600">
-                                      Última Verificación:
-                                    </span>
-                                    <p>{formatDateMatamoros(datosAdicionales.ultima_verificacion)}</p>
-                                  </div>
-                                  <div>
-                                    <span className="font-medium text-gray-600">
-                                      Próxima Verificación:
-                                    </span>
-                                    <p>{formatDateMatamoros(datosAdicionales.proxima_verificacion || datosAdicionales.frecuencia_verificacion)}</p>
-                                  </div>
-                                </div>
-                              </CardContent>
-                            </Card>
                           </>
                         );
                       })()}
@@ -4838,47 +5542,321 @@ export default function CamionesPage() {
                     </div>
                   )}
 
-                  {activeTab === "fechas-control" && (
-                    <div className="space-y-6">
-                      <section>
+                  {activeTab === "verificaciones" && (
+                    <div className="space-y-4">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                         <h3 className="text-sm font-semibold text-gray-900 flex items-center gap-2">
-                          <Calendar className="h-5 w-5" />
-                          <span>Fechas de Control</span>
+                          <CheckCircle className="h-5 w-5" />
+                          <span>Historial de Verificaciones</span>
                         </h3>
-                        <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-6">
-                          <div>
-                            <span className="font-medium text-gray-600">Fecha de Registro:</span>
-                            <p>{formatDateMatamoros(camionDetalle.fecha_registro)}</p>
+                        <Button
+                          onClick={() => {
+                            if (!verificacionesTableExists) {
+                              toast({ 
+                                title: 'Tabla no configurada', 
+                                description: 'Contacta al administrador para configurar la tabla de verificaciones',
+                                variant: 'destructive' 
+                              });
+                              return;
+                            }
+                            setShowFormVerificacion(true);
+                          }}
+                          disabled={!verificacionesTableExists}
+                          className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                        >
+                          <Plus className="h-4 w-4 mr-2" />
+                          Nueva Verificación
+                        </Button>
+                      </div>
+
+                      {/* Alertas de Vencimiento de Verificaciones */}
+                      {(() => {
+                        const alertasVerificacion = verificarVencimientosVerificacion(camionDetalle);
+                        return alertasVerificacion.length > 0 ? (
+                          <section className="mb-6">
+                            <h4 className="text-sm font-semibold text-orange-700 flex items-center gap-2 mb-3">
+                              <AlertTriangle className="h-5 w-5" />
+                              <span>Alertas de Vencimiento</span>
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
+                              {alertasVerificacion.map((alerta, index) => (
+                                <div key={index} className={`relative rounded-md border text-xs md:text-sm p-3 flex flex-col gap-2 shadow-sm ${alerta.vencido ? 'border-red-300 bg-red-50/70' : 'border-yellow-300 bg-yellow-50/70'}`}>
+                                  <div className="flex items-start gap-2">
+                                    <span className={`mt-0.5 inline-block h-2 w-2 rounded-full ${alerta.vencido ? 'bg-red-600' : 'bg-yellow-500'}`}></span>
+                                    <div className="space-y-0.5 leading-tight pr-10">
+                                      <p className="font-medium">{alerta.mensaje}</p>
+                                      <p className="opacity-80">Fecha: {alerta.fecha}</p>
+                                    </div>
+                                    <span className={`absolute top-2 right-2 rounded px-2 py-0.5 text-[10px] font-semibold tracking-wide ${
+                                      alerta.vencido ? 'bg-red-600 text-white' : 'bg-yellow-500 text-white'
+                                    }`}>
+                                      {alerta.vencido ? 'VENCIDO' : `${alerta.dias} días`}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </section>
+                        ) : null;
+                      })()}
+
+                      {/* Resumen de Verificaciones */}
+                      {(() => {
+                        let datosAdicionales: any = {};
+                        if (camionDetalle && camionDetalle.observaciones) {
+                          try {
+                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
+                          } catch (e) {
+                            console.error('Error parsing observaciones for verificaciones', e);
+                          }
+                        }
+
+                        // Calcular última y próxima verificación desde el historial
+                        const ultimaVerificacion = verificaciones.length > 0 
+                          ? verificaciones[0] // Ya están ordenadas por fecha desc
+                          : null;
+                        
+                        const proximasVerificaciones = verificaciones
+                          .filter(v => v.fecha_vencimiento && new Date(v.fecha_vencimiento) > new Date())
+                          .sort((a, b) => new Date(a.fecha_vencimiento!).getTime() - new Date(b.fecha_vencimiento!).getTime());
+                        
+                        const proximaVerificacion = proximasVerificaciones.length > 0 
+                          ? proximasVerificaciones[0]
+                          : null;
+
+                        return (
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                            {/* Última Verificación */}
+                            <Card>
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-base flex items-center space-x-2">
+                                  <CheckCircle className="h-4 w-4" />
+                                  <span>Última Verificación</span>
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="pt-0 pb-4">
+                                {ultimaVerificacion ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Fecha:</span>
+                                      <span className="text-sm">{formatDateMatamoros(ultimaVerificacion.fecha_verificacion)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Tipo:</span>
+                                      <span className="text-sm capitalize">{ultimaVerificacion.tipo_verificacion || 'General'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Resultado:</span>
+                                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                        ultimaVerificacion.resultado === 'aprobada' 
+                                          ? 'bg-green-200 text-green-800'
+                                          : ultimaVerificacion.resultado === 'rechazada'
+                                          ? 'bg-red-200 text-red-800'
+                                          : 'bg-yellow-200 text-yellow-800'
+                                      }`}>
+                                        {ultimaVerificacion.resultado || 'Pendiente'}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-center">
+                                    <p className="text-gray-500 text-sm">Sin verificaciones registradas</p>
+                                    {datosAdicionales.ultima_verificacion && (
+                                      <p className="text-gray-400 text-xs mt-0.5">
+                                        Dato anterior: {formatDateMatamoros(datosAdicionales.ultima_verificacion)}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
+
+                            {/* Próxima Verificación */}
+                            <Card>
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-base flex items-center space-x-2">
+                                  <Calendar className="h-4 w-4" />
+                                  <span>Próxima Verificación</span>
+                                </CardTitle>
+                              </CardHeader>
+                              <CardContent className="pt-0 pb-4">
+                                {proximaVerificacion ? (
+                                  <div className="space-y-1.5">
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Vencimiento:</span>
+                                      <span className="text-sm">{formatDateMatamoros(proximaVerificacion.fecha_vencimiento!)}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Tipo:</span>
+                                      <span className="text-sm capitalize">{proximaVerificacion.tipo_verificacion || 'General'}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center">
+                                      <span className="text-sm font-medium text-gray-600">Días restantes:</span>
+                                      <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${
+                                        (() => {
+                                          const diasRestantes = Math.ceil(
+                                            (new Date(proximaVerificacion.fecha_vencimiento!).getTime() - new Date().getTime()) / 
+                                            (1000 * 60 * 60 * 24)
+                                          );
+                                          return diasRestantes <= 30 
+                                            ? 'bg-red-200 text-red-800'
+                                            : diasRestantes <= 60
+                                            ? 'bg-yellow-200 text-yellow-800'
+                                            : 'bg-gray-200 text-gray-800';
+                                        })()
+                                      }`}>
+                                        {(() => {
+                                          const diasRestantes = Math.ceil(
+                                            (new Date(proximaVerificacion.fecha_vencimiento!).getTime() - new Date().getTime()) / 
+                                            (1000 * 60 * 60 * 24)
+                                          );
+                                          return diasRestantes > 0 ? `${diasRestantes} días` : 'Vencida';
+                                        })()}
+                                      </span>
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <div className="text-center">
+                                    <p className="text-gray-500 text-sm">Sin fechas de vencimiento programadas</p>
+                                    {datosAdicionales.proxima_verificacion && (
+                                      <p className="text-gray-400 text-xs mt-0.5">
+                                        Dato anterior: {formatDateMatamoros(datosAdicionales.proxima_verificacion)}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
+                              </CardContent>
+                            </Card>
                           </div>
-                          <div>
-                            <span className="font-medium text-gray-600">Última Actualización:</span>
-                            <p>
-                              {camionDetalle.updated_at
-                                ? formatDateMatamoros(camionDetalle.updated_at)
-                                : "No disponible"}
-                            </p>
+                        );
+                      })()}
+
+                      {/* Historial de Verificaciones */}
+                      <div className="border-t pt-6">
+                        <h4 className="text-base font-semibold text-gray-900 mb-2 flex items-center gap-2">
+                          <FileText className="h-4 w-4" />
+                          Historial Completo de Verificaciones
+                        </h4>
+                        
+                        {loadingVerificaciones ? (
+                          <div className="text-center py-4">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-green-600 mx-auto"></div>
+                            <p className="mt-1 text-gray-600 text-sm">Cargando verificaciones...</p>
                           </div>
+                        ) : verificaciones.length > 0 ? (
+                        <div className="overflow-x-auto rounded-lg border">
+                          <table className="min-w-full divide-y divide-gray-200 text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Fecha Verificación</th>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Tipo</th>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Resultado</th>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Próxima</th>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Observaciones</th>
+                                <th className="px-3 py-1.5 text-left font-medium text-gray-600 text-xs">Acciones</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100 bg-white">
+                              {verificaciones.map(verificacion => (
+                                <tr key={verificacion.id} className="hover:bg-gray-50">
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-xs">
+                                    {formatDateMatamoros(verificacion.fecha_verificacion)}
+                                  </td>
+                                  <td className="px-3 py-1.5 capitalize text-xs">
+                                    {verificacion.tipo_verificacion || 'General'}
+                                  </td>
+                                  <td className="px-3 py-1.5">
+                                    <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full ${
+                                      verificacion.resultado === 'aprobada' 
+                                        ? 'bg-green-100 text-green-800'
+                                        : verificacion.resultado === 'rechazada'
+                                        ? 'bg-red-100 text-red-800'
+                                        : 'bg-yellow-100 text-yellow-800'
+                                    }`}>
+                                      {verificacion.resultado || 'Pendiente'}
+                                    </span>
+                                  </td>
+                                  <td className="px-3 py-1.5 whitespace-nowrap text-xs">
+                                    {verificacion.fecha_vencimiento 
+                                      ? formatDateMatamoros(verificacion.fecha_vencimiento)
+                                      : <span className="text-gray-400 italic">—</span>
+                                    }
+                                  </td>
+                                  <td className="px-3 py-1.5 max-w-xs text-xs">
+                                    <div className="truncate" title={verificacion.observaciones || ''}>
+                                      {verificacion.observaciones || <span className="text-gray-400 italic">Sin observaciones</span>}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-1.5 whitespace-nowrap">
+                                    <div className="flex items-center gap-1">
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => editarVerificacion(verificacion)}
+                                        className="px-2 py-1"
+                                      >
+                                        <Edit className="h-3 w-3" />
+                                      </Button>
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button variant="outline" size="sm" className="px-2 py-1">
+                                            <Trash2 className="h-3 w-3 text-red-600" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>¿Eliminar verificación?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Esta acción no se puede deshacer. Se eliminará permanentemente el registro de verificación.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                            <AlertDialogAction onClick={() => iniciarEliminarVerificacion(verificacion.id!)}>
+                                              Eliminar
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
-                      </section>
+                      ) : !verificacionesTableExists ? (
+                        <div className="text-center py-4 text-gray-500 border-2 border-dashed border-gray-300 rounded-lg">
+                          <CheckCircle className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                          <p className="font-medium text-gray-700 text-sm">Sistema de Verificaciones Pendiente</p>
+                          <p className="text-xs mt-0.5">La tabla de verificaciones necesita ser configurada en la base de datos</p>
+                          <p className="text-xs mt-1 text-gray-500">Contacta al administrador del sistema</p>
+                        </div>
+                      ) : (
+                        <div className="text-center py-4 text-gray-500">
+                          <CheckCircle className="h-8 w-8 mx-auto mb-2 text-gray-400" />
+                          <p className="text-sm">No hay verificaciones registradas</p>
+                          <p className="text-xs mt-0.5">Los registros de verificaciones aparecerán aquí</p>
+                        </div>
+                      )}
+                      </div>
                     </div>
                   )}
 
                   {activeTab === "comentarios-detalle" && (
                     <div className="space-y-6">
-                      <Card>
-                        <CardContent>
-                          {(() => {
-                            let datosAdicionales: any = {};
-                            if (camionDetalle.observaciones) {
-                              try {
-                                datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
-                              } catch (error) {
-                                console.error('Error parsing observaciones:', error);
-                              }
-                            }
-                            const comentarios = datosAdicionales.historial_comentarios || [];
-                            return (
-                              <div className="space-y-4">
+                      {(() => {
+                        let datosAdicionales: any = {};
+                        if (camionDetalle.observaciones) {
+                          try {
+                            datosAdicionales = safeParseObservaciones(camionDetalle.observaciones);
+                          } catch (error) {
+                            console.error('Error parsing observaciones:', error);
+                          }
+                        }
+                        const comentarios = datosAdicionales.historial_comentarios || [];
+                        return (
+                          <div className="space-y-4">
                                 <div className="space-y-2">
                                   <Textarea
                                     className="min-h-[90px] resize-y text-sm w-full"
@@ -5049,8 +6027,6 @@ export default function CamionesPage() {
                               </div>
                             );
                           })()}
-                        </CardContent>
-                      </Card>
                     </div>
                   )}
                 </div>
@@ -5495,6 +6471,301 @@ export default function CamionesPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* Formulario de Verificación */}
+        <Dialog 
+          open={showFormVerificacion} 
+          onOpenChange={setShowFormVerificacion}
+        >
+          <DialogContent className="max-w-2xl">
+            <DialogHeader>
+              <DialogTitle>
+                {verificacionFormData.id ? 'Editar Verificación' : 'Nueva Verificación'}
+              </DialogTitle>
+              <DialogDescription>
+                {verificacionFormData.id 
+                  ? 'Modificar los datos de la verificación'
+                  : 'Registrar una nueva verificación para este camión'
+                }
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="fecha_verificacion">Fecha de Verificación *</Label>
+                  <Input
+                    id="fecha_verificacion"
+                    type="date"
+                    value={verificacionFormData.fecha_verificacion}
+                    onChange={(e) => setVerificacionFormData({
+                      ...verificacionFormData,
+                      fecha_verificacion: e.target.value
+                    })}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="tipo_verificacion">Tipo de Verificación</Label>
+                  <Select
+                    value={verificacionFormData.tipo_verificacion}
+                    onValueChange={(value) => setVerificacionFormData({
+                      ...verificacionFormData,
+                      tipo_verificacion: value
+                    })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar tipo" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="anual">Anual</SelectItem>
+                      <SelectItem value="semestral">Semestral</SelectItem>
+                      <SelectItem value="especial">Especial</SelectItem>
+                      <SelectItem value="revision_tecnica">Revisión Técnica</SelectItem>
+                      <SelectItem value="emisiones">Emisiones Contaminantes</SelectItem>
+                      <SelectItem value="seguridad">Seguridad Vehicular</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="resultado">Resultado *</Label>
+                  <Select
+                    value={verificacionFormData.resultado}
+                    onValueChange={(value) => setVerificacionFormData({
+                      ...verificacionFormData,
+                      resultado: value
+                    })}
+                  >
+                    <SelectTrigger>
+                      <SelectValue placeholder="Seleccionar resultado" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="aprobada">Aprobada</SelectItem>
+                      <SelectItem value="rechazada">Rechazada</SelectItem>
+                      <SelectItem value="pendiente">Pendiente</SelectItem>
+                      <SelectItem value="condicional">Condicional</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="fecha_vencimiento">Fecha de Vencimiento</Label>
+                  <Input
+                    id="fecha_vencimiento"
+                    type="date"
+                    value={verificacionFormData.fecha_vencimiento}
+                    onChange={(e) => setVerificacionFormData({
+                      ...verificacionFormData,
+                      fecha_vencimiento: e.target.value
+                    })}
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="numero_certificado">Número de Certificado</Label>
+                <Input
+                  id="numero_certificado"
+                  value={verificacionFormData.numero_certificado}
+                  onChange={(e) => setVerificacionFormData({
+                    ...verificacionFormData,
+                    numero_certificado: e.target.value
+                  })}
+                  placeholder="Número del certificado de verificación"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="lugar_verificacion">Lugar de Verificación</Label>
+                <Input
+                  id="lugar_verificacion"
+                  value={verificacionFormData.lugar_verificacion}
+                  onChange={(e) => setVerificacionFormData({
+                    ...verificacionFormData,
+                    lugar_verificacion: e.target.value
+                  })}
+                  placeholder="Centro de verificación, taller, etc."
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="observaciones">Observaciones</Label>
+                <Textarea
+                  id="observaciones"
+                  value={verificacionFormData.observaciones}
+                  onChange={(e) => setVerificacionFormData({
+                    ...verificacionFormData,
+                    observaciones: e.target.value
+                  })}
+                  placeholder="Detalles adicionales sobre la verificación..."
+                  rows={3}
+                />
+              </div>
+            </div>
+
+            <div className="flex justify-end space-x-2 mt-6">
+              <Button 
+                variant="outline" 
+                onClick={() => {
+                  setShowFormVerificacion(false);
+                  setVerificacionFormData({
+                    id: undefined,
+                    camion_id: '',
+                    fecha_verificacion: '',
+                    tipo_verificacion: '',
+                    resultado: '',
+                    fecha_vencimiento: '',
+                    numero_certificado: '',
+                    lugar_verificacion: '',
+                    observaciones: ''
+                  });
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={guardarVerificacion} 
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                {verificacionFormData.id ? 'Actualizar' : 'Guardar'} Verificación
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Renovación de Seguros */}
+        <Dialog open={showModalRenovarSeguro} onOpenChange={setShowModalRenovarSeguro}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center space-x-2">
+                <Shield className="h-5 w-5" />
+                <span>Renovar {tipoSeguroRenovar === 'mexicano' ? 'Seguro Mexicano' : 'Seguro Americano'}</span>
+              </DialogTitle>
+              <DialogDescription>
+                Camión: {camionDetalle?.numero_economico}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label htmlFor="nueva-fecha-seguro">Nueva Fecha de Vencimiento *</Label>
+                <Input
+                  id="nueva-fecha-seguro"
+                  type="date"
+                  value={tipoSeguroRenovar === 'mexicano' ? nuevaFechaSeguroMX : nuevaFechaSeguroUS}
+                  onChange={(e) => {
+                    if (tipoSeguroRenovar === 'mexicano') {
+                      setNuevaFechaSeguroMX(e.target.value);
+                    } else {
+                      setNuevaFechaSeguroUS(e.target.value);
+                    }
+                  }}
+                  className="w-full"
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="comentario-seguro">Comentario (opcional)</Label>
+                <Textarea
+                  id="comentario-seguro"
+                  placeholder="Agregar comentario sobre la renovación del seguro..."
+                  value={tipoSeguroRenovar === 'mexicano' ? comentarioSeguroMX : comentarioSeguroUS}
+                  onChange={(e) => {
+                    if (tipoSeguroRenovar === 'mexicano') {
+                      setComentarioSeguroMX(e.target.value);
+                    } else {
+                      setComentarioSeguroUS(e.target.value);
+                    }
+                  }}
+                  rows={3}
+                  className="resize-none"
+                />
+                <p className="text-xs text-gray-500">
+                  Ej: "Renovado por vencimiento próximo", "Cambio de aseguradora", etc.
+                </p>
+              </div>
+
+              <div className="flex justify-end space-x-2 pt-4">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setShowModalRenovarSeguro(false);
+                    setTipoSeguroRenovar(null);
+                    setNuevaFechaSeguroMX('');
+                    setNuevaFechaSeguroUS('');
+                    setComentarioSeguroMX('');
+                    setComentarioSeguroUS('');
+                  }}
+                >
+                  Cancelar
+                </Button>
+                <Button
+                  onClick={renovarSeguroConComentario}
+                  disabled={!(tipoSeguroRenovar === 'mexicano' ? nuevaFechaSeguroMX : nuevaFechaSeguroUS)}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                >
+                  <Save className="h-4 w-4 mr-2" />
+                  Renovar Seguro
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* AlertDialog para confirmar eliminación de verificación */}
+        <AlertDialog open={showConfirmarEliminarVerificacion} onOpenChange={setShowConfirmarEliminarVerificacion}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Confirmar eliminación</AlertDialogTitle>
+              <AlertDialogDescription>
+                ¿Estás seguro de eliminar esta verificación? Esta acción no se puede deshacer.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => {
+                setShowConfirmarEliminarVerificacion(false);
+                setVerificacionAEliminar(null);
+              }}>
+                Cancelar
+              </AlertDialogCancel>
+              <AlertDialogAction 
+                onClick={confirmarEliminarVerificacion}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Eliminar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Visor de imagen - estilo operador - VERSION ACTUALIZADA */}
+        {selectedImage && (
+          <div 
+            className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-[60] p-4"
+            onClick={() => {
+              console.log('Cerrando visor de imagen');
+              setSelectedImage(null);
+            }}
+          >
+            <div className="relative max-w-[95vw] max-h-[95vh]">
+              <img 
+                src={selectedImage} 
+                alt="Preview" 
+                className="max-w-full max-h-full object-contain"
+                onClick={(e) => e.stopPropagation()}
+              />
+              <button 
+                className="absolute top-4 right-4 text-white hover:text-gray-300 transition-colors"
+                onClick={() => setSelectedImage(null)}
+              >
+                <X className="h-6 w-6" />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </MainLayout>
   );

@@ -458,3 +458,195 @@ export async function eliminarArchivoOperador(opts: { id?: string; pathname?: st
   }
 }
 
+// ================= Helpers para documentos de remolques =================
+
+export async function subirDocumentoRemolque(
+  remolqueId: string,
+  file: File,
+  tipoDocumento: string = 'documento_general',
+  numeroDocumento?: string,
+): Promise<{ url: string; pathname: string }> {
+  try {
+    console.log("Subiendo documento de remolque:", { remolqueId, tipoDocumento, fileName: file.name })
+
+    // Validar archivo
+    if (!file) {
+      throw new Error("No se proporcionó archivo")
+    }
+
+    // Validar tamaño (máximo 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("El archivo es muy grande. Tamaño máximo: 10MB")
+    }
+
+    // Validar tipo de archivo
+    const tiposPermitidos = [
+      "image/jpeg",
+      "image/jpg", 
+      "image/png",
+      "image/gif",
+      "image/bmp",
+      "image/webp",
+      "application/pdf",
+    ]
+
+    if (!tiposPermitidos.includes(file.type)) {
+      throw new Error("Tipo de archivo no permitido. Solo se permiten imágenes (JPG, PNG, GIF, BMP, WebP) y PDFs")
+    }
+
+    // Crear nombre único para el archivo y organizar en subcarpetas por tipo
+    const timestamp = Date.now()
+    const extension = file.name.split(".").pop()
+
+    // Clasificación de subcarpeta según tipoDocumento
+    let subfolder = "general"
+    if (tipoDocumento === "poliza_seguro") subfolder = "seguros"
+    else if (tipoDocumento === "verificacion") subfolder = "verificaciones"
+    else if (tipoDocumento === "tarjeta_circulacion") subfolder = "circulacion"
+    else if (tipoDocumento === "inspeccion") subfolder = "inspecciones"
+    else if (tipoDocumento === "mantenimiento") subfolder = "mantenimiento"
+    else if (tipoDocumento === "factura") subfolder = "facturas"
+    else if (tipoDocumento === "manual") subfolder = "manuales"
+
+    const nombreBase = `${tipoDocumento}_${timestamp}.${extension}`
+    const nombreArchivo = `remolques/${remolqueId}/${subfolder}/${nombreBase}`
+
+    console.log("Nombre de archivo generado:", nombreArchivo)
+
+    // Usar la API route para subir el archivo
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("fileName", nombreArchivo)
+
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      let errorText = await response.text()
+      console.error("Error en respuesta del servidor:", errorText)
+      try {
+        const parsed = JSON.parse(errorText)
+        if (parsed?.code === "BLOB_QUOTA_EXCEEDED" || response.status === 507) {
+          throw new Error(
+            parsed?.error ||
+              "El almacenamiento de imágenes está lleno. Contacta al administrador para liberar espacio o ampliar el plan."
+          )
+        }
+        throw new Error(parsed?.error || `Error del servidor: ${response.status}`)
+      } catch {
+        // Si no es JSON, usar el texto plano
+        if (response.status === 507 || /quota|storage|insufficient/i.test(errorText)) {
+          throw new Error("El almacenamiento de imágenes está lleno. Contacta al administrador para liberar espacio o ampliar el plan.")
+        }
+        throw new Error(`Error del servidor: ${response.status} - ${errorText}`)
+      }
+    }
+
+    const result = await response.json()
+    console.log("Documento de remolque subido exitosamente:", result)
+
+    return {
+      url: result.url,
+      pathname: result.pathname,
+    }
+  } catch (error) {
+    console.error("Error al subir documento de remolque:", error)
+    throw new Error(`Error al subir el documento: ${error instanceof Error ? error.message : "Error desconocido"}`)
+  }
+}
+
+export async function eliminarDocumentoRemolque(target: string): Promise<void> {
+  try {
+    console.log("Eliminando documento de remolque:", target)
+
+    // Determinar si target es un ID o un pathname
+    let documentoRemolque: any
+    
+    if (target.includes('/')) {
+      // Es un pathname, buscar por pathname
+      const { data, error } = await supabase
+        .from('documentos_remolques')
+        .select('*')
+        .eq('pathname', target)
+        .eq('activo', true)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') {
+        throw new Error(`Error buscando documento por pathname: ${error.message}`)
+      }
+      documentoRemolque = data
+    } else {
+      // Es un ID, buscar por ID
+      const { data, error } = await supabase
+        .from('documentos_remolques')
+        .select('*')
+        .eq('id', target)
+        .eq('activo', true)
+        .single()
+      
+      if (error && error.code !== 'PGRST116') {
+        throw new Error(`Error buscando documento por ID: ${error.message}`)
+      }
+      documentoRemolque = data
+    }
+
+    if (!documentoRemolque) {
+      console.warn('Documento de remolque no encontrado:', target)
+      return
+    }
+
+    // Eliminar del blob storage
+    try {
+      const response = await fetch(`/api/delete-blob?pathname=${encodeURIComponent(documentoRemolque.pathname)}`, {
+        method: 'DELETE',
+      })
+      
+      if (!response.ok) {
+        console.warn(`Error eliminando blob (${response.status}):`, await response.text())
+      }
+    } catch (e) {
+      console.warn('Fallo al eliminar blob para documento remolque:', e)
+    }
+
+    // Marcar como inactivo en la base de datos
+    const { error: updateError } = await supabase
+      .from('documentos_remolques')
+      .update({ 
+        activo: false, 
+        updated_at: new Date().toISOString() 
+      })
+      .eq('id', documentoRemolque.id)
+
+    if (updateError) {
+      throw new Error(`Error marcando documento como inactivo: ${updateError.message}`)
+    }
+
+    console.log("Documento de remolque eliminado exitosamente")
+  } catch (error) {
+    console.error("Error eliminando documento de remolque:", error)
+    throw error
+  }
+}
+
+export async function listarDocumentosRemolque(remolqueId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('documentos_remolques')
+      .select('*')
+      .eq('remolque_id', remolqueId)
+      .eq('activo', true)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      throw new Error(`Error listando documentos de remolque: ${error.message}`)
+    }
+
+    return data || []
+  } catch (error) {
+    console.error("Error listando documentos de remolque:", error)
+    throw error
+  }
+}
+

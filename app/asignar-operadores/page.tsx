@@ -971,7 +971,7 @@ export default function AsignarOperadoresPage() {
       const { data: operadoresData, error: operadoresError } = await supabase
         .from("operadores")
         .select("*")
-        .eq("estado", "activo")
+        .neq("estado", "fuera-de-servicio")
         .order("nombre");
 
       if (operadoresError) {
@@ -997,6 +997,7 @@ export default function AsignarOperadoresPage() {
       const { data: remolquesData, error: remolquesError } = await supabase
         .from("remolques")
         .select("*")
+        .neq("estado", "fuera-de-servicio")
         .order("numero_economico");
 
       if (remolquesError) {
@@ -3735,7 +3736,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <Camera className="h-4 w-4 mr-1" />
-                          Fotos
+                          Reporte del Operador
                         </Button>
                       )}
                       {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
@@ -3749,7 +3750,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <FileText className="h-4 w-4 mr-1" />
-                          Reporte
+                          Reporte para Clientes
                         </Button>
                       )}
                       {/* Kilometraje - abrir modal para el tractocamión asignado */}
@@ -4713,6 +4714,18 @@ export default function AsignarOperadoresPage() {
                                 const camionSeleccionado = camiones.find(
                                   (cam) => cam.id === asignacion.camion_id
                                 );
+                                
+                                // Validar que operador y camión estén disponibles
+                                if (operadorSeleccionado && operadorSeleccionado.estado !== "disponible" && operadorSeleccionado.estado !== "activo") {
+                                  alert("No se puede asignar: El operador seleccionado no está disponible");
+                                  return;
+                                }
+                                
+                                if (camionSeleccionado && camionSeleccionado.estado !== "disponible" && camionSeleccionado.estado !== "activo") {
+                                  alert("No se puede asignar: El tractocamión seleccionado no está disponible");
+                                  return;
+                                }
+                                
                                 setPendingAsignacion({
                                   embarqueId: embarque.id,
                                   embarqueFolio: embarque.folio || null,
@@ -4723,13 +4736,30 @@ export default function AsignarOperadoresPage() {
                                 });
                                 setShowConfirmAsignar(true);
                               }}
-                              disabled={
-                                saving ||
-                                !asignaciones[embarque.id]?.operador_id ||
-                                !asignaciones[embarque.id]?.camion_id ||
-                                !asignaciones[embarque.id]?.precio_flete ||
-                                !asignaciones[embarque.id]?.moneda_flete
-                              }
+                              disabled={(() => {
+                                const asignacion = asignaciones[embarque.id];
+                                if (saving || 
+                                    !asignacion?.operador_id || 
+                                    !asignacion?.camion_id || 
+                                    !asignacion?.precio_flete || 
+                                    !asignacion?.moneda_flete) {
+                                  return true;
+                                }
+                                
+                                // Verificar si el operador seleccionado está NO disponible
+                                const operadorSeleccionado = operadores.find(op => op.id === asignacion.operador_id);
+                                if (operadorSeleccionado && operadorSeleccionado.estado !== "disponible" && operadorSeleccionado.estado !== "activo") {
+                                  return true;
+                                }
+                                
+                                // Verificar si el camión seleccionado está NO disponible
+                                const camionSeleccionado = camiones.find(cam => cam.id === asignacion.camion_id);
+                                if (camionSeleccionado && camionSeleccionado.estado !== "disponible" && camionSeleccionado.estado !== "activo") {
+                                  return true;
+                                }
+                                
+                                return false;
+                              })()}
                               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium"
                             >
                               {saving ? (
