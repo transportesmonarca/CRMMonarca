@@ -21,6 +21,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -52,6 +63,8 @@ import {
   Phone,
   Mail,
   FileText,
+  FolderOpen,
+  Trash2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
@@ -75,6 +88,12 @@ import {
   obtenerContactosClienteTabla,
   obtenerFotosEmbarque,
 } from "@/lib/supabase";
+import {
+  subirDocumentoEmbarque,
+  eliminarDocumentoEmbarque,
+  eliminarDocumentoEmbarqueCompleto,
+  listarDocumentosEmbarque,
+} from "@/lib/blob";
 
 const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
   if (!tipo) return false;
@@ -194,6 +213,38 @@ export default function EmbarquesPage() {
   const [publicExpirationInput, setPublicExpirationInput] = useState<string | null>(null);
   const [publicForEmbarqueId, setPublicForEmbarqueId] = useState<string | null>(null);
   const [embarqueFotos, setEmbarqueFotos] = useState<FotoEmbarque[]>([]);
+  
+  // Estados para documentos del embarque
+  interface DocumentoEmbarque {
+    id?: string;
+    embarque_id?: string;
+    nombre_archivo: string;
+    url_blob: string;
+    pathname: string;
+    tipo_archivo?: string;
+    tamano_bytes?: number;
+    uploaded_at?: string;
+    created_at?: string;
+    _tempFile?: File; // Para archivos temporales antes de crear el embarque
+  }
+  const [documentosEmbarque, setDocumentosEmbarque] = useState<DocumentoEmbarque[]>([]);
+  const [uploadingDocumento, setUploadingDocumento] = useState(false);
+  
+  // Estado separado para documentos del modal de detalles
+  const [documentosDetalles, setDocumentosDetalles] = useState<DocumentoEmbarque[]>([]);
+  const [loadingDocumentosDetalles, setLoadingDocumentosDetalles] = useState(false);
+
+  // Estado para modal de preview de imágenes
+  const [showImagePreview, setShowImagePreview] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{url: string, name: string} | null>(null);
+
+  // Debug: Monitorear cambios en documentosEmbarque
+  useEffect(() => {
+    console.log("🔄 Estado documentosEmbarque actualizado:", {
+      cantidad: documentosEmbarque.length,
+      documentos: documentosEmbarque
+    });
+  }, [documentosEmbarque]);
 
   // Persistencia local (client-side) para marcar embarques que el usuario completó
   // Esto evita que el botón "Completar y Enviar" reaparezca después de recargar
@@ -1133,6 +1184,7 @@ export default function EmbarquesPage() {
     });
     setEmbarqueEditando(null);
     setContactos([]);
+    setDocumentosEmbarque([]);
     if (!embarqueEditando) {
       cargarProximoFolio();
     }
@@ -1360,12 +1412,154 @@ export default function EmbarquesPage() {
       await cargarContactos(embarque.cliente_id);
     }
 
+    // Cargar documentos del embarque
+    try {
+      const docs = await listarDocumentosEmbarque(embarque.id);
+      setDocumentosEmbarque(docs);
+    } catch (error) {
+      console.error("Error cargando documentos del embarque:", error);
+      setDocumentosEmbarque([]);
+    }
+
     setEmbarqueEditando(embarque);
     setShowEditModal(true);
   };
 
+  // Funciones para manejar documentos del embarque
+  const handleUploadDocumentoEmbarque = async (file: File) => {
+    if (!file) return;
+
+    // Validar límite de 10 documentos
+    if (documentosEmbarque.length >= 10) {
+      toast({
+        title: "Límite alcanzado",
+        description: "Solo se pueden subir hasta 10 documentos por embarque",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setUploadingDocumento(true);
+
+      // Si estamos editando, subir directamente
+      if (embarqueEditando) {
+        const { url, pathname } = await subirDocumentoEmbarque(
+          embarqueEditando.id,
+          file
+        );
+
+        // Guardar en la base de datos
+        const { data, error } = await supabase
+          .from('documentos_embarques')
+          .insert({
+            embarque_id: embarqueEditando.id,
+            nombre_archivo: file.name,
+            url_blob: url,
+            pathname: pathname,
+            tipo_archivo: file.type,
+            tamano_bytes: file.size,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setDocumentosEmbarque(prev => [...prev, data]);
+        
+        toast({
+          title: "Documento subido",
+          description: `${file.name} se subió correctamente`,
+        });
+      } else {
+        // Si estamos creando, guardar temporalmente para subir después
+        const tempDoc: DocumentoEmbarque = {
+          nombre_archivo: file.name,
+          url_blob: URL.createObjectURL(file),
+          pathname: "", // Se asignará después
+          tipo_archivo: file.type,
+          tamano_bytes: file.size,
+          _tempFile: file,
+        };
+        
+        setDocumentosEmbarque(prev => [...prev, tempDoc]);
+        
+        toast({
+          title: "Documento agregado",
+          description: `${file.name} se subirá al guardar el embarque`,
+        });
+      }
+    } catch (error: any) {
+      console.error("❌ [handleUploadDocumentoEmbarque] Error subiendo documento:", {
+        error,
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+        fileName: file?.name,
+        fileSize: file?.size,
+        fileType: file?.type
+      });
+      
+      const errorMessage = error?.message || 
+                          error?.error_description || 
+                          error?.details || 
+                          (typeof error === 'string' ? error : 'Error desconocido al subir documento');
+                          
+      toast({
+        title: "Error subiendo documento",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingDocumento(false);
+    }
+  };
+
+  const handleEliminarDocumentoEmbarque = async (documento: DocumentoEmbarque) => {
+    try {
+      // Si tiene ID, está en la BD
+      if (documento.id) {
+        await eliminarDocumentoEmbarque(documento.pathname);
+        
+        const { error } = await supabase
+          .from('documentos_embarques')
+          .delete()
+          .eq('id', documento.id);
+
+        if (error) throw error;
+      }
+
+      setDocumentosEmbarque(prev => 
+        prev.filter(d => 
+          documento.id ? d.id !== documento.id : d.nombre_archivo !== documento.nombre_archivo
+        )
+      );
+
+      toast({
+        title: "Documento eliminado",
+        description: "El documento se eliminó correctamente",
+      });
+    } catch (error: any) {
+      console.error("Error eliminando documento:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el documento",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSave = async () => {
     let nuevoEmbarqueIdCreado: string | null = null;
+    
+    console.log("💾 INICIANDO GUARDADO - Estado de documentos:", {
+      cantidadDocumentos: documentosEmbarque.length,
+      esEdicion: !!embarqueEditando,
+      documentos: documentosEmbarque.map(d => ({
+        nombre: d.nombre_archivo,
+        tieneTempFile: !!d._tempFile
+      }))
+    });
     
     // Validación: fecha_recolecta no puede ser después de fecha_entrega
     // Helper: consider a direccion valid only if it's non-empty and not a placeholder
@@ -2024,6 +2218,64 @@ export default function EmbarquesPage() {
         
         console.log("✅ Embarque registrado:", { id: nuevoEmbarqueIdCreado, folio: folioFinal });
         
+        // CRÍTICO: Verificar estado de documentos justo antes de procesarlos
+        console.log("📄 CRÍTICO: Estado de documentos ANTES de procesar:", {
+          cantidadDocumentos: documentosEmbarque.length,
+          documentos: documentosEmbarque.map(d => ({
+            nombre: d.nombre_archivo,
+            tieneTempFile: !!d._tempFile,
+            tipoArchivo: d.tipo_archivo,
+            tamaño: d.tamano_bytes,
+            urlBlob: d.url_blob?.substring(0, 50) + '...'
+          }))
+        });
+        
+        // Subir documentos temporales
+        console.log(`🔍 Verificando documentos antes de subir:`, {
+          embarqueId: nuevoEmbarqueIdCreado,
+          cantidadDocumentos: documentosEmbarque.length,
+          documentos: documentosEmbarque.map(d => ({
+            nombre: d.nombre_archivo,
+            tieneTempFile: !!d._tempFile
+          }))
+        });
+        
+        if (nuevoEmbarqueIdCreado && documentosEmbarque.length > 0) {
+          console.log(`📄 Subiendo ${documentosEmbarque.length} documentos temporales...`);
+          let documentosSubidos = 0;
+          for (const doc of documentosEmbarque) {
+            if (doc._tempFile) {
+              try {
+                const file = doc._tempFile;
+                console.log(`⬆️ Subiendo: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+                
+                const { url, pathname } = await subirDocumentoEmbarque(nuevoEmbarqueIdCreado, file);
+                console.log(`✅ Archivo subido a Vercel Blob: ${url}`);
+                
+                const { data, error } = await supabase.from('documentos_embarques').insert({
+                  embarque_id: nuevoEmbarqueIdCreado,
+                  nombre_archivo: file.name,
+                  url_blob: url,
+                  pathname: pathname,
+                  tipo_archivo: file.type,
+                  tamano_bytes: file.size,
+                });
+                
+                if (error) {
+                  console.error(`❌ Error insertando documento en BD:`, error);
+                  throw error;
+                }
+                
+                console.log(`✅ Documento registrado en BD: ${file.name}`, data);
+                documentosSubidos++;
+              } catch (error) {
+                console.error(`❌ Error subiendo documento ${doc.nombre_archivo}:`, error);
+              }
+            }
+          }
+          console.log(`✅ Total documentos subidos: ${documentosSubidos}/${documentosEmbarque.length}`);
+        }
+        
         // Simular insertData para compatibilidad con el código existente
         const insertData = [{ id: nuevoEmbarqueIdCreado, folio: folioFinal }];
         
@@ -2033,6 +2285,10 @@ export default function EmbarquesPage() {
         try { 
           agregarAuditLog("CREAR", "Embarques", `Folio: ${folioFinal} | Usuario: ${getCurrentUser()?.nombre || ''} | Sistema: LEGACY`); 
         } catch {}
+        
+        // AHORA SÍ limpiar el formulario después de procesar todo
+        console.log("🧹 Limpiando formulario después de procesar documentos...");
+        resetForm();
       }
       
       // ✅ COMPLETAR GUARDADO
@@ -2045,8 +2301,7 @@ export default function EmbarquesPage() {
       } else {
         toast({ title: "Embarque creado exitosamente", description: `Embarque registrado correctamente`, variant: "success" });
         
-        // Cerrar modal de creación primero
-        resetForm();
+        // NOTA: NO resetForm() aquí - se hará después de procesar documentos
         setShowCreateModal(false);
         setShowEditModal(false);
         
@@ -2188,8 +2443,36 @@ export default function EmbarquesPage() {
   };
 
   const handleViewDetails = async (embarque: Embarque) => {
+    console.log("📂 Abriendo detalles del embarque:", embarque.id);
+    
+    // Establecer el embarque actual
     setEmbarqueDetalle(embarque);
+    
+    // Abrir modal inmediatamente
     setShowDetailModal(true);
+
+    // Cargar documentos del embarque en segundo plano
+    setLoadingDocumentosDetalles(true);
+    try {
+      console.log("� [handleViewDetails] Cargando documentos del embarque:", {
+        embarque_id: embarque.id,
+
+        folio: embarque.folio
+      });
+      const docs = await listarDocumentosEmbarque(embarque.id);
+      console.log("✅ [handleViewDetails] Documentos recibidos:", {
+        cantidad: docs?.length || 0,
+        embarque_id: embarque.id,
+        documentos: docs
+      });
+      setDocumentosDetalles(docs);
+      console.log("🔄 [handleViewDetails] Estado documentosDetalles actualizado");
+    } catch (error) {
+      console.error("❌ [handleViewDetails] Error cargando documentos del embarque:", error);
+      setDocumentosDetalles([]);
+    } finally {
+      setLoadingDocumentosDetalles(false);
+    }
 
     // Diagnostics: if this is the problematic folio, log more info
     const isTargetFolio = String(embarque.folio || "").includes("2509-015") || String(embarque.folio || "").includes("TIM-2509-015");
@@ -5138,13 +5421,14 @@ export default function EmbarquesPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Tabs defaultValue="basica" className="w-full">
-                    <TabsList className="grid w-full grid-cols-4">
+                    <TabsList className="grid w-full grid-cols-5">
                       <TabsTrigger value="basica">
                         Información Básica
                       </TabsTrigger>
                       <TabsTrigger value="direcciones">Direcciones</TabsTrigger>
                       <TabsTrigger value="vehiculos">Vehículos</TabsTrigger>
                       <TabsTrigger value="detalles">Detalles</TabsTrigger>
+                      <TabsTrigger value="adjuntos">Adjuntos</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="basica" className="space-y-4 mt-6">
@@ -5854,6 +6138,121 @@ export default function EmbarquesPage() {
                         </div>
                       </div>
                     </TabsContent>
+
+                    {/* Nueva pestaña Adjuntos */}
+                    <TabsContent value="adjuntos" className="space-y-4 mt-6">
+                      <div className="space-y-4">
+                        {/* Input para subir archivos */}
+                        <div>
+                          <Label htmlFor="documento-embarque">
+                            Agregar Documento/Imagen {documentosEmbarque.length < 10 && `(${documentosEmbarque.length}/10)`}
+                          </Label>
+                          <Input
+                            id="documento-embarque"
+                            type="file"
+                            accept="image/*,application/pdf"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                handleUploadDocumentoEmbarque(file);
+                                e.target.value = "";
+                              }
+                            }}
+                            disabled={uploadingDocumento || documentosEmbarque.length >= 10}
+                            className="mt-2"
+                          />
+                          {documentosEmbarque.length >= 10 && (
+                            <p className="text-sm text-orange-600 mt-1">
+                              ⚠️ Has alcanzado el límite de 10 documentos
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Preview y lista de documentos */}
+                        {documentosEmbarque.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-semibold text-gray-700">
+                                Documentos adjuntos ({documentosEmbarque.length})
+                              </h4>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {documentosEmbarque.map((doc, index) => (
+                                <div
+                                  key={doc.id || index}
+                                  className="border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow"
+                                >
+                                  {/* Preview del archivo */}
+                                  <div className="h-40 bg-gray-100 flex items-center justify-center relative group">
+                                    {doc.tipo_archivo?.startsWith("image/") ? (
+                                      <img
+                                        src={doc.url_blob}
+                                        alt={doc.nombre_archivo}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <FileText className="h-16 w-16 text-red-500" />
+                                    )}
+                                    {/* Overlay con botones */}
+                                    <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                      {doc.url_blob && !doc.url_blob.startsWith("blob:") && (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          onClick={() => window.open(doc.url_blob, "_blank")}
+                                          className="bg-white text-gray-900 hover:bg-gray-100"
+                                        >
+                                          <ExternalLink className="h-4 w-4 mr-1" />
+                                          Ver
+                                        </Button>
+                                      )}
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={() => handleEliminarDocumentoEmbarque(doc)}
+                                        className="bg-red-600 hover:bg-red-700 text-white"
+                                      >
+                                        <Trash className="h-4 w-4 mr-1" />
+                                        Eliminar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  {/* Información del archivo */}
+                                  <div className="p-3">
+                                    <p className="text-sm font-medium truncate text-gray-900">
+                                      {doc.nombre_archivo}
+                                    </p>
+                                    <div className="flex items-center justify-between mt-1">
+                                      {doc.tamano_bytes && (
+                                        <p className="text-xs text-gray-500">
+                                          {(doc.tamano_bytes / 1024).toFixed(1)} KB
+                                        </p>
+                                      )}
+                                      <div className="flex items-center gap-1 text-xs text-gray-500">
+                                        {doc.tipo_archivo?.startsWith("image/") ? (
+                                          <ImageIcon className="h-3 w-3" />
+                                        ) : (
+                                          <FileText className="h-3 w-3" />
+                                        )}
+                                        <span>{doc.tipo_archivo?.split('/')[1]?.toUpperCase()}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed">
+                            <FileText className="h-16 w-16 mx-auto mb-3 text-gray-400" />
+                            <p className="text-sm text-gray-600 font-medium">No hay documentos adjuntos</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Usa el campo de arriba para subir archivos
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </TabsContent>
                   </Tabs>
                 </CardContent>
               </Card>
@@ -5985,7 +6384,7 @@ export default function EmbarquesPage() {
                     <TabsTrigger value="contacto">
                       Contacto del Cliente
                     </TabsTrigger>
-                    <TabsTrigger value="archivos">Fotos y Ubicación</TabsTrigger>
+                    <TabsTrigger value="archivos">Adjuntos</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="general" className="space-y-4 mt-6">
@@ -6550,72 +6949,187 @@ export default function EmbarquesPage() {
                     })()}
                   </TabsContent>
 
-                  <TabsContent value="archivos" className="space-y-2 mt-4">
-                    <h4 className="font-medium text-gray-900">Fotos y Ubicaciones</h4>
+                  <TabsContent value="archivos" className="space-y-6 mt-4">
+                    {/* Sección unificada de todos los archivos del embarque */}
+                    <div className="bg-white border rounded-lg p-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center gap-2">
+                        <FolderOpen className="h-5 w-5" />
+                        Todos los Archivos ({documentosDetalles.length})
+                      </h3>
+                      
+                      {loadingDocumentosDetalles ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                          <span className="ml-2 text-sm text-gray-600">Cargando archivos...</span>
+                        </div>
+                      ) : documentosDetalles.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <FolderOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                          <p className="text-lg font-medium">No hay archivos en este embarque</p>
+                          <p className="text-sm mt-1">Los archivos e imágenes cargados aparecerán aquí</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          {/* Ordenar: imágenes primero, luego otros archivos */}
+                          {documentosDetalles
+                            .sort((a, b) => {
+                              const aImg = a.tipo_archivo?.startsWith('image/');
+                              const bImg = b.tipo_archivo?.startsWith('image/');
+                              if (aImg === bImg) return 0;
+                              return aImg ? -1 : 1;
+                            })
+                            .map((documento) => {
+                              const esImagen = documento.tipo_archivo?.startsWith('image/');
+                              const esPDF = documento.tipo_archivo === 'application/pdf';
+                              const formatFileSize = (bytes: number) => {
+                                if (!bytes) return '';
+                                if (bytes === 0) return '0 Bytes';
+                                const k = 1024;
+                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                              };
 
-                    {/* Removed redundant top list of locations; individual photos show 'Abrir en Maps' below each image */}
+                              return (
+                                <div
+                                  key={documento.id}
+                                  className="border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow"
+                                >
+                                  <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
+                                    {esImagen ? (
+                                      <img
+                                        src={documento.url_blob || '/placeholder.svg'}
+                                        alt={documento.nombre_archivo}
+                                        className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                                        onClick={() => {
+                                          setPreviewImage({url: documento.url_blob, name: documento.nombre_archivo});
+                                          setShowImagePreview(true);
+                                        }}
+                                        onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
+                                      />
+                                    ) : (
+                                      <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
+                                        <FileText className="h-8 w-8 mb-2" />
+                                        <span className="text-[10px] text-center px-2">{documento.nombre_archivo}</span>
+                                      </div>
+                                    )}
 
-                    {embarqueFotos.length > 0 ? (
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {embarqueFotos.map((foto) => {
-                          const hasGeo = typeof (foto as any).latitud === "number" && typeof (foto as any).longitud === "number";
-                          const mapsLink = hasGeo
-                            ? `https://maps.google.com/?q=${(foto as any).latitud},${(foto as any).longitud}`
-                            : undefined;
-                          return (
-                            <div
-                              key={foto.id}
-                              className="relative group overflow-hidden rounded-lg border"
-                            >
-                              <img
-                                src={foto.url_blob || "/placeholder.svg"}
-                                alt={foto.nombre_archivo}
-                                width={200}
-                                height={200}
-                                className="w-full h-32 object-cover"
-                              />
-                              <div className="p-2 text-xs space-y-1">
-                                <p className="font-medium truncate">{foto.nombre_archivo}</p>
-                                <p className="text-gray-500">Subido por: {foto.subido_por || "Desconocido"}</p>
-                                <p className="text-gray-500">{new Date(foto.fecha_subida).toLocaleDateString()}</p>
-                                <div className="pt-1">
-                                  {hasGeo ? (
-                                    <a
-                                      className="text-blue-600 hover:underline flex items-center gap-1"
-                                      href={mapsLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      <MapPin className="h-3 w-3" />
-                                      Abrir en Maps
-                                    </a>
-                                  ) : (
-                                    <span className="text-gray-400">Sin ubicación</span>
-                                  )}
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                      <div className="text-white text-center">
+                                        <Eye className="h-5 w-5 mx-auto mb-1" />
+                                        <span className="text-[10px]">Click para ver</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <Badge className={esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : esPDF ? 'bg-red-100 text-red-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
+                                        {esImagen ? 'IMAGEN' : esPDF ? 'PDF' : 'ARCHIVO'}
+                                      </Badge>
+                                      <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
+                                    </div>
+                                    <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
+                                    <p className="text-[10px] text-gray-400">
+                                      {documento.created_at && new Date(documento.created_at).toLocaleDateString('es-MX', {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </p>
+                                    
+                                    <div className="flex space-x-2 pt-2">
+                                      <Button 
+                                        aria-label="Ver documento" 
+                                        title="Ver" 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="flex-1 bg-transparent" 
+                                        onClick={() => window.open(documento.url_blob, '_blank')}
+                                      >
+                                        <Eye className="h-3 w-3" />
+                                      </Button>
+                                      <Button 
+                                        aria-label="Descargar documento" 
+                                        title="Descargar" 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="flex-1 bg-transparent" 
+                                        onClick={() => {
+                                          const link = document.createElement('a');
+                                          link.href = documento.url_blob;
+                                          link.download = documento.nombre_archivo;
+                                          link.target = '_blank';
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                        }}
+                                      >
+                                        <Download className="h-3 w-3" />
+                                      </Button>
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button variant="outline" size="sm">
+                                            <Trash2 className="h-3 w-3 text-red-500" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>¿Eliminar archivo?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Esta acción no se puede deshacer. El archivo "{documento.nombre_archivo}" se eliminará permanentemente.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                            <AlertDialogAction 
+                                              className="bg-red-600 hover:bg-red-700 text-white" 
+                                              onClick={async () => {
+                                                try {
+                                                  if (!documento.id) {
+                                                    throw new Error("ID del documento no disponible");
+                                                  }
+                                                  
+                                                  console.log('🗑️ Eliminando documento:', documento.id);
+                                                  await eliminarDocumentoEmbarqueCompleto(documento.id);
+                                                  
+                                                  // Recargar documentos
+                                                  if (embarqueDetalle?.id) {
+                                                    const docs = await listarDocumentosEmbarque(embarqueDetalle.id);
+                                                    setDocumentosDetalles(docs);
+                                                  }
+                                                  
+                                                  console.log('✅ Documento eliminado exitosamente');
+                                                  toast({
+                                                    title: "Documento eliminado",
+                                                    description: `El archivo "${documento.nombre_archivo}" ha sido eliminado.`,
+                                                    variant: "destructive",
+                                                  });
+                                                } catch (error: any) {
+                                                  console.error('❌ Error eliminando documento:', error);
+                                                  toast({
+                                                    title: "Error",
+                                                    description: error.message || "No se pudo eliminar el documento",
+                                                    variant: "destructive",
+                                                  });
+                                                }
+                                              }}
+                                            >
+                                              Eliminar
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
+                                  </div>
                                 </div>
-                              </div>
-                              <a
-                                href={foto.url_blob}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="absolute inset-x-0 top-0 h-32 flex items-center justify-center bg-black bg-opacity-50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                aria-label={`Ver imagen ${foto.nombre_archivo}`}
-                              >
-                                <ImageIcon className="h-6 w-6" />
-                              </a>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8">
-                        <ImageIcon className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                        <p className="text-gray-500">No hay imágenes adjuntas para este embarque.</p>
-                        <p className="text-sm text-gray-400 mt-1">
-                          El operador puede subir fotos a través del enlace de subida.
-                        </p>
-                      </div>
-                    )}
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
                   </TabsContent>
                 </Tabs>
               </div>
@@ -6786,6 +7300,64 @@ export default function EmbarquesPage() {
                 className="w-full bg-gray-600 hover:bg-gray-700 text-white"
                 size="lg"
               >
+                Cerrar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal de Preview de Imágenes */}
+        <Dialog open={showImagePreview} onOpenChange={setShowImagePreview}>
+          <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden">
+            <DialogHeader className="p-6 pb-2">
+              <DialogTitle className="flex items-center gap-2">
+                <ImageIcon className="h-5 w-5" />
+                Vista Previa: {previewImage?.name}
+              </DialogTitle>
+            </DialogHeader>
+            
+            {previewImage && (
+              <div className="relative flex-1 p-6 pt-2">
+                <div className="relative bg-gray-50 rounded-lg overflow-hidden">
+                  <img
+                    src={previewImage.url}
+                    alt={previewImage.name}
+                    className="w-full max-h-[70vh] object-contain"
+                  />
+                </div>
+                
+                {/* Botones de acción */}
+                <div className="flex gap-2 mt-4 justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => window.open(previewImage.url, '_blank')}
+                    className="flex items-center gap-2"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Abrir en Nueva Pestaña
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = previewImage.url;
+                      link.download = previewImage.name;
+                      link.target = '_blank';
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar
+                  </Button>
+                </div>
+              </div>
+            )}
+            
+            <DialogFooter className="p-6 pt-2">
+              <Button onClick={() => setShowImagePreview(false)} className="w-full">
                 Cerrar
               </Button>
             </DialogFooter>

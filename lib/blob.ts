@@ -650,3 +650,210 @@ export async function listarDocumentosRemolque(remolqueId: string) {
   }
 }
 
+// ===== FUNCIONES PARA DOCUMENTOS DE EMBARQUES =====
+
+export async function subirDocumentoEmbarque(
+  embarqueId: string,
+  file: File,
+): Promise<{ url: string; pathname: string }> {
+  try {
+    console.log("Subiendo documento de embarque:", { embarqueId, fileName: file.name })
+
+    // Validar archivo
+    if (!file) {
+      throw new Error("No se proporcionó archivo")
+    }
+
+    // Validar tamaño (máximo 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("El archivo es muy grande. Tamaño máximo: 10MB")
+    }
+
+    // Validar tipo de archivo
+    const tiposPermitidos = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/bmp",
+      "image/webp",
+      "application/pdf",
+    ]
+    if (!tiposPermitidos.includes(file.type)) {
+      throw new Error("Tipo de archivo no permitido. Solo se permiten imágenes (JPG, PNG, GIF, BMP, WebP) y PDFs")
+    }
+
+    // Crear nombre único para el archivo
+    const timestamp = Date.now()
+    const extension = file.name.split(".").pop()
+    const nombreArchivo = `embarques/${embarqueId}/documentos/${timestamp}.${extension}`
+
+    // Usar la API route para subir el archivo
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("fileName", nombreArchivo)
+
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const raw = await response.text()
+      try {
+        const errorData = JSON.parse(raw)
+        if (errorData?.code === "BLOB_QUOTA_EXCEEDED" || response.status === 507) {
+          throw new Error(
+            errorData?.error ||
+              "El almacenamiento está lleno. Avise al administrador para liberar espacio."
+          )
+        }
+        throw new Error(errorData?.error || "Error al subir archivo")
+      } catch {
+        throw new Error("Error al subir archivo")
+      }
+    }
+
+    const result = await response.json()
+    console.log("Documento de embarque subido exitosamente:", result.url)
+
+    return {
+      url: result.url,
+      pathname: result.pathname,
+    }
+  } catch (error: any) {
+    console.error("❌ [subirDocumentoEmbarque] Error subiendo documento de embarque:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      embarqueId,
+      fileName: file?.name,
+      fileSize: file?.size,
+      fileType: file?.type
+    })
+    
+    const errorMessage = error?.message || 
+                        error?.error_description || 
+                        error?.details || 
+                        (typeof error === 'string' ? error : 'Error desconocido al subir documento de embarque')
+                        
+    throw new Error(errorMessage)
+  }
+}
+
+export async function eliminarDocumentoEmbarque(pathname: string): Promise<void> {
+  try {
+    console.log("Eliminando documento de embarque:", pathname)
+    
+    const response = await fetch(`/api/delete-blob?pathname=${encodeURIComponent(pathname)}`, {
+      method: 'DELETE',
+    })
+    
+    if (!response.ok) {
+      console.warn(`Error eliminando blob (${response.status}):`, await response.text())
+    }
+
+    console.log("Documento de embarque eliminado exitosamente")
+  } catch (error) {
+    console.error("Error eliminando documento de embarque:", error)
+    throw error
+  }
+}
+
+export async function eliminarDocumentoEmbarqueCompleto(documentoId: string): Promise<void> {
+  try {
+    console.log("🗑️ [eliminarDocumentoEmbarqueCompleto] Eliminando documento ID:", documentoId)
+    
+    // Primero obtener información del documento
+    const { data: documento, error: fetchError } = await supabase
+      .from('documentos_embarques')
+      .select('*')
+      .eq('id', documentoId)
+      .single()
+
+    if (fetchError) {
+      console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error obteniendo documento:", fetchError)
+      throw new Error(`Error obteniendo documento: ${fetchError.message}`)
+    }
+
+    if (!documento) {
+      throw new Error("Documento no encontrado")
+    }
+
+    console.log("📄 [eliminarDocumentoEmbarqueCompleto] Documento encontrado:", {
+      id: documento.id,
+      nombre_archivo: documento.nombre_archivo,
+      pathname: documento.pathname
+    })
+
+    // Eliminar de Vercel Blob si tiene pathname
+    if (documento.pathname) {
+      try {
+        await eliminarDocumentoEmbarque(documento.pathname)
+        console.log("✅ [eliminarDocumentoEmbarqueCompleto] Archivo eliminar de Vercel Blob")
+      } catch (blobError) {
+        console.warn("⚠️ [eliminarDocumentoEmbarqueCompleto] Error eliminando de blob (continuando):", blobError)
+      }
+    }
+
+    // Eliminar registro de la base de datos
+    const { error: deleteError } = await supabase
+      .from('documentos_embarques')
+      .delete()
+      .eq('id', documentoId)
+
+    if (deleteError) {
+      console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error eliminando de base de datos:", deleteError)
+      throw new Error(`Error eliminando documento de base de datos: ${deleteError.message}`)
+    }
+
+    console.log("✅ [eliminarDocumentoEmbarqueCompleto] Documento eliminado completamente")
+  } catch (error) {
+    console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error general:", error)
+    throw error
+  }
+}
+
+export async function listarDocumentosEmbarque(embarqueId: string) {
+  try {
+    console.log("📂 [listarDocumentosEmbarque] Iniciando consulta para embarque:", embarqueId)
+    console.log("📂 [listarDocumentosEmbarque] Tipo de embarqueId:", typeof embarqueId)
+    
+    const { data, error } = await supabase
+      .from('documentos_embarques')
+      .select('*')
+      .eq('embarque_id', embarqueId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error("❌ [listarDocumentosEmbarque] Error de Supabase:", error)
+      throw new Error(`Error listando documentos de embarque: ${error.message}`)
+    }
+
+    console.log("✅ [listarDocumentosEmbarque] Documentos encontrados:", {
+      cantidad: data?.length || 0,
+      embarqueId: embarqueId,
+      documentos: data
+    })
+    
+    // Log detallado de cada documento
+    if (data && data.length > 0) {
+      data.forEach((doc, index) => {
+        console.log(`📄 [listarDocumentosEmbarque] Documento ${index + 1}:`, {
+          id: doc.id,
+          nombre_archivo: doc.nombre_archivo,
+          url: doc.url,
+          pathname: doc.pathname,
+          embarque_id: doc.embarque_id,
+          created_at: doc.created_at
+        })
+      })
+    }
+    
+    return data || []
+  } catch (error) {
+    console.error("❌ [listarDocumentosEmbarque] Error general:", error)
+    throw error
+  }
+}
+
