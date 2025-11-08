@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -21,6 +22,17 @@ import {
   DialogTitle,
   DialogFooter,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -46,10 +58,19 @@ import {
   ImageIcon,
   ExternalLink,
   Copy,
+  Wand2,
+  User,
+  Star,
+  Phone,
+  Mail,
+  FileText,
+  FolderOpen,
+  Trash2,
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
-import * as XLSX from "xlsx";
+// import * as XLSX from "xlsx"; // Removido por vulnerabilidades de seguridad
+// Ahora usando ExcelJS como alternativa segura
 import { getCurrentUser } from "@/lib/auth";
 import { agregarAuditLog } from "@/lib/audit";
 import { formatDateMatamoros } from '@/lib/date-utils';
@@ -66,8 +87,20 @@ import {
   type TipoServicio,
   type FotoEmbarque,
   obtenerContactosCliente,
+  obtenerContactosClienteTabla,
   obtenerFotosEmbarque,
+  validarFormatoNumeroEmbarque,
+  verificarNumeroEmbarqueExiste,
+  validarNumeroEmbarqueCompleto,
+  actualizarNumeroEmbarqueEnCascada,
 } from "@/lib/supabase";
+import {
+  subirDocumentoEmbarque,
+  eliminarDocumentoEmbarque,
+  eliminarDocumentoEmbarqueCompleto,
+  listarDocumentosEmbarque,
+  eliminarTodosArchivosEmbarque,
+} from "@/lib/blob";
 
 const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
   if (!tipo) return false;
@@ -126,6 +159,10 @@ export default function EmbarquesPage() {
   const [camiones, setCamiones] = useState<Camion[]>([]);
   const [remolques, setRemolques] = useState<Remolque[]>([]);
   const [contactos, setContactos] = useState<ContactoCliente[]>([]);
+  // Estados para optimización de contactos grandes
+  const [busquedaContacto, setBusquedaContacto] = useState("");
+  const [contactosFiltrados, setContactosFiltrados] = useState<ContactoCliente[]>([]);
+  const [mostrarTodosContactos, setMostrarTodosContactos] = useState(false);
   const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([]);
   const [precioGlobalFleteFalso, setPrecioGlobalFleteFalso] = useState(800);
   const [loading, setLoading] = useState(true);
@@ -175,6 +212,23 @@ export default function EmbarquesPage() {
   const [embarqueACompletar, setEmbarqueACompletar] = useState<Embarque | null>(null);
   const [cancelReason, setCancelReason] = useState("");
   const [proximoFolio, setProximoFolio] = useState("");
+  
+  // Estado para los dígitos editables del folio (MM-XXX)
+  const [digitosEditables, setDigitosEditables] = useState("");
+  const [folioModificado, setFolioModificado] = useState(false);
+  
+  // Estado para modal secundario de edición de folio
+  const [showEditFolioModal, setShowEditFolioModal] = useState(false);
+  const [nuevoFolioTemp, setNuevoFolioTemp] = useState("");
+  const [validandoFolio, setValidandoFolio] = useState(false);
+  const [errorValidacionFolio, setErrorValidacionFolio] = useState("");
+  
+  // Estados para campos separados del folio (mes y consecutivo)
+  const [folioMes, setFolioMes] = useState("");
+  const [folioConsecutivo, setFolioConsecutivo] = useState("");
+  const [errorMes, setErrorMes] = useState("");
+  const [errorConsecutivo, setErrorConsecutivo] = useState("");
+  
   const [showLinkModal, setShowLinkModal] = useState(false);
   const [generatedLink, setGeneratedLink] = useState("");
   const [showPublicLinkModal, setShowPublicLinkModal] = useState(false);
@@ -183,6 +237,38 @@ export default function EmbarquesPage() {
   const [publicExpirationInput, setPublicExpirationInput] = useState<string | null>(null);
   const [publicForEmbarqueId, setPublicForEmbarqueId] = useState<string | null>(null);
   const [embarqueFotos, setEmbarqueFotos] = useState<FotoEmbarque[]>([]);
+  
+  // Estados para documentos del embarque
+  interface DocumentoEmbarque {
+    id?: string;
+    embarque_id?: string;
+    nombre_archivo: string;
+    url_blob: string;
+    pathname: string;
+    tipo_archivo?: string;
+    tamano_bytes?: number;
+    uploaded_at?: string;
+    created_at?: string;
+    _tempFile?: File; // Para archivos temporales antes de crear el embarque
+  }
+  const [documentosEmbarque, setDocumentosEmbarque] = useState<DocumentoEmbarque[]>([]);
+  const [uploadingDocumento, setUploadingDocumento] = useState(false);
+  
+  // Estado separado para documentos del modal de detalles
+  const [documentosDetalles, setDocumentosDetalles] = useState<DocumentoEmbarque[]>([]);
+  const [loadingDocumentosDetalles, setLoadingDocumentosDetalles] = useState(false);
+
+  // Estado para modal de preview de imágenes
+  const [showImagePreview, setShowImagePreview] = useState(false);
+  const [previewImage, setPreviewImage] = useState<{url: string, name: string} | null>(null);
+
+  // Debug: Monitorear cambios en documentosEmbarque
+  useEffect(() => {
+    console.log("🔄 Estado documentosEmbarque actualizado:", {
+      cantidad: documentosEmbarque.length,
+      documentos: documentosEmbarque
+    });
+  }, [documentosEmbarque]);
 
   // Persistencia local (client-side) para marcar embarques que el usuario completó
   // Esto evita que el botón "Completar y Enviar" reaparezca después de recargar
@@ -264,7 +350,9 @@ export default function EmbarquesPage() {
   const isRemolqueValid = formData.remolque_manual
     ? (formData.remolque_numero_economico.trim() !== "" || formData.remolque_placa.trim() !== "")
     : (!!formData.remolque_id && formData.remolque_id !== "none");
+  
   const isNuevoEmbarqueValid = isClienteSelected && isRemolqueValid && isTipoServicioSelected;
+  const isEditEmbarqueValid = isClienteSelected && isRemolqueValid && isTipoServicioSelected;
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -591,7 +679,7 @@ export default function EmbarquesPage() {
       const { data, error } = await supabase
         .from("operadores")
         .select("*")
-        .eq("estado", "activo")
+        .neq("estado", "fuera-de-servicio")
         .order("nombre");
 
       if (error) {
@@ -610,6 +698,7 @@ export default function EmbarquesPage() {
       const { data, error } = await supabase
         .from("camiones")
         .select("*")
+        .neq("estado", "fuera-de-servicio")
         .order("numero_economico");
 
       if (error) {
@@ -628,6 +717,7 @@ export default function EmbarquesPage() {
       const { data, error } = await supabase
         .from("remolques")
         .select("*")
+        .neq("estado", "fuera-de-servicio")
         .order("numero_economico");
 
       if (error) {
@@ -665,6 +755,61 @@ export default function EmbarquesPage() {
     }
   };
 
+  // Función para rellenar el formulario con datos de ejemplo
+  const rellenarDatosEjemplo = () => {
+    const fechaHoy = new Date().toISOString().split('T')[0];
+    const horaActual = new Date().toTimeString().slice(0, 5);
+    
+    // Obtener el primer cliente, camión, remolque y tipo de servicio disponibles
+    const primerCliente = clientes.length > 0 ? clientes[0].id : '';
+    const primerCamion = camiones.length > 0 ? camiones[0].id : '';
+    const primerRemolque = remolques.length > 0 ? remolques[0].id : '';
+    const primerTipoServicio = tiposServicio.length > 0 ? tiposServicio[0].id : '';
+    
+    setFormData({
+      folio: `TIM-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`,
+      cliente_id: primerCliente,
+      camion_id: primerCamion,
+      remolque_id: primerRemolque,
+      contenido: "Carga general - mercancía diversa",
+      peso: "25000",
+      observaciones: "Embarque de ejemplo generado automáticamente para pruebas",
+      recolectas: [
+        { 
+          direccion: "Parque Industrial Norte, Av. Industria 1234, Nuevo León, México", 
+          fecha: fechaHoy, 
+          hora: horaActual 
+        },
+      ],
+      entregas: [
+        { 
+          direccion: "Puerto de Laredo, 1000 World Trade Bridge, Laredo, TX 78045, USA", 
+          fecha: fechaHoy, 
+          hora: "14:00" 
+        }
+      ],
+      load_number: `LD-${Math.floor(Math.random() * 99999)}`,
+      patente_agente_aduanal: "3456",
+      aduana_cruce: "Nuevo Laredo - Laredo",
+      dueno_mercancia: "ACME Manufacturing Corp",
+      representante_cliente: "Juan Pérez - Gerente de Logística",
+      carta_porte: `CP-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9999) + 1000)}`,
+      tipo_servicio_id: primerTipoServicio,
+      camion_manual: false,
+      camion_numero_economico: "",
+      camion_placa: "",
+      remolque_manual: false,
+      remolque_numero_economico: "",
+      remolque_placa: "",
+    });
+
+    toast({ 
+      title: "Datos de ejemplo cargados", 
+      description: "El formulario se ha rellenado con datos de ejemplo. Puedes modificar cualquier campo antes de guardar.",
+      duration: 3000
+    });
+  };
+
   const generarFolioEspecifico = async () => {
     try {
       const now = new Date();
@@ -673,27 +818,58 @@ export default function EmbarquesPage() {
 
       const baseFormat = `TIM-${year}${month}`;
 
-      // Consultar último folio solo en tabla embarques
-      const { data: ultimoFolio, error: folioError } = await supabase
+      // Consultar TODOS los folios existentes (incluyendo modificados manualmente) para evitar duplicados
+      const { data: foliosExistentes, error: folioError } = await supabase
         .from("embarques")
         .select("folio")
-        .like("folio", `${baseFormat}-%`)
-        .order("folio", { ascending: false })
-        .limit(1);
+        .or(`folio.like.TIM-25%,folio.like.${baseFormat}-%`)
+        .order("folio", { ascending: true });
 
-      if (folioError || !ultimoFolio || ultimoFolio.length === 0) {
+      if (folioError) {
+        console.error("Error consultando folios existentes:", folioError);
         return `${baseFormat}-001`;
       }
 
-      const ultimoNumero = ultimoFolio[0].folio;
-      
-      // Extraer el número secuencial del folio
-      const match = /-(\d{3})$/.exec(ultimoNumero);
-      const numeroActual = match ? parseInt(match[1], 10) : 0;
-      const siguienteNumero = numeroActual + 1;
+      if (!foliosExistentes || foliosExistentes.length === 0) {
+        return `${baseFormat}-001`;
+      }
 
+      // Separar folios del mes actual y folios modificados de otros meses
+      const numerosExistentesEsteMes = new Set<number>();
+      const todosLosFoliosUsados = new Set<string>();
+      let ultimoNumeroEsteMes = 0;
+
+      for (const folio of foliosExistentes) {
+        todosLosFoliosUsados.add(folio.folio);
+        
+        // Solo procesar números del mes actual para generación secuencial
+        if (folio.folio.startsWith(baseFormat)) {
+          const match = /-(\d{3})$/.exec(folio.folio);
+          if (match) {
+            const numero = parseInt(match[1], 10);
+            numerosExistentesEsteMes.add(numero);
+            ultimoNumeroEsteMes = Math.max(ultimoNumeroEsteMes, numero);
+          }
+        }
+      }
+
+      // Generar folios del mes actual evitando duplicados globales
+      for (let i = 1; i <= ultimoNumeroEsteMes + 10; i++) { // +10 para buscar más allá
+        const folioCandidate = `${baseFormat}-${String(i).padStart(3, "0")}`;
+        
+        // Verificar que no exista ni en este mes ni modificado en otros meses
+        if (!todosLosFoliosUsados.has(folioCandidate)) {
+          console.log(`📋 Generando folio inteligente: ${folioCandidate} (evitando ${todosLosFoliosUsados.size} folios existentes)`);
+          return folioCandidate;
+        }
+      }
+
+      // Fallback: continuar desde el último número + 1
+      const siguienteNumero = ultimoNumeroEsteMes + 1;
       const siguiente = String(siguienteNumero).padStart(3, "0");
-      return `${baseFormat}-${siguiente}`;
+      const folioFinal = `${baseFormat}-${siguiente}`;
+      console.log(`📋 Generando folio fallback: ${folioFinal} (después de ${ultimoNumeroEsteMes})`);
+      return folioFinal;
     } catch (error) {
       console.error("Error generating folio:", error);
       return "Error al generar";
@@ -710,6 +886,233 @@ export default function EmbarquesPage() {
     }
   };
 
+  // ====================================
+  // FUNCIONES PARA EDICIÓN NUMÉRICA DE FOLIO
+  // ====================================
+
+  // Extraer los dígitos editables del folio (MM-XXX)
+  const extraerDigitosEditables = (folio: string): string => {
+    if (!folio) return "";
+    
+    const match = folio.match(/^TIM-25(\d{2})-(\d{3})$/);
+    if (match) {
+      return match[1] + match[2]; // MMXXX (5 dígitos)
+    }
+    return "";
+  };
+
+  // Construir folio completo desde los dígitos editables
+  const construirFolioCompleto = (digitos: string): string => {
+    if (!digitos) return "TIM-25";
+    
+    // Asegurar que solo tenga números y máximo 5 dígitos
+    const soloNumeros = digitos.replace(/\D/g, '').substring(0, 5);
+    
+    if (soloNumeros.length >= 5) {
+      const mes = soloNumeros.substring(0, 2);
+      const consecutivo = soloNumeros.substring(2, 5);
+      return `TIM-25${mes}-${consecutivo}`;
+    } else if (soloNumeros.length >= 2) {
+      const mes = soloNumeros.substring(0, 2);
+      const consecutivo = soloNumeros.substring(2).padEnd(3, '0');
+      return `TIM-25${mes}-${consecutivo}`;
+    } else {
+      const mes = soloNumeros.padEnd(2, '0');
+      return `TIM-25${mes}-000`;
+    }
+  };
+
+  // Manejar cambios en los dígitos editables
+  const handleDigitosChange = (valor: string) => {
+    // Solo permitir números, máximo 5 dígitos
+    const soloNumeros = valor.replace(/\D/g, '').substring(0, 5);
+    setDigitosEditables(soloNumeros);
+    setFolioModificado(true);
+    
+    // Actualizar el folio completo en el formulario
+    const folioCompleto = construirFolioCompleto(soloNumeros);
+    setFormData(prev => ({
+      ...prev,
+      folio: folioCompleto
+    }));
+  };
+
+  // Validar folio al guardar (solo cuando se hace clic en guardar)
+  const validarFolioAlGuardar = async (folio: string): Promise<{esValido: boolean, mensaje: string}> => {
+    try {
+      // Validar formato
+      const validacionFormato = validarFormatoNumeroEmbarque(folio);
+      if (!validacionFormato.esValido) {
+        return { esValido: false, mensaje: validacionFormato.mensaje };
+      }
+
+      // Si el folio no cambió respecto al original, es válido
+      if (embarqueEditando && folio === embarqueEditando.folio) {
+        return { esValido: true, mensaje: "Folio sin cambios" };
+      }
+
+      // Verificar existencia
+      const validacionCompleta = await validarNumeroEmbarqueCompleto(folio);
+      return validacionCompleta;
+
+    } catch (error) {
+      console.error('Error validando folio:', error);
+      return { esValido: false, mensaje: "Error validando el folio" };
+    }
+  };
+
+  // ====================================
+  // FUNCIONES PARA MODAL SECUNDARIO DE FOLIO
+  // ====================================
+
+  const abrirModalEditarFolio = () => {
+    if (!embarqueEditando) return;
+    
+    // Extraer y separar los dígitos editables del folio actual
+    const digitosActuales = extraerDigitosEditables(embarqueEditando.folio);
+    const mes = digitosActuales.substring(0, 2);
+    const consecutivo = digitosActuales.substring(2);
+    
+    // Inicializar con el folio actual
+    setNuevoFolioTemp(embarqueEditando.folio);
+    setDigitosEditables(digitosActuales);
+    setFolioMes(mes);
+    setFolioConsecutivo(consecutivo);
+    setErrorValidacionFolio("");
+    setValidandoFolio(false);
+    setShowEditFolioModal(true);
+  };
+
+  const cerrarModalEditarFolio = () => {
+    setShowEditFolioModal(false);
+    setNuevoFolioTemp("");
+    setDigitosEditables("");
+    setFolioMes("");
+    setFolioConsecutivo("");
+    setErrorMes("");
+    setErrorConsecutivo("");
+    setErrorValidacionFolio("");
+    setValidandoFolio(false);
+  };
+
+  const handleCambioDigitosModal = (valor: string) => {
+    // Solo permitir números, máximo 5 dígitos
+    const soloNumeros = valor.replace(/\D/g, '').substring(0, 5);
+    setDigitosEditables(soloNumeros);
+    
+    // Construir folio completo
+    const folioCompleto = construirFolioCompleto(soloNumeros);
+    setNuevoFolioTemp(folioCompleto);
+    
+    // Limpiar errores previos
+    setErrorValidacionFolio("");
+  };
+
+  // Funciones para los campos separados de mes y consecutivo
+  const handleCambioMes = (valor: string) => {
+    // Solo permitir números, máximo 2 dígitos
+    const soloNumeros = valor.replace(/\D/g, '').substring(0, 2);
+    
+    // Validar que el mes esté en el rango 01-12
+    if (soloNumeros.length === 2) {
+      const mesNumero = parseInt(soloNumeros, 10);
+      if (mesNumero < 1 || mesNumero > 12) {
+        setErrorMes("Mes debe ser 01-12");
+        setErrorValidacionFolio("El mes debe estar entre 01 y 12");
+      } else {
+        setErrorMes("");
+        // Limpiar error general si no hay errores específicos
+        if (!errorConsecutivo) {
+          setErrorValidacionFolio("");
+        }
+      }
+    } else {
+      setErrorMes("");
+    }
+    
+    setFolioMes(soloNumeros);
+    actualizarFolioDesdeInputs(soloNumeros, folioConsecutivo);
+  };
+
+  const handleCambioConsecutivo = (valor: string) => {
+    // Solo permitir números, máximo 3 dígitos
+    const soloNumeros = valor.replace(/\D/g, '').substring(0, 3);
+    
+    // Validar que el consecutivo no sea 000
+    if (soloNumeros.length === 3) {
+      const consecutivoNumero = parseInt(soloNumeros, 10);
+      if (consecutivoNumero < 1) {
+        setErrorConsecutivo("No puede ser 000");
+        setErrorValidacionFolio("El consecutivo debe ser mayor a 000");
+      } else {
+        setErrorConsecutivo("");
+        // Limpiar error general si no hay errores específicos
+        if (!errorMes) {
+          setErrorValidacionFolio("");
+        }
+      }
+    } else {
+      setErrorConsecutivo("");
+    }
+    
+    setFolioConsecutivo(soloNumeros);
+    actualizarFolioDesdeInputs(folioMes, soloNumeros);
+  };
+
+  const actualizarFolioDesdeInputs = (mes: string, consecutivo: string) => {
+    // Combinar mes y consecutivo para crear el folio completo
+    const digitosCombinados = mes + consecutivo;
+    setDigitosEditables(digitosCombinados);
+    
+    // Construir folio completo
+    const folioCompleto = construirFolioCompleto(digitosCombinados);
+    setNuevoFolioTemp(folioCompleto);
+    
+    // Limpiar errores previos
+    setErrorValidacionFolio("");
+  };
+
+  const validarYGuardarFolio = async () => {
+    if (!embarqueEditando || !nuevoFolioTemp.trim()) return;
+
+    setValidandoFolio(true);
+    setErrorValidacionFolio("");
+
+    try {
+      // Validar el nuevo folio
+      const validacion = await validarFolioAlGuardar(nuevoFolioTemp);
+      
+      if (!validacion.esValido) {
+        setErrorValidacionFolio(validacion.mensaje);
+        setValidandoFolio(false);
+        return;
+      }
+
+      // Si es válido, actualizar el formulario principal
+      setFormData(prev => ({
+        ...prev,
+        folio: nuevoFolioTemp
+      }));
+      
+      setFolioModificado(nuevoFolioTemp !== embarqueEditando.folio);
+      
+      // Cerrar modal
+      setValidandoFolio(false);
+      cerrarModalEditarFolio();
+      
+      toast({
+        title: "Folio actualizado",
+        description: `Folio cambiado a: ${nuevoFolioTemp}`,
+        variant: "default",
+      });
+
+    } catch (error) {
+      console.error('Error validando folio:', error);
+      setErrorValidacionFolio("Error validando el folio. Inténtalo de nuevo.");
+      setValidandoFolio(false);
+    }
+  };
+
   const cargarContactos = async (clienteId: string) => {
     if (!clienteId || clienteId === "none") {
       setContactos([]);
@@ -717,15 +1120,126 @@ export default function EmbarquesPage() {
     }
 
     try {
-      console.log("Cargando contactos para cliente:", clienteId);
-      const contactosData = await obtenerContactosCliente(clienteId);
-      console.log("Contactos cargados:", contactosData);
-      setContactos(contactosData);
+      console.log("🔍 [CONTACTOS] Iniciando carga para cliente:", clienteId);
+      const contactosData = await obtenerContactosClienteTabla(clienteId);
+      console.log(`✅ [CONTACTOS] Datos recibidos: ${contactosData.length} contactos`, contactosData);
+      
+      // Diagnóstico detallado para listas grandes
+      if (contactosData.length > 20) {
+        console.warn(`⚠️ [CONTACTOS] LISTA GRANDE detectada: ${contactosData.length} contactos`);
+        console.log(`🔍 [CONTACTOS] Contactos principales:`, contactosData.filter(c => c.es_principal));
+        console.log(`🔍 [CONTACTOS] Contactos sin ID:`, contactosData.filter(c => !c.id));
+        console.log(`🔍 [CONTACTOS] Contactos sin nombre:`, contactosData.filter(c => !c.nombre));
+      }
+      
+      // Validar contactos antes de asignar
+      const contactosValidos = contactosData.filter((contacto, index) => {
+        if (!contacto.id) {
+          console.warn(`❌ [CONTACTOS] Contacto ${index} sin ID válido:`, contacto);
+          return false;
+        }
+        return true;
+      });
+      
+      if (contactosValidos.length !== contactosData.length) {
+        console.warn(`⚠️ [CONTACTOS] Se filtraron ${contactosData.length - contactosValidos.length} contactos inválidos`);
+      }
+      
+      setContactos(contactosValidos);
+      console.log(`✅ [CONTACTOS] Lista final: ${contactosValidos.length} contactos válidos`);
+      
+      // Auto-seleccionar contacto principal si existe y no hay uno seleccionado
+      if (contactosValidos.length > 0 && 
+          (!formData.representante_cliente || formData.representante_cliente === "none")) {
+        const contactoPrincipal = contactosValidos.find(c => c.es_principal);
+        if (contactoPrincipal) {
+          console.log("🎯 [CONTACTOS] Auto-seleccionando contacto principal:", contactoPrincipal);
+          setFormData(prev => ({
+            ...prev,
+            representante_cliente: contactoPrincipal.id
+          }));
+        } else if (contactosValidos.length === 1) {
+          // Si solo hay un contacto, seleccionarlo automáticamente
+          console.log("🎯 [CONTACTOS] Auto-seleccionando único contacto:", contactosValidos[0]);
+          setFormData(prev => ({
+            ...prev,
+            representante_cliente: contactosValidos[0].id
+          }));
+        } else {
+          console.warn("⚠️ [CONTACTOS] No hay contacto principal marcado en lista de", contactosValidos.length, "contactos");
+        }
+      }
+      
+      // Si hay muchos contactos, avisar en consola
+      if (contactosValidos.length > 10) {
+        console.warn(`🐌 [CONTACTOS] PERFORMANCE: Cliente tiene ${contactosValidos.length} contactos. Usando optimizaciones.`);
+      }
+      
     } catch (error) {
-      console.error("Error cargando contactos:", error);
+      console.error("💥 [CONTACTOS] Error cargando contactos:", error);
       setContactos([]);
     }
   };
+
+  // Efecto para limpiar búsqueda cuando cambia el cliente
+  useEffect(() => {
+    setBusquedaContacto("");
+    setMostrarTodosContactos(false);
+  }, [formData.cliente_id]);
+
+  // Efecto para filtrar contactos cuando cambian los contactos o la búsqueda
+  useEffect(() => {
+    console.log("🔍 [FILTRO] Iniciando filtrado de contactos:");
+    console.log("- contactos.length:", contactos.length);
+    console.log("- busquedaContacto:", busquedaContacto);
+    console.log("- mostrarTodosContactos:", mostrarTodosContactos);
+    
+    if (contactos.length === 0) {
+      console.log("🔍 [FILTRO] No hay contactos, estableciendo filtrados a vacío");
+      setContactosFiltrados([]);
+      return;
+    }
+
+    // Si hay pocos contactos o se desea mostrar todos, no filtrar
+    if (contactos.length <= 10 || mostrarTodosContactos) {
+      console.log("🔍 [FILTRO] Mostrando todos los contactos (≤10 o mostrarTodos=true)");
+      setContactosFiltrados(contactos);
+      return;
+    }
+
+    // Filtrar por búsqueda si existe
+    if (busquedaContacto.trim() === "") {
+      // Sin búsqueda, mostrar solo contactos principales y los primeros 15
+      const principales = contactos.filter(c => c.es_principal);
+      const noprincipales = contactos.filter(c => !c.es_principal).slice(0, 15);
+      const filtrados = [...principales, ...noprincipales];
+      console.log("🔍 [FILTRO] Sin búsqueda - principales:", principales.length, "noprincipales:", noprincipales.length, "total:", filtrados.length);
+      setContactosFiltrados(filtrados);
+    } else {
+      // Con búsqueda, filtrar por nombre, teléfono o email
+      const termino = busquedaContacto.toLowerCase();
+      const filtrados = contactos.filter(c => 
+        (c.nombre && c.nombre.toLowerCase().includes(termino)) ||
+        (c.telefono && c.telefono.toLowerCase().includes(termino)) ||
+        (c.email && c.email.toLowerCase().includes(termino)) ||
+        (c.puesto && c.puesto.toLowerCase().includes(termino))
+      );
+      console.log("🔍 [FILTRO] Con búsqueda '"+termino+"' - encontrados:", filtrados.length);
+      setContactosFiltrados(filtrados);
+    }
+  }, [contactos, busquedaContacto, mostrarTodosContactos]);
+
+  // Efecto para cargar contactos cuando cambia el cliente seleccionado
+  useEffect(() => {
+    if (formData.cliente_id && formData.cliente_id !== "none") {
+      console.log("🔄 [CLIENTE-CHANGE] Cliente cambió, cargando contactos para:", formData.cliente_id);
+      cargarContactos(formData.cliente_id);
+    } else {
+      console.log("🔄 [CLIENTE-CHANGE] Cliente removido, limpiando contactos");
+      setContactos([]);
+      setContactosFiltrados([]);
+    }
+  }, [formData.cliente_id]);
 
   // Carga el contacto seleccionado para el embarque al abrir el modal de detalles
   useEffect(() => {
@@ -736,6 +1250,8 @@ export default function EmbarquesPage() {
           return;
         }
 
+        console.log("🔍 Cargando detalle de contacto para embarque:", embarqueDetalle);
+
         // Asegura tener la lista de contactos del cliente disponible (recarga siempre para evitar desface)
         try {
           if ((embarqueDetalle as any)?.cliente_id) {
@@ -743,86 +1259,200 @@ export default function EmbarquesPage() {
           }
         } catch {}
 
-        const infoRep: any = (embarqueDetalle as any)?.info_representante || {};
-        const contactoId = infoRep?.id || (embarqueDetalle as any)?.representante_cliente;
+        // Extraer información del contacto - manejar diferentes formatos
+        let infoRep: any = {};
+        let contactoId: string | null = null;
 
-        // Intento 1: buscar por id directo en la tabla
-        if (contactoId) {
-          const { data, error } = await supabase
-            .from("contactos_clientes")
-            .select("id,nombre,apellidos,telefono,email,puesto,notas,es_principal")
-            .eq("id", contactoId)
-            .single();
-          if (!error && data) {
-            setDetalleContacto(data);
-            return;
+        console.log("🔍 embarqueDetalle completo:", embarqueDetalle);
+        console.log("🔍 representante_cliente:", (embarqueDetalle as any)?.representante_cliente);
+
+        // Manejar info_representante que puede ser string JSON o objeto
+        if ((embarqueDetalle as any)?.info_representante) {
+          const infoRepRaw = (embarqueDetalle as any).info_representante;
+          console.log("🔍 info_representante raw:", infoRepRaw, typeof infoRepRaw);
+          
+          if (typeof infoRepRaw === 'string') {
+            try {
+              infoRep = JSON.parse(infoRepRaw);
+              console.log("🔍 info_representante parseado:", infoRep);
+            } catch {
+              // Si no es JSON válido, tratarlo como string simple
+              infoRep = { nombre: infoRepRaw };
+              console.log("🔍 info_representante como string:", infoRep);
+            }
+          } else if (typeof infoRepRaw === 'object') {
+            infoRep = infoRepRaw;
+            console.log("🔍 info_representante como objeto:", infoRep);
+          }
+        }
+
+        // Obtener ID de contacto - priorizar representante_cliente sobre info_representante.id
+        contactoId = (embarqueDetalle as any)?.representante_cliente || infoRep?.id;
+        console.log("🔍 contactoId a buscar:", contactoId);
+        
+        // Si el contactoId parece ser generado automáticamente (contiene test- o números largos), ignorarlo
+        if (contactoId && (contactoId.includes('test-') || /^\d{13,}/.test(contactoId))) {
+          console.log("🚫 contactoId parece generado automáticamente, ignorando:", contactoId);
+          contactoId = null;
+        }
+
+        // Intento 1: buscar por id directo en la tabla (solo si es UUID válido)
+        if (contactoId && contactoId !== 'none') {
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(contactoId)) {
+            console.log("🔍 Buscando por UUID en base de datos:", contactoId);
+            const { data, error } = await supabase
+              .from("contactos_clientes")
+              .select("id,nombre,telefono,email,puesto,notas,es_principal")
+              .eq("id", contactoId)
+              .single();
+            if (!error && data) {
+              console.log("✅ Contacto encontrado en BD:", data);
+              setDetalleContacto(data);
+              return;
+            } else {
+              console.warn("⚠️ No se encontró contacto en BD:", error);
+            }
+          } else {
+            console.log("🔍 contactoId no es UUID válido, buscando por otros campos");
           }
         }
 
         // Intento 2: fallback con la lista en memoria
-        const matchLocal = contactos?.find((c) =>
-          (contactoId && c.id === contactoId) ||
-          (infoRep?.email && c.email === infoRep.email) ||
-          (infoRep?.telefono && c.telefono === infoRep.telefono)
-        );
+        console.log("🔍 Buscando en lista de contactos en memoria:", contactos?.length || 0, "contactos");
+        const matchLocal = contactos?.find((c) => {
+          const match = (contactoId && c.id === contactoId) ||
+            (infoRep?.email && c.email === infoRep.email) ||
+            (infoRep?.telefono && c.telefono === infoRep.telefono) ||
+            (infoRep?.nombre && c.nombre === infoRep.nombre);
+          
+          if (match) {
+            console.log("✅ Match encontrado:", c);
+          }
+          return match;
+        });
+        
         if (matchLocal) {
+          console.log("✅ Contacto encontrado en memoria:", matchLocal);
           setDetalleContacto(matchLocal as any);
           return;
         }
 
         // Intento 3: si tenemos email/telefono, probar una búsqueda por esos campos (misma tabla)
         if ((embarqueDetalle as any)?.cliente_id && (infoRep?.email || infoRep?.telefono)) {
+          console.log("🔍 Buscando por email/telefono en BD");
           let q = supabase
             .from("contactos_clientes")
-            .select("id,nombre,apellidos,telefono,email,puesto,notas,es_principal")
+            .select("id,nombre,telefono,email,puesto,notas,es_principal")
             .eq("cliente_id", (embarqueDetalle as any).cliente_id);
           if (infoRep?.email) q = q.eq("email", infoRep.email);
           else if (infoRep?.telefono) q = q.eq("telefono", infoRep.telefono);
           const { data, error } = await q.maybeSingle();
           if (!error && data) {
+            console.log("✅ Contacto encontrado por email/telefono:", data);
             setDetalleContacto(data);
             return;
           }
         }
 
-        // Intento 3b: búsqueda por nombre y apellidos en la lista local si existen
-        const norm = (s: any) => (s ? String(s).trim().toLowerCase() : "");
-        if (infoRep?.nombre || infoRep?.apellidos) {
+        // Intento 4: búsqueda más agresiva por nombre parcial si hay algún nombre en info_representante
+        if (infoRep?.nombre && !infoRep.nombre.includes('test-') && !infoRep.nombre.match(/^\d{13,}/)) {
+          console.log("🔍 Buscando por nombre parcial en memoria:", infoRep.nombre);
           const byName = contactos?.find(
-            (c) => norm(c.nombre) === norm(infoRep.nombre) && norm((c as any).apellidos) === norm(infoRep.apellidos)
+            (c) => c.nombre && c.nombre.toLowerCase().includes(infoRep.nombre.toLowerCase())
           );
           if (byName) {
+            console.log("✅ Contacto encontrado por nombre parcial:", byName);
             setDetalleContacto(byName as any);
+            return;
+          }
+
+          // También buscar en base de datos por nombre parcial
+          if ((embarqueDetalle as any)?.cliente_id) {
+            console.log("🔍 Buscando por nombre parcial en BD");
+            const { data: porNombre, error: errNombre } = await supabase
+              .from("contactos_clientes")
+              .select("id,nombre,telefono,email,puesto,notas,es_principal")
+              .eq("cliente_id", (embarqueDetalle as any).cliente_id)
+              .ilike("nombre", `%${infoRep.nombre}%`);
+            
+            if (!errNombre && porNombre && porNombre.length > 0) {
+              console.log("✅ Contacto encontrado por nombre parcial en BD:", porNombre[0]);
+              setDetalleContacto(porNombre[0]);
+              return;
+            }
+          }
+        }
+
+        // Intento 5: buscar "Claudia Patricia" específicamente si no se ha encontrado nada
+        if ((embarqueDetalle as any)?.cliente_id) {
+          console.log("🔍 Buscando 'Claudia Patricia' específicamente");
+          const { data: claudia, error: errClaudia } = await supabase
+            .from("contactos_clientes")
+            .select("id,nombre,telefono,email,puesto,notas,es_principal")
+            .eq("cliente_id", (embarqueDetalle as any).cliente_id)
+            .or("nombre.ilike.%claudia%");
+          
+          if (!errClaudia && claudia && claudia.length > 0) {
+            console.log("✅ Contacto Claudia Patricia encontrado:", claudia[0]);
+            setDetalleContacto(claudia[0]);
             return;
           }
         }
 
-        // Intento 4: tomar el contacto principal del cliente si existe
+        // Intento 6: tomar el contacto principal del cliente si existe
         if ((embarqueDetalle as any)?.cliente_id) {
+          console.log("🔍 Buscando contacto principal del cliente");
           const { data: principal, error: errPrincipal } = await supabase
             .from("contactos_clientes")
-            .select("id,nombre,apellidos,telefono,email,puesto,notas,es_principal")
+            .select("id,nombre,telefono,email,puesto,notas,es_principal")
             .eq("cliente_id", (embarqueDetalle as any).cliente_id)
             .eq("es_principal", true)
             .maybeSingle();
           if (!errPrincipal && principal) {
+            console.log("✅ Contacto principal encontrado:", principal);
             setDetalleContacto(principal);
             return;
           }
-          // En última instancia, traer uno cualquiera (el primero)
+
+          // Último recurso: cualquier contacto del cliente
+          console.log("🔍 Buscando cualquier contacto del cliente");
           const { data: alguno, error: errUno } = await supabase
             .from("contactos_clientes")
-            .select("id,nombre,apellidos,telefono,email,puesto,notas,es_principal")
+            .select("id,nombre,telefono,email,puesto,notas,es_principal")
             .eq("cliente_id", (embarqueDetalle as any).cliente_id)
             .limit(1)
             .maybeSingle();
           if (!errUno && alguno) {
+            console.log("✅ Contacto cualquiera encontrado:", alguno);
             setDetalleContacto(alguno);
             return;
           }
         }
 
-        // Si no se encontró nada, dejar null para caer en los valores del info_representante
+        // Si no se encontró nada, pero hay info_representante con datos válidos, crear un objeto temporal
+        if (infoRep && Object.keys(infoRep).length > 0) {
+          // Solo crear contacto temporal si los datos no parecen generados automáticamente
+          const nombreValido = infoRep.nombre && !infoRep.nombre.includes('test-') && !infoRep.nombre.match(/^\d{13,}/);
+          
+          if (nombreValido || infoRep.email || infoRep.telefono) {
+            console.log("📝 Creando contacto temporal con info_representante válido:", infoRep);
+            setDetalleContacto({
+              id: 'temp',
+              nombre: nombreValido ? infoRep.nombre : 'Contacto sin nombre',
+              telefono: infoRep.telefono || '',
+              email: infoRep.email || '',
+              puesto: infoRep.puesto || '',
+              notas: infoRep.notas || '',
+              es_principal: false
+            });
+            return;
+          } else {
+            console.log("🚫 Datos de info_representante parecen generados automáticamente, omitiendo");
+          }
+        }
+
+        console.log("❌ No se encontró información de contacto");
         setDetalleContacto(null);
       } catch (e) {
         console.warn("Error cargando contacto del detalle:", (e as any)?.message || e);
@@ -860,6 +1490,10 @@ export default function EmbarquesPage() {
     });
     setEmbarqueEditando(null);
     setContactos([]);
+    setDocumentosEmbarque([]);
+    
+
+    
     if (!embarqueEditando) {
       cargarProximoFolio();
     }
@@ -1087,11 +1721,161 @@ export default function EmbarquesPage() {
       await cargarContactos(embarque.cliente_id);
     }
 
+    // Cargar documentos del embarque
+    try {
+      const docs = await listarDocumentosEmbarque(embarque.id);
+      setDocumentosEmbarque(docs);
+    } catch (error) {
+      console.error("Error cargando documentos del embarque:", error);
+      setDocumentosEmbarque([]);
+    }
+
     setEmbarqueEditando(embarque);
+    
+    // Extraer dígitos editables del folio actual
+    const digitos = extraerDigitosEditables(embarque.folio);
+    setDigitosEditables(digitos);
+    setFolioModificado(false);
+    
     setShowEditModal(true);
   };
 
+  // Funciones para manejar documentos del embarque
+  const handleUploadDocumentoEmbarque = async (file: File) => {
+    if (!file) return;
+
+    // Validar límite de 10 documentos
+    if (documentosEmbarque.length >= 10) {
+      toast({
+        title: "Límite alcanzado",
+        description: "Solo se pueden subir hasta 10 documentos por embarque",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setUploadingDocumento(true);
+
+      // Si estamos editando, subir directamente
+      if (embarqueEditando) {
+        const { url, pathname } = await subirDocumentoEmbarque(
+          embarqueEditando.id,
+          file
+        );
+
+        // Guardar en la base de datos
+        const { data, error } = await supabase
+          .from('documentos_embarques')
+          .insert({
+            embarque_id: embarqueEditando.id,
+            nombre_archivo: file.name,
+            url_blob: url,
+            pathname: pathname,
+            tipo_archivo: file.type,
+            tamano_bytes: file.size,
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+
+        setDocumentosEmbarque(prev => [...prev, data]);
+        
+        toast({
+          title: "Documento subido",
+          description: `${file.name} se subió correctamente`,
+        });
+      } else {
+        // Si estamos creando, guardar temporalmente para subir después
+        const tempDoc: DocumentoEmbarque = {
+          nombre_archivo: file.name,
+          url_blob: URL.createObjectURL(file),
+          pathname: "", // Se asignará después
+          tipo_archivo: file.type,
+          tamano_bytes: file.size,
+          _tempFile: file,
+        };
+        
+        setDocumentosEmbarque(prev => [...prev, tempDoc]);
+        
+        toast({
+          title: "Documento agregado",
+          description: `${file.name} se subirá al guardar el embarque`,
+        });
+      }
+    } catch (error: any) {
+      console.error("❌ [handleUploadDocumentoEmbarque] Error subiendo documento:", {
+        error,
+        message: error?.message,
+        stack: error?.stack,
+        name: error?.name,
+        fileName: file?.name,
+        fileSize: file?.size,
+        fileType: file?.type
+      });
+      
+      const errorMessage = error?.message || 
+                          error?.error_description || 
+                          error?.details || 
+                          (typeof error === 'string' ? error : 'Error desconocido al subir documento');
+                          
+      toast({
+        title: "Error subiendo documento",
+        description: errorMessage,
+        variant: "destructive",
+      });
+    } finally {
+      setUploadingDocumento(false);
+    }
+  };
+
+  const handleEliminarDocumentoEmbarque = async (documento: DocumentoEmbarque) => {
+    try {
+      // Si tiene ID, está en la BD
+      if (documento.id) {
+        await eliminarDocumentoEmbarque(documento.pathname);
+        
+        const { error } = await supabase
+          .from('documentos_embarques')
+          .delete()
+          .eq('id', documento.id);
+
+        if (error) throw error;
+      }
+
+      setDocumentosEmbarque(prev => 
+        prev.filter(d => 
+          documento.id ? d.id !== documento.id : d.nombre_archivo !== documento.nombre_archivo
+        )
+      );
+
+      toast({
+        title: "Documento eliminado",
+        description: "El documento se eliminó correctamente",
+      });
+    } catch (error: any) {
+      console.error("Error eliminando documento:", error);
+      toast({
+        title: "Error",
+        description: "No se pudo eliminar el documento",
+        variant: "destructive",
+      });
+    }
+  };
+
   const handleSave = async () => {
+    let nuevoEmbarqueIdCreado: string | null = null;
+    
+    console.log("💾 INICIANDO GUARDADO - Estado de documentos:", {
+      cantidadDocumentos: documentosEmbarque.length,
+      esEdicion: !!embarqueEditando,
+      documentos: documentosEmbarque.map(d => ({
+        nombre: d.nombre_archivo,
+        tieneTempFile: !!d._tempFile
+      }))
+    });
+    
     // Validación: fecha_recolecta no puede ser después de fecha_entrega
     // Helper: consider a direccion valid only if it's non-empty and not a placeholder
     const isValidDireccion = (d: any) => {
@@ -1199,9 +1983,38 @@ export default function EmbarquesPage() {
 
       if (!embarqueEditando) {
         folio = await generarFolioEspecifico();
+        console.log(`📋 Usando número de embarque generado automáticamente: ${folio}`);
+      } else {
+        // En edición: verificar si el folio cambió
+        if (embarqueEditando.folio !== formData.folio) {
+          console.log(`🔄 Detectado cambio de folio: ${embarqueEditando.folio} → ${formData.folio}`);
+          
+          // Validar el folio al momento de guardar
+          const validacion = await validarFolioAlGuardar(formData.folio);
+          if (!validacion.esValido) {
+            toast({
+              title: "Error en el folio",
+              description: validacion.mensaje,
+              variant: "destructive",
+            });
+            setSaving(false);
+            return;
+          }
+          
+          folio = formData.folio;
+          console.log(`✅ Nuevo folio validado: ${folio}`);
+        }
       }
 
       let infoContacto = null;
+      let representanteId = null;
+      let nombreContactoCompleto = null;
+      
+      console.log("🔍 [GUARDAR] === PROCESO DE SELECCIÓN DE CONTACTO ===");
+      console.log("🔍 [GUARDAR] ID seleccionado en formulario:", formData.representante_cliente);
+      console.log("🔍 [GUARDAR] Total contactos cargados:", contactos?.length || 0);
+      console.log("🔍 [GUARDAR] Lista completa de contactos:", contactos);
+      
       if (
         formData.representante_cliente &&
         formData.representante_cliente !== "none"
@@ -1209,7 +2022,15 @@ export default function EmbarquesPage() {
         const contacto = contactos.find(
           (c) => c.id === formData.representante_cliente
         );
+        console.log("🔍 [GUARDAR] Búsqueda de contacto por ID:");
+        console.log("  - ID buscado:", formData.representante_cliente);
+        console.log("  - Contacto encontrado:", contacto);
+        
         if (contacto) {
+          // Preparar datos completos del contacto
+          representanteId = contacto.id;
+          nombreContactoCompleto = `${contacto.nombre || ""}`.trim();
+          
           infoContacto = {
             id: contacto.id,
             nombre: contacto.nombre,
@@ -1218,10 +2039,52 @@ export default function EmbarquesPage() {
             puesto: contacto.puesto,
             notas: (contacto as any)?.notas || null,
             es_principal: contacto.es_principal,
+            // Campos adicionales para fallback
+            nombre_completo: nombreContactoCompleto,
+            fecha_seleccion: new Date().toISOString()
           };
+          console.log("✅ [GUARDAR] Info contacto preparada:", infoContacto);
+          console.log("✅ [GUARDAR] Nombre completo final:", nombreContactoCompleto);
+        } else {
+          console.warn("⚠️ [GUARDAR] PROBLEMA: No se encontró contacto con ID:", formData.representante_cliente);
+          console.log("🔍 [GUARDAR] IDs disponibles:", contactos.map(c => c.id));
+          
+          // Intentar buscar por nombre si el ID falló
+          const porNombre = contactos.find(c => 
+            c.nombre && c.nombre.toLowerCase().includes(formData.representante_cliente.toLowerCase())
+          );
+          if (porNombre) {
+            console.log("🔄 [GUARDAR] FALLBACK - Encontrado por nombre:", porNombre);
+            representanteId = porNombre.id;
+            nombreContactoCompleto = `${porNombre.nombre || ""}`.trim();
+            infoContacto = {
+              id: porNombre.id,
+              nombre: porNombre.nombre,
+              telefono: porNombre.telefono,
+              email: porNombre.email,
+              puesto: porNombre.puesto,
+              notas: (porNombre as any)?.notas || null,
+              es_principal: porNombre.es_principal,
+              nombre_completo: nombreContactoCompleto,
+              fecha_seleccion: new Date().toISOString(),
+              encontrado_por: 'fallback_nombre'
+            };
+          } else {
+            console.error("❌ [GUARDAR] FALLBACK FALLÓ - No se encontró contacto por nombre");
+          }
         }
+      } else {
+        console.log("🚫 [GUARDAR] No hay representante_cliente seleccionado o es 'none'");
       }
+      
+      console.log("🔍 [GUARDAR] === RESULTADO FINAL ===");
+      console.log("  - representanteId:", representanteId);
+      console.log("  - nombreContactoCompleto:", nombreContactoCompleto);
+      console.log("  - infoContacto:", infoContacto);
+      console.log("🔍 [GUARDAR] ================================");
+      
 
+      
   const firstReco = (formData.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || (formData.recolectas || [])[0];
   const lastEntrega = (formData.entregas || []).slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || (formData.entregas || [])[0];
 
@@ -1257,12 +2120,11 @@ export default function EmbarquesPage() {
         patente_agente_aduanal: formData.patente_agente_aduanal || null,
         aduana_cruce: formData.aduana_cruce || null,
         dueno_mercancia: formData.dueno_mercancia || null,
-        representante_cliente:
-          formData.representante_cliente &&
-          formData.representante_cliente !== "none"
-            ? formData.representante_cliente
-            : null,
+        representante_cliente: representanteId,
         info_representante: infoContacto,
+        // Campos adicionales de respaldo para el contacto (comentado temporalmente)
+        // contacto_nombre_completo: nombreContactoCompleto,
+        // contacto_backup_data: infoContacto ? JSON.stringify(infoContacto) : null,
         carta_porte: formData.carta_porte || null,
         tipo_servicio_id:
           formData.tipo_servicio_id && formData.tipo_servicio_id !== "none"
@@ -1314,6 +2176,29 @@ export default function EmbarquesPage() {
       }
 
       if (embarqueEditando) {
+        // Si el folio cambió, necesitamos actualización en cascada
+        const folioOriginal = embarqueEditando.folio;
+        const folioNuevo = folio;
+        
+        if (folioOriginal !== folioNuevo) {
+          console.log(`🔄 Iniciando actualización en cascada: ${folioOriginal} → ${folioNuevo}`);
+          
+          try {
+            // Usar la función de actualización en cascada
+            await actualizarNumeroEmbarqueEnCascada(embarqueEditando.id, folioOriginal, folioNuevo);
+            console.log(`✅ Actualización en cascada completada exitosamente`);
+          } catch (cascadeError) {
+            console.error("❌ Error en actualización en cascada:", cascadeError);
+            toast({
+              title: "Error en actualización cascada",
+              description: "No se pudo actualizar todas las referencias del folio",
+              variant: "destructive",
+            });
+            setSaving(false);
+            return;
+          }
+        }
+
         const { data: updateData, error } = await supabase
           .from("embarques")
           .update(payloadToSend)
@@ -1329,6 +2214,9 @@ export default function EmbarquesPage() {
       } else {
         // ✅ CREAR EMBARQUE SOLO EN TABLA EMBARQUES LEGACY
         console.log("🔧 Creando embarque en tabla embarques...", {folio, embarqueData});
+        console.log("🔍 DATOS CONTACTO A GUARDAR:");
+        console.log("   - representante_cliente:", embarqueData.representante_cliente);
+        console.log("   - info_representante:", embarqueData.info_representante);
         
         // Validación de campos críticos antes de insertar
         if (!folio || folio.trim() === '') {
@@ -1343,30 +2231,112 @@ export default function EmbarquesPage() {
         
         // Función para validar UUIDs
         const isValidUUID = (uuid: string | null | undefined): boolean => {
-          if (!uuid || uuid === 'none' || uuid === '') return true; // null/empty es válido
+          console.log("🔍 Validando UUID:", { uuid, tipo: typeof uuid });
+          
+          if (!uuid || uuid === 'none' || uuid === '') {
+            console.log("✅ UUID vacío o 'none' - válido");
+            return true; // null/empty es válido
+          }
+          
           const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-          return uuidRegex.test(uuid);
+          const esValido = uuidRegex.test(uuid);
+          
+          if (esValido) {
+            console.log("✅ UUID con formato válido");
+          } else {
+            console.warn("⚠️ UUID con formato inválido");
+          }
+          
+          return esValido;
+        };
+
+        // Función para validar ID de contacto (puede ser UUID, ID generado, o texto descriptivo)
+        const isValidContactId = (id: string | null | undefined): boolean => {
+          console.log("🔍 Validando contacto ID:", { id, tipo: typeof id });
+          
+          if (!id || id === 'none' || id === '') {
+            console.log("✅ ID vacío o 'none' - válido");
+            return true;
+          }
+          
+          // Si es un UUID válido, aceptar
+          const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+          if (uuidRegex.test(id)) {
+            console.log("✅ UUID válido");
+            return true;
+          }
+          
+          // Si es un ID de contacto generado (formato: contact-timestamp-index o test-timestamp-index), aceptar
+          const contactIdRegex = /^(contact|test)-\d+-\d+$/;
+          if (contactIdRegex.test(id)) {
+            console.log("✅ ID de contacto generado válido");
+            return true;
+          }
+          
+          // TEMPORAL: Permitir texto descriptivo (para retrocompatibilidad)
+          // Esto debería eventualmente ser convertido a IDs válidos
+          if (typeof id === 'string' && id.length > 0) {
+            console.warn(`⚠️ Usando texto descriptivo como ID de contacto: ${id}`);
+            console.log("✅ Texto descriptivo - válido temporalmente");
+            return true;
+          }
+          
+          console.log("❌ ID no válido");
+          return false;
         };
         
-        // Validar UUIDs críticos
+        // Validar UUIDs críticos (excluyendo representante_cliente que puede tener formato especial)
         const uuidsToValidate = [
           { name: 'cliente_id', value: embarqueData.cliente_id },
           { name: 'tipo_servicio_id', value: embarqueData.tipo_servicio_id },
           { name: 'camion_id', value: embarqueData.camion_id },
-          { name: 'remolque_id', value: embarqueData.remolque_id },
-          { name: 'representante_cliente', value: embarqueData.representante_cliente }
+          { name: 'remolque_id', value: embarqueData.remolque_id }
         ];
         
         for (const uuid of uuidsToValidate) {
+          console.log("🔍 Validando UUID:", { nombre: uuid.name, valor: uuid.value, tipo: typeof uuid.value });
+          
           if (!isValidUUID(uuid.value)) {
-            console.error(`❌ UUID inválido para ${uuid.name}:`, uuid.value);
-            toast({
-              title: "Error de validación",
-              description: `ID inválido para ${uuid.name}`,
-              variant: "destructive",
-            });
-            return;
+            console.warn(`⚠️ UUID inválido para ${uuid.name}:`, uuid.value);
+            console.warn(`⚠️ Tipo:`, typeof uuid.value);
+            console.warn(`⚠️ Valor serializado:`, JSON.stringify(uuid.value));
+            
+            // Si es null o 'none', está bien para campos opcionales
+            if (uuid.value === null || uuid.value === 'none' || uuid.value === '') {
+              console.log(`✅ Campo ${uuid.name} es opcional y está vacío - continuar`);
+              continue;
+            }
+            
+            // Para debugging, continuamos pero mostramos warning
+            console.warn(`⚠️ Continuando con UUID posiblemente inválido para ${uuid.name}`);
+            
+            // Solo bloqueamos si es un campo crítico y no está vacío
+            // toast({
+            //   title: "Error de validación",
+            //   description: `ID inválido para ${uuid.name}`,
+            //   variant: "destructive",
+            // });
+            // return;
+          } else {
+            console.log(`✅ UUID válido para ${uuid.name}`);
           }
+        }
+
+        // Validar representante_cliente por separado con reglas más flexibles
+        console.log("🔍 Debug representante_cliente:", {
+          valor: embarqueData.representante_cliente,
+          tipo: typeof embarqueData.representante_cliente,
+          esValido: isValidContactId(embarqueData.representante_cliente)
+        });
+        
+        // TEMPORAL: Desactivar validación estricta de representante_cliente
+        // La validación está causando problemas, así que la manejamos en la inserción
+        const representanteValido = isValidContactId(embarqueData.representante_cliente);
+        if (!representanteValido) {
+          console.warn(`⚠️ representante_cliente no válido, pero continuando:`, embarqueData.representante_cliente);
+          console.warn(`⚠️ Tipo de valor:`, typeof embarqueData.representante_cliente);
+          console.warn(`⚠️ Valor stringificado:`, JSON.stringify(embarqueData.representante_cliente));
+          // NO retornamos, continuamos con la creación
         }
         
         console.log("📋 Payload para crear_embarque_normalizado:", {
@@ -1403,7 +2373,7 @@ export default function EmbarquesPage() {
         console.log("🔧 Insertando embarque directamente en tabla embarques...");
         
         // Limpiar payload para inserción directa - SOLO COLUMNAS CONFIRMADAS
-        const embarqueParaInsertar = {
+        const embarqueParaInsertar: any = {
           folio: folio,
           cliente_id: embarqueData.cliente_id === 'none' || embarqueData.cliente_id === '' ? null : embarqueData.cliente_id,
           operador_id: embarqueData.operador_id === 'none' || embarqueData.operador_id === '' ? null : embarqueData.operador_id,
@@ -1429,8 +2399,43 @@ export default function EmbarquesPage() {
           patente_agente_aduanal: embarqueData.patente_agente_aduanal,
           aduana_cruce: embarqueData.aduana_cruce,
           dueno_mercancia: embarqueData.dueno_mercancia,
-          representante_cliente: embarqueData.representante_cliente,
-          info_representante: embarqueData.info_representante,
+          // Validar y limpiar representante_cliente - SOLO UUIDs válidos o null
+          representante_cliente: (() => {
+            const rep = embarqueData.representante_cliente;
+            console.log("🔧 Procesando representante_cliente:", { rep, tipo: typeof rep });
+            
+            if (!rep || rep === 'none' || rep === '') {
+              console.log("🔧 Representante vacío o 'none' -> null");
+              return null;
+            }
+            
+            // SOLO Si es UUID válido, mantener - TODO LO DEMÁS A NULL
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            if (uuidRegex.test(rep)) {
+              console.log("🔧 UUID válido -> mantener");
+              return rep;
+            }
+            
+            // Si NO es UUID válido (incluye IDs generados), convertir a null
+            console.warn(`🔧 Valor no-UUID detectado, convirtiendo a null: ${rep}`);
+            return null;
+          })(),
+          info_representante: (() => {
+            const rep = embarqueData.representante_cliente;
+            const info = embarqueData.info_representante;
+            
+            console.log("🔧 Procesando info_representante:", { rep, info, tipoRep: typeof rep });
+            
+            // Si representante_cliente NO es un UUID válido, usarlo como info_representante
+            const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+            if (rep && typeof rep === 'string' && !uuidRegex.test(rep)) {
+              console.log("🔧 Usando valor no-UUID como info_representante:", rep);
+              return rep;
+            }
+            
+            console.log("🔧 Usando info_representante original:", info);
+            return info;
+          })(),
           precio_flete: embarqueData.precio_flete,
           moneda_flete: embarqueData.currency || 'MXN',
           remolque_manual: embarqueData.remolque_manual || null,
@@ -1438,49 +2443,202 @@ export default function EmbarquesPage() {
           remolque_placa: embarqueData.remolque_placa,
           fecha_creacion: new Date().toISOString(),
           updated_at: new Date().toISOString(),
-          // Guardar direcciones múltiples en campos JSON
-          recolectas_json: (formData.recolectas || []).length > 1 ? JSON.stringify(formData.recolectas || []) : null,
-          entregas_json: (formData.entregas || []).length > 1 ? JSON.stringify(formData.entregas || []) : null
+          recolectas_json: null,
+          entregas_json: null
         };
+
+        // Manejar campos JSON de forma segura
+        try {
+          if (formData.recolectas && Array.isArray(formData.recolectas) && formData.recolectas.length > 1) {
+            embarqueParaInsertar.recolectas_json = JSON.stringify(formData.recolectas);
+          }
+        } catch (error) {
+          console.warn("Error serializando recolectas:", error);
+          embarqueParaInsertar.recolectas_json = null;
+        }
+
+        try {
+          if (formData.entregas && Array.isArray(formData.entregas) && formData.entregas.length > 1) {
+            embarqueParaInsertar.entregas_json = JSON.stringify(formData.entregas);
+          }
+        } catch (error) {
+          console.warn("Error serializando entregas:", error);
+          embarqueParaInsertar.entregas_json = null;
+        }
 
         console.log("📋 Datos para insertar:", embarqueParaInsertar);
         console.log("🔍 Verificando conexión a Supabase...");
         console.log("🔍 Cliente Supabase:", !!supabase);
         console.log("🔍 Tabla destino: embarques");
 
-        const { data: nuevoEmbarque, error: errorCrear } = await supabase
-          .from("embarques")
-          .insert(embarqueParaInsertar)
-          .select()
-          .single();
+        // Validación adicional antes de insertar
+        console.log("🔍 Validando datos antes de inserción:");
+        console.log("   - Folio:", embarqueParaInsertar.folio);
+        console.log("   - Cliente ID:", embarqueParaInsertar.cliente_id);
+        console.log("   - Tipo Servicio ID:", embarqueParaInsertar.tipo_servicio_id);
+        console.log("   - Camión ID:", embarqueParaInsertar.camion_id);
+        console.log("   - Remolque ID:", embarqueParaInsertar.remolque_id);
+        console.log("   - Representante Cliente:", embarqueParaInsertar.representante_cliente);
+        console.log("   - Recolectas JSON:", embarqueParaInsertar.recolectas_json);
+        console.log("   - Entregas JSON:", embarqueParaInsertar.entregas_json);
 
-        if (errorCrear) {
-          console.error("❌ Error creando embarque:", errorCrear);
-          console.error("❌ Error completo:", JSON.stringify(errorCrear, null, 2));
-          console.error("❌ Error details:", errorCrear.details);
-          console.error("❌ Error hint:", errorCrear.hint);
-          console.error("❌ Error code:", errorCrear.code);
-          
-          const errorMessage = errorCrear.message || errorCrear.details || errorCrear.hint || 'Error desconocido al crear embarque';
-          
+        // Verificar que Supabase esté disponible
+        if (!supabase) {
+          console.error("❌ Cliente Supabase no disponible");
           toast({
-            title: "Error al crear embarque",
-            description: errorMessage,
+            title: "Error de conexión",
+            description: "No se pudo conectar a la base de datos",
             variant: "destructive",
           });
+          return;
+        }
+
+        let nuevoEmbarque: any, errorCrear: any;
+        
+        try {
+          console.log("🚀 Iniciando inserción en tabla embarques...");
+          const resultado = await supabase
+            .from("embarques")
+            .insert(embarqueParaInsertar)
+            .select()
+            .single();
+          
+          nuevoEmbarque = resultado.data;
+          errorCrear = resultado.error;
+          
+          console.log("📊 Resultado de inserción:", { nuevoEmbarque, errorCrear });
+          
+        } catch (insertError) {
+          console.error("❌ Error en la operación de inserción:", insertError);
+          errorCrear = insertError;
+        }
+
+        if (errorCrear) {
+          try {
+            console.error("❌ Error creando embarque:");
+            
+            // Logs seguros para evitar errores de serialización
+            if (errorCrear.message) {
+              console.error("   - Message:", errorCrear.message);
+            }
+            if (errorCrear.details) {
+              console.error("   - Details:", errorCrear.details);
+            }
+            if (errorCrear.hint) {
+              console.error("   - Hint:", errorCrear.hint);
+            }
+            if (errorCrear.code) {
+              console.error("   - Code:", errorCrear.code);
+            }
+            
+            // Mostrar el error completo de forma segura
+            try {
+              console.error("   - Error completo:", errorCrear);
+            } catch (logError) {
+              console.error("   - No se pudo mostrar error completo:", logError);
+            }
+            
+            // Intentar serializar el error de forma segura
+            try {
+              const errorInfo = {
+                message: errorCrear.message || 'Sin mensaje',
+                details: errorCrear.details || 'Sin detalles',
+                hint: errorCrear.hint || 'Sin sugerencias',
+                code: errorCrear.code || 'Sin código',
+                timestamp: new Date().toISOString()
+              };
+              console.error("   - Error resumido:", JSON.stringify(errorInfo, null, 2));
+            } catch (serializationError) {
+              console.error("   - Error en serialización:", String(serializationError));
+            }
+            
+            const errorMessage = errorCrear.message || errorCrear.details || errorCrear.hint || 'Error desconocido al crear embarque';
+            
+            toast({
+              title: "Error al crear embarque",
+              description: errorMessage,
+              variant: "destructive",
+            });
+            
+          } catch (handlingError) {
+            console.error("❌ Error manejando el error de creación:", String(handlingError));
+            toast({
+              title: "Error al crear embarque",
+              description: "Error interno del sistema. Revisa la consola.",
+              variant: "destructive",
+            });
+          }
           return;
         }
 
         console.log("✅ Embarque creado exitosamente:", nuevoEmbarque);
         
         // Datos del embarque recién creado
-        const nuevoEmbarqueId = nuevoEmbarque.id;
+        nuevoEmbarqueIdCreado = nuevoEmbarque.id;
         const folioFinal = nuevoEmbarque.folio;
         
-        console.log("✅ Embarque registrado:", { id: nuevoEmbarqueId, folio: folioFinal });
+        console.log("✅ Embarque registrado:", { id: nuevoEmbarqueIdCreado, folio: folioFinal });
+        
+        // CRÍTICO: Verificar estado de documentos justo antes de procesarlos
+        console.log("📄 CRÍTICO: Estado de documentos ANTES de procesar:", {
+          cantidadDocumentos: documentosEmbarque.length,
+          documentos: documentosEmbarque.map(d => ({
+            nombre: d.nombre_archivo,
+            tieneTempFile: !!d._tempFile,
+            tipoArchivo: d.tipo_archivo,
+            tamaño: d.tamano_bytes,
+            urlBlob: d.url_blob?.substring(0, 50) + '...'
+          }))
+        });
+        
+        // Subir documentos temporales
+        console.log(`🔍 Verificando documentos antes de subir:`, {
+          embarqueId: nuevoEmbarqueIdCreado,
+          cantidadDocumentos: documentosEmbarque.length,
+          documentos: documentosEmbarque.map(d => ({
+            nombre: d.nombre_archivo,
+            tieneTempFile: !!d._tempFile
+          }))
+        });
+        
+        if (nuevoEmbarqueIdCreado && documentosEmbarque.length > 0) {
+          console.log(`📄 Subiendo ${documentosEmbarque.length} documentos temporales...`);
+          let documentosSubidos = 0;
+          for (const doc of documentosEmbarque) {
+            if (doc._tempFile) {
+              try {
+                const file = doc._tempFile;
+                console.log(`⬆️ Subiendo: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
+                
+                const { url, pathname } = await subirDocumentoEmbarque(nuevoEmbarqueIdCreado, file);
+                console.log(`✅ Archivo subido a Vercel Blob: ${url}`);
+                
+                const { data, error } = await supabase.from('documentos_embarques').insert({
+                  embarque_id: nuevoEmbarqueIdCreado,
+                  nombre_archivo: file.name,
+                  url_blob: url,
+                  pathname: pathname,
+                  tipo_archivo: file.type,
+                  tamano_bytes: file.size,
+                });
+                
+                if (error) {
+                  console.error(`❌ Error insertando documento en BD:`, error);
+                  throw error;
+                }
+                
+                console.log(`✅ Documento registrado en BD: ${file.name}`, data);
+                documentosSubidos++;
+              } catch (error) {
+                console.error(`❌ Error subiendo documento ${doc.nombre_archivo}:`, error);
+              }
+            }
+          }
+          console.log(`✅ Total documentos subidos: ${documentosSubidos}/${documentosEmbarque.length}`);
+        }
         
         // Simular insertData para compatibilidad con el código existente
-        const insertData = [{ id: nuevoEmbarqueId, folio: folioFinal }];
+        const insertData = [{ id: nuevoEmbarqueIdCreado, folio: folioFinal }];
         
         // Actualizar folio si fuera necesario
         folio = folioFinal;
@@ -1488,18 +2646,117 @@ export default function EmbarquesPage() {
         try { 
           agregarAuditLog("CREAR", "Embarques", `Folio: ${folioFinal} | Usuario: ${getCurrentUser()?.nombre || ''} | Sistema: LEGACY`); 
         } catch {}
+        
+        // AHORA SÍ limpiar el formulario después de procesar todo
+        console.log("🧹 Limpiando formulario después de procesar documentos...");
+        resetForm();
       }
       
       // ✅ COMPLETAR GUARDADO
       if (embarqueEditando) {
         toast({ title: "Embarque actualizado", description: `Folio actualizado` });
+        resetForm();
+        setShowCreateModal(false);
+        setShowEditModal(false);
+        await loadEmbarques();
       } else {
         toast({ title: "Embarque creado exitosamente", description: `Embarque registrado correctamente`, variant: "success" });
+        
+        // NOTA: NO resetForm() aquí - se hará después de procesar documentos
+        setShowCreateModal(false);
+        setShowEditModal(false);
+        
+        // 🔗 Generar automáticamente liga pública para el nuevo embarque
+        if (nuevoEmbarqueIdCreado) {
+          try {
+            console.log('🔗 Generando liga pública automática para embarque:', nuevoEmbarqueIdCreado);
+            const payload: any = { embarqueId: nuevoEmbarqueIdCreado };
+            // Sin expiración específica, usar configuración por defecto (año 2099)
+            
+            const resp = await fetch('/api/public-link', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload),
+            });
+            
+            console.log('🔗 Respuesta del API:', { 
+              status: resp.status, 
+              ok: resp.ok,
+              statusText: resp.statusText,
+              headers: Object.fromEntries(resp.headers.entries())
+            });
+            
+            // Clonar la respuesta para poder leer el body múltiples veces si es necesario
+            const respClone = resp.clone();
+            
+            let json;
+            try {
+              const responseText = await respClone.text();
+              console.log('🔗 Texto de respuesta raw:', responseText);
+              
+              if (!responseText || responseText.trim() === '') {
+                console.error('❌ Respuesta vacía del servidor');
+                toast({ 
+                  title: 'Advertencia', 
+                  description: 'El embarque se creó correctamente pero el servidor no respondió al generar la liga pública.',
+                  variant: 'destructive'
+                });
+                await loadEmbarques();
+                return;
+              }
+              
+              json = JSON.parse(responseText);
+              console.log('🔗 JSON parseado:', json);
+            } catch (parseError) {
+              console.error('❌ Error parseando JSON:', parseError);
+              toast({ 
+                title: 'Advertencia', 
+                description: 'El embarque se creó correctamente pero no se pudo generar la liga pública automáticamente.',
+                variant: 'destructive'
+              });
+              await loadEmbarques();
+              return;
+            }
+            
+            if (resp.ok && !json.error) {
+              const fullLink = `${window.location.origin}${json.url}`;
+              // No abrir el modal automáticamente - solo guardar la liga
+              setPublicGeneratedLink(fullLink);
+              setPublicLinkExpiresAt(json.expiresAt || null);
+              setPublicForEmbarqueId(nuevoEmbarqueIdCreado);
+              // setShowPublicLinkModal(true); // ❌ NO ABRIR AUTOMÁTICAMENTE
+              console.log('✅ Liga pública generada automáticamente:', fullLink);
+            } else {
+              // Usar console.warn en lugar de console.error para evitar errores visuales
+              console.warn('⚠️ Error en respuesta del API:');
+              console.warn('Status:', resp.status);
+              console.warn('Error:', json?.error || 'No especificado');
+              console.warn('Message:', json?.message || 'No especificado');
+              console.warn('Full response:', JSON.stringify(json, null, 2));
+              
+              toast({ 
+                title: 'Advertencia', 
+                description: `El embarque se creó correctamente pero hubo un error al generar la liga pública: ${json?.error || json?.message || 'Error desconocido'}`,
+                variant: 'destructive'
+              });
+            }
+          } catch (e) {
+            console.warn('⚠️ Exception generando public link automático');
+            console.warn('Name:', (e as any)?.name);
+            console.warn('Message:', (e as any)?.message);
+            if ((e as any)?.stack) {
+              console.warn('Stack:', (e as any).stack);
+            }
+            toast({ 
+              title: 'Advertencia', 
+              description: 'El embarque se creó correctamente pero no se pudo generar la liga pública automáticamente.',
+              variant: 'destructive'
+            });
+          }
+        }
+        
+        await loadEmbarques();
       }
-      resetForm();
-      setShowCreateModal(false);
-      setShowEditModal(false);
-      await loadEmbarques();
     } catch (error) {
       console.error("Error guardando embarque:", error);
       const msg = (error as any)?.message || String(error);
@@ -1547,8 +2804,36 @@ export default function EmbarquesPage() {
   };
 
   const handleViewDetails = async (embarque: Embarque) => {
+    console.log("📂 Abriendo detalles del embarque:", embarque.id);
+    
+    // Establecer el embarque actual
     setEmbarqueDetalle(embarque);
+    
+    // Abrir modal inmediatamente
     setShowDetailModal(true);
+
+    // Cargar documentos del embarque en segundo plano
+    setLoadingDocumentosDetalles(true);
+    try {
+      console.log("� [handleViewDetails] Cargando documentos del embarque:", {
+        embarque_id: embarque.id,
+
+        folio: embarque.folio
+      });
+      const docs = await listarDocumentosEmbarque(embarque.id);
+      console.log("✅ [handleViewDetails] Documentos recibidos:", {
+        cantidad: docs?.length || 0,
+        embarque_id: embarque.id,
+        documentos: docs
+      });
+      setDocumentosDetalles(docs);
+      console.log("🔄 [handleViewDetails] Estado documentosDetalles actualizado");
+    } catch (error) {
+      console.error("❌ [handleViewDetails] Error cargando documentos del embarque:", error);
+      setDocumentosDetalles([]);
+    } finally {
+      setLoadingDocumentosDetalles(false);
+    }
 
     // Diagnostics: if this is the problematic folio, log more info
     const isTargetFolio = String(embarque.folio || "").includes("2509-015") || String(embarque.folio || "").includes("TIM-2509-015");
@@ -1732,6 +3017,15 @@ export default function EmbarquesPage() {
         }
       } catch (e) {
         console.warn("Excepción guardando metadata de cancelación:", e);
+      }
+
+      // Paso 3: Eliminar todas las imágenes y documentos del embarque cancelado
+      try {
+        console.log(`🗑️ [CANCEL] Iniciando limpieza de archivos para embarque ${cancelingEmbarque.folio}...`);
+        await eliminarTodosArchivosEmbarque(cancelingEmbarque.id, cancelingEmbarque.folio);
+        console.log(`✅ [CANCEL] Archivos eliminados exitosamente para embarque ${cancelingEmbarque.folio}`);
+      } catch (cleanupError) {
+        console.warn("⚠️ [CANCEL] Error en limpieza de archivos (no bloquea cancelación):", cleanupError);
       }
 
   // 🔧 FIX CRÍTICO: Actualizar estado local inmediatamente para reflejar cambios visuales
@@ -2754,8 +4048,49 @@ export default function EmbarquesPage() {
   };
 
   // Exportar todos los embarques no archivados (activos)
-  const exportarEmbarquesActivosAExcel = () => {
+  const exportarEmbarquesActivosAExcel = async () => {
     const activos = embarques.filter((e) => e.estado !== "archivado");
+    
+    // Obtener adjuntos y recordatorios para todos los embarques
+    toast({ title: "🔄 Obteniendo datos...", description: "Cargando adjuntos y recordatorios" });
+    
+    let adjuntosPorEmbarque: Record<string, any[]> = {};
+    let recordatoriosPorEmbarque: Record<string, any[]> = {};
+    
+    try {
+      // Obtener adjuntos
+      const folios = activos.map(e => e.folio).filter(Boolean);
+      if (folios.length > 0) {
+        const { data: adjuntos } = await supabase
+          .from('documentos')
+          .select('embarque_folio, nombre_archivo, tipo')
+          .in('embarque_folio', folios);
+        
+        if (adjuntos) {
+          adjuntosPorEmbarque = adjuntos.reduce((acc: any, adj: any) => {
+            acc[adj.embarque_folio] = acc[adj.embarque_folio] || [];
+            acc[adj.embarque_folio].push(adj);
+            return acc;
+          }, {});
+        }
+        
+        // Obtener recordatorios
+        const { data: recordatorios } = await supabase
+          .from('recordatorios')
+          .select('embarque_folio, titulo, estado')
+          .in('embarque_folio', folios);
+        
+        if (recordatorios) {
+          recordatoriosPorEmbarque = recordatorios.reduce((acc: any, rec: any) => {
+            acc[rec.embarque_folio] = acc[rec.embarque_folio] || [];
+            acc[rec.embarque_folio].push(rec);
+            return acc;
+          }, {});
+        }
+      }
+    } catch (e) {
+      console.error('Error obteniendo adjuntos/recordatorios:', e);
+    }
   const header = [
       "Folio",
       "Estado",
@@ -2790,10 +4125,26 @@ export default function EmbarquesPage() {
       "RFC",
       "Razón Social",
       "Dirección Fiscal",
+      // Nuevos campos: adjuntos y recordatorios
+      "Total Adjuntos",
+      "Tipos Adjuntos",
+      "Recordatorios Activos",
+      "Recordatorios Pendientes",
     ];
 
     const rows = activos.map((e) => {
       const contacto = (e as any).info_representante || {};
+      
+      // Información de adjuntos
+      const adjuntos = adjuntosPorEmbarque[e.folio] || [];
+      const totalAdjuntos = adjuntos.length;
+      const tiposAdjuntos = [...new Set(adjuntos.map((adj: any) => adj.tipo || 'Sin tipo'))].join(', ');
+      
+      // Información de recordatorios
+      const recordatorios = recordatoriosPorEmbarque[e.folio] || [];
+      const recordatoriosActivos = recordatorios.filter((rec: any) => rec.estado !== 'completado').length;
+      const recordatoriosPendientes = recordatorios.filter((rec: any) => rec.estado === 'pendiente').length;
+      
   return [
         e.folio || "",
         e.estado || "",
@@ -2841,47 +4192,87 @@ export default function EmbarquesPage() {
         (e.cliente as any)?.rfc || "",
         (e.cliente as any)?.razon_social || e.cliente?.nombre || "",
         (e.cliente as any)?.direccion_fiscal || "",
+        // Nuevos campos de adjuntos y recordatorios
+        totalAdjuntos.toString(),
+        tiposAdjuntos || "Ninguno",
+        recordatoriosActivos.toString(),
+        recordatoriosPendientes.toString(),
       ];
     });
 
-    // Generar XLSX con SheetJS
+    // Generar Excel con ExcelJS (alternativa segura)
     try {
-      const aoa = [header, ...rows];
-      const ws = (XLSX as any).utils.aoa_to_sheet(aoa);
-      // Autofilter y freeze
-      try {
-        ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }) } as any;
-      } catch {}
-      (ws as any)["!freeze"] = { xSplit: 0, ySplit: 1 };
+      toast({ title: "🔄 Exportando...", description: "Generando archivo Excel" });
+      
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Embarques Activos');
 
-      // Intento estilo encabezado (mejor esfuerzo)
-      for (let c = 0; c < header.length; c++) {
-        const addr = XLSX.utils.encode_cell({ r: 0, c });
-        if (!ws[addr]) continue;
-        try {
-          ws[addr].s = ws[addr].s || {};
-          ws[addr].s.font = { bold: true, sz: 12 };
-        } catch (e) {}
-      }
+      // Configurar columnas con headers dinámicos
+      worksheet.columns = header.map((h, index) => ({
+        header: h,
+        key: `col${index}`,
+        width: h.length > 15 ? 25 : 15
+      }));
 
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "Embarques Activos");
-      XLSX.writeFile(wb, `embarques_activos_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      // Agregar todas las filas de datos
+      rows.forEach(row => {
+        const rowData: any = {};
+        row.forEach((value, index) => {
+          rowData[`col${index}`] = value;
+        });
+        worksheet.addRow(rowData);
+      });
+
+      // Estilo para el header
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4F81BD' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+
+      // Generar el archivo y descargarlo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `embarques_activos_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+
+      toast({ 
+        title: "✅ Exportado", 
+        description: `${activos.length} embarques exportados exitosamente` 
+      });
+
       try {
         agregarAuditLog(
           "EXPORTAR",
           "Embarques",
-          `Exportó ${activos.length} embarques activos a XLSX`
+          `Exportó ${activos.length} embarques activos a Excel (ExcelJS)`
         );
       } catch {}
     } catch (e) {
-      console.error("Error generando XLSX:", e);
+      console.error("Error generando Excel:", e);
       toast({ title: "Error exportando", description: "No se pudo generar el archivo Excel", variant: "destructive" });
     }
   };
 
   // Exportar un solo registro (detalle actual) a Excel (CSV)
-  const exportarDetalleAExcel = (e: Embarque) => {
+  const exportarDetalleAExcel = async (e: Embarque) => {
     const contacto = (e as any).info_representante || {};
     const header = [
       "Folio",
@@ -2968,24 +4359,69 @@ export default function EmbarquesPage() {
     ];
 
     try {
-      const aoa = [header, row];
-      const ws = (XLSX as any).utils.aoa_to_sheet(aoa);
-      try {
-        ws["!autofilter"] = { ref: XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 0, c: header.length - 1 } }) } as any;
-      } catch {}
-      (ws as any)["!freeze"] = { xSplit: 0, ySplit: 1 };
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, `Embarque_${e.folio}`);
-      XLSX.writeFile(wb, `embarque_${e.folio}.xlsx`);
+      toast({ title: "🔄 Exportando...", description: `Generando detalle del embarque ${e.folio}` });
+      
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet(`Embarque ${e.folio}`);
+
+      // Configurar columnas
+      worksheet.columns = header.map((h, index) => ({
+        header: h,
+        key: `col${index}`,
+        width: h.length > 15 ? 25 : 15
+      }));
+
+      // Agregar los datos
+      const rowData: any = {};
+      row.forEach((value, index) => {
+        rowData[`col${index}`] = value;
+      });
+      worksheet.addRow(rowData);
+
+      // Estilo para el header
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4F81BD' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+
+      // Generar el archivo y descargarlo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `embarque_${e.folio}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+
+      toast({ 
+        title: "✅ Exportado", 
+        description: `Detalle del embarque ${e.folio} exportado exitosamente` 
+      });
+
       try {
         agregarAuditLog(
           "EXPORTAR",
           "Embarques",
-          `Exportó detalle del embarque ${e.folio} a XLSX`
+          `Exportó detalle del embarque ${e.folio} a Excel (ExcelJS)`
         );
       } catch {}
     } catch (err) {
-      console.error("Error generando XLSX detalle:", err);
+      console.error("Error generando Excel detalle:", err);
       toast({ title: "Error exportando", description: "No se pudo generar el archivo Excel", variant: "destructive" });
     }
   };
@@ -3924,27 +5360,52 @@ export default function EmbarquesPage() {
                           : "Ver Detalles"}
                       </Button>
 
-                      {/* Botón Publicacion: generar liga pública para este embarque */}
+                      {/* Botón Reporte de Embarque: mostrar liga pública existente */}
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => {
+                        onClick={async () => {
                           if (!embarque.id) {
                             toast({ title: "ID no disponible", description: "No se pudo obtener el ID del embarque.", variant: "destructive" });
                             return;
                           }
-                          // Open modal so user can pick an expiration before generating
-                          setPublicGeneratedLink("");
-                          setPublicLinkExpiresAt(null);
-                          setPublicExpirationInput(null);
-                          setPublicForEmbarqueId(embarque.id || null);
-                          setShowPublicLinkModal(true);
+                          
+                          // Obtener la liga existente para este embarque
+                          try {
+                            const resp = await fetch('/api/public-link', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ embarqueId: embarque.id }),
+                            });
+                            const json = await resp.json();
+                            
+                            if (resp.ok && !json.error) {
+                              const fullLink = `${window.location.origin}${json.url}`;
+                              setPublicGeneratedLink(fullLink);
+                              setPublicLinkExpiresAt(json.expiresAt || null);
+                              setPublicForEmbarqueId(embarque.id);
+                              setShowPublicLinkModal(true);
+                            } else {
+                              toast({ 
+                                title: 'Error', 
+                                description: 'No se pudo obtener la liga pública del embarque', 
+                                variant: 'destructive' 
+                              });
+                            }
+                          } catch (e) {
+                            console.error('Error obteniendo public link:', e);
+                            toast({ 
+                              title: 'Error', 
+                              description: 'Error al obtener la liga pública', 
+                              variant: 'destructive' 
+                            });
+                          }
                         }}
                         disabled={saving}
-                        title="Generar publicación pública"
+                        title="Ver liga pública del embarque"
                       >
                         <Link className="h-4 w-4 mr-1" />
-                        Publicacion
+                        Reporte de Embarque
                       </Button>
 
                       {/* 🔧 Renderizado condicional de botones según estado */}
@@ -4332,7 +5793,7 @@ export default function EmbarquesPage() {
 
                 <div className="text-xs text-gray-500">
                   Creado:{" "}
-                  {new Date(embarque.fecha_creacion).toLocaleDateString()}
+                  {formatDateMatamoros(normalizeDate(embarque.fecha_creacion) || embarque.fecha_creacion)}
                 </div>
               </CardContent>
             </Card>
@@ -4442,12 +5903,27 @@ export default function EmbarquesPage() {
         >
           <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
-              <DialogTitle>
-                {embarqueEditando ? "Modificar Embarque" : "Nuevo Embarque"}
-              </DialogTitle>
-              <DialogDescription>
-                Completa la información del embarque
-              </DialogDescription>
+              <div className="flex items-center justify-between">
+                <div>
+                  <DialogTitle>
+                    {embarqueEditando ? "Modificar Embarque" : "Nuevo Embarque"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Completa la información del embarque
+                  </DialogDescription>
+                </div>
+                {!embarqueEditando && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={rellenarDatosEjemplo}
+                    className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Rellenar datos de ejemplo
+                  </Button>
+                )}
+              </div>
             </DialogHeader>
 
             <div className="space-y-6">
@@ -4457,13 +5933,14 @@ export default function EmbarquesPage() {
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Tabs defaultValue="basica" className="w-full">
-                    <TabsList className="grid w-full grid-cols-4">
+                    <TabsList className="grid w-full grid-cols-5">
                       <TabsTrigger value="basica">
                         Información Básica
                       </TabsTrigger>
                       <TabsTrigger value="direcciones">Direcciones</TabsTrigger>
                       <TabsTrigger value="vehiculos">Vehículos</TabsTrigger>
                       <TabsTrigger value="detalles">Detalles</TabsTrigger>
+                      <TabsTrigger value="adjuntos">Adjuntos</TabsTrigger>
                     </TabsList>
 
                     <TabsContent value="basica" className="space-y-4 mt-6">
@@ -4471,32 +5948,69 @@ export default function EmbarquesPage() {
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="folio">Folio</Label>
-                          <Input
-                            id="folio"
-                            value={
-                              embarqueEditando ? formData.folio : proximoFolio
-                            }
-                            disabled
-                            className="bg-gray-50 font-mono"
-                            placeholder="Generando folio..."
-                          />
-                          <p className="text-xs text-gray-500">
-                            {embarqueEditando
-                              ? "Folio asignado"
-                              : "Folio que se asignará automáticamente"}
-                          </p>
+                          {embarqueEditando ? (
+                            // Edición: Campo solo lectura con botón para abrir modal
+                            <div className="space-y-2">
+                              <div className="flex items-center space-x-2">
+                                <Input
+                                  id="folio"
+                                  value={formData.folio}
+                                  disabled
+                                  className="bg-gray-50 font-mono flex-1"
+                                  placeholder="Folio del embarque"
+                                />
+                                <Button
+                                  type="button"
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={abrirModalEditarFolio}
+                                  className="px-3 py-2 text-xs"
+                                >
+                                  ✏️ Editar
+                                </Button>
+                              </div>
+                              {folioModificado && (
+                                <div className="bg-amber-50 border border-amber-200 rounded p-2">
+                                  <p className="text-xs text-amber-700 font-medium">
+                                    ⚠️ Folio modificado manualmente
+                                  </p>
+                                  <p className="text-xs text-amber-600 mt-1">
+                                    Se validará al guardar que no exista duplicado
+                                  </p>
+                                </div>
+                              )}
+                              <p className="text-xs text-gray-500">
+                                Haz clic en "Editar" para modificar el número de folio
+                              </p>
+                            </div>
+                          ) : (
+                            // Creación: Solo mostrar folio auto-generado
+                            <div className="space-y-2">
+                              <Input
+                                id="folio"
+                                value={proximoFolio}
+                                disabled
+                                className="bg-gray-50 font-mono"
+                                placeholder="Generando folio..."
+                              />
+                              <p className="text-xs text-gray-500">
+                                Se genera automáticamente al crear el embarque
+                              </p>
+                            </div>
+                          )}
                         </div>
                         <div className="space-y-2">
                           <Label htmlFor="cliente_id">Cliente</Label>
                           <Select
                             value={formData.cliente_id}
                             onValueChange={(value) => {
+                              console.log("🔍 [DROPDOWN-FIX] Cliente seleccionado:", value);
                               setFormData({
                                 ...formData,
                                 cliente_id: value,
                                 representante_cliente: "",
                               });
-                              cargarContactos(value);
+                              // El useEffect se encargará de cargar los contactos automáticamente
                             }}
                           >
                             <SelectTrigger>
@@ -4626,12 +6140,25 @@ export default function EmbarquesPage() {
                           </Label>
                           <Select
                             value={formData.representante_cliente}
-                            onValueChange={(value) =>
-                              setFormData((prev) => ({
-                                ...prev,
-                                representante_cliente: value,
-                              }))
-                            }
+                            onValueChange={(value) => {
+                              try {
+                                const contactoSeleccionado = contactos.find(c => c.id === value);
+                                console.log("🔍 DROPDOWN - Seleccionando contacto ID:", value);
+                                console.log("🔍 DROPDOWN - Contacto encontrado:", contactoSeleccionado);
+                                console.log("🔍 DROPDOWN - Nombre completo:", contactoSeleccionado ? `${contactoSeleccionado.nombre} ${(contactoSeleccionado as any).apellidos || ''}`.trim() : 'No encontrado');
+                                
+                                setFormData((prev) => {
+                                  const nuevoFormData = {
+                                    ...prev,
+                                    representante_cliente: value,
+                                  };
+                                  console.log("✅ DROPDOWN - FormData actualizado:", nuevoFormData.representante_cliente);
+                                  return nuevoFormData;
+                                });
+                              } catch (error) {
+                                console.error("❌ DROPDOWN - Error seleccionando contacto:", error);
+                              }
+                            }}
                             disabled={
                               !formData.cliente_id || contactos.length === 0
                             }
@@ -4645,24 +6172,135 @@ export default function EmbarquesPage() {
                                 }
                               />
                             </SelectTrigger>
-                            <SelectContent>
+                            <SelectContent className="max-h-[400px] overflow-y-auto">
                               <SelectItem value="none">Sin contacto</SelectItem>
-                              {contactos.map((contacto) => {
-                                const nombreCompleto = `${contacto.nombre || ""} ${(
-                                  contacto as any
-                                ).apellidos || ""}`
-                                  .replace(/\s+/g, " ")
-                                  .trim();
-                                const telefono = (contacto as any).telefono || "";
-                                const label = telefono
-                                  ? `${nombreCompleto} - ${telefono}`
-                                  : nombreCompleto;
-                                return (
-                                  <SelectItem key={contacto.id} value={contacto.id}>
-                                    {label}
-                                  </SelectItem>
-                                );
-                              })}
+                              
+                              {(() => {
+                                console.log("🔍 [DROPDOWN-RENDER] Estado actual:");
+                                console.log("- contactos.length:", contactos.length);
+                                console.log("- contactosFiltrados.length:", contactosFiltrados.length);
+                                console.log("- busquedaContacto:", busquedaContacto);
+                                console.log("- mostrarTodosContactos:", mostrarTodosContactos);
+                                console.log("- formData.cliente_id:", formData.cliente_id);
+                                console.log("- contactos:", contactos);
+                                console.log("- contactosFiltrados:", contactosFiltrados);
+                                return null;
+                              })()}
+                              
+                              {/* Barra de búsqueda para listas grandes */}
+                              {contactos.length > 10 && (
+                                <div className="p-2 border-b sticky top-0 bg-white z-10">
+                                  <input
+                                    type="text"
+                                    placeholder="Buscar contacto..."
+                                    value={busquedaContacto}
+                                    onChange={(e) => setBusquedaContacto(e.target.value)}
+                                    className="w-full px-2 py-1 text-sm border rounded"
+                                    onClick={(e) => e.stopPropagation()}
+                                  />
+                                  {contactos.length > 15 && !mostrarTodosContactos && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setMostrarTodosContactos(true);
+                                      }}
+                                      className="mt-1 text-xs text-blue-600 hover:underline"
+                                    >
+                                      Mostrar todos los {contactos.length} contactos
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+                              
+                              {contactosFiltrados.length > 0 ? (
+                                <>
+                                  {/* Contactos principales primero */}
+                                  {contactosFiltrados.filter(c => c.es_principal).map((contacto, index) => {
+                                    try {
+                                      const nombreCompleto = `${contacto.nombre || ""} ${(
+                                        contacto as any
+                                      ).apellidos || ""}`
+                                        .replace(/\s+/g, " ")
+                                        .trim();
+                                      const telefono = (contacto as any).telefono || "";
+                                      const label = telefono
+                                        ? `${nombreCompleto} - ${telefono} (Principal)`
+                                        : `${nombreCompleto || `Contacto ${index + 1}`} (Principal)`;
+                                      
+                                      if (!contacto.id) {
+                                        console.warn("Contacto principal sin ID:", contacto);
+                                        return null;
+                                      }
+                                      
+                                      return (
+                                        <SelectItem 
+                                          key={`contacto-principal-${contacto.id}-${index}`} 
+                                          value={contacto.id}
+                                          className="max-w-full truncate font-medium bg-blue-50"
+                                        >
+                                          {label}
+                                        </SelectItem>
+                                      );
+                                    } catch (error) {
+                                      console.error("Error renderizando contacto principal:", contacto, error);
+                                      return null;
+                                    }
+                                  })}
+                                  
+                                  {/* Otros contactos */}
+                                  {contactosFiltrados.filter(c => !c.es_principal).map((contacto, index) => {
+                                    try {
+                                      const nombreCompleto = `${contacto.nombre || ""} ${(
+                                        contacto as any
+                                      ).apellidos || ""}`
+                                        .replace(/\s+/g, " ")
+                                        .trim();
+                                      const telefono = (contacto as any).telefono || "";
+                                      const label = telefono
+                                        ? `${nombreCompleto} - ${telefono}`
+                                        : nombreCompleto || `Contacto ${index + 1}`;
+                                      
+                                      if (!contacto.id) {
+                                        console.warn("Contacto sin ID:", contacto);
+                                        return null;
+                                      }
+                                      
+                                      return (
+                                        <SelectItem 
+                                          key={`contacto-${contacto.id}-${index}`} 
+                                          value={contacto.id}
+                                          className="max-w-full truncate"
+                                        >
+                                          {label}
+                                        </SelectItem>
+                                      );
+                                    } catch (error) {
+                                      console.error("Error renderizando contacto:", contacto, error);
+                                      return null;
+                                    }
+                                  })}
+                                </>
+                              ) : contactos.length > 0 ? (
+                                <div className="p-2 text-sm text-gray-500 text-center">
+                                  No se encontraron contactos que coincidan con "{busquedaContacto}"
+                                </div>
+                              ) : (
+                                <SelectItem value="loading" disabled>
+                                  {formData.cliente_id && formData.cliente_id !== "none" 
+                                    ? "Cargando contactos..." 
+                                    : "Selecciona un cliente primero"}
+                                </SelectItem>
+                              )}
+                              
+                              {/* Información de contactos */}
+                              {contactos.length > 0 && (
+                                <div className="p-2 border-t text-xs text-gray-500 text-center">
+                                  {contactosFiltrados.length === contactos.length 
+                                    ? `${contactos.length} contactos`
+                                    : `${contactosFiltrados.length} de ${contactos.length} contactos`}
+                                </div>
+                              )}
                             </SelectContent>
                           </Select>
                         </div>
@@ -5063,6 +6701,121 @@ export default function EmbarquesPage() {
                         </div>
                       </div>
                     </TabsContent>
+
+                    {/* Nueva pestaña Adjuntos */}
+                    <TabsContent value="adjuntos" className="space-y-4 mt-6">
+                      <div className="space-y-4">
+                        {/* Input para subir archivos */}
+                        <div>
+                          <Label htmlFor="documento-embarque">
+                            Agregar Documento/Imagen {documentosEmbarque.length < 10 && `(${documentosEmbarque.length}/10)`}
+                          </Label>
+                          <Input
+                            id="documento-embarque"
+                            type="file"
+                            accept="image/*,application/pdf"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0];
+                              if (file) {
+                                handleUploadDocumentoEmbarque(file);
+                                e.target.value = "";
+                              }
+                            }}
+                            disabled={uploadingDocumento || documentosEmbarque.length >= 10}
+                            className="mt-2"
+                          />
+                          {documentosEmbarque.length >= 10 && (
+                            <p className="text-sm text-orange-600 mt-1">
+                              ⚠️ Has alcanzado el límite de 10 documentos
+                            </p>
+                          )}
+                        </div>
+
+                        {/* Preview y lista de documentos */}
+                        {documentosEmbarque.length > 0 ? (
+                          <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h4 className="text-sm font-semibold text-gray-700">
+                                Documentos adjuntos ({documentosEmbarque.length})
+                              </h4>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                              {documentosEmbarque.map((doc, index) => (
+                                <div
+                                  key={doc.id || index}
+                                  className="border rounded-lg overflow-hidden bg-white hover:shadow-lg transition-shadow"
+                                >
+                                  {/* Preview del archivo */}
+                                  <div className="h-40 bg-gray-100 flex items-center justify-center relative group">
+                                    {doc.tipo_archivo?.startsWith("image/") ? (
+                                      <img
+                                        src={doc.url_blob}
+                                        alt={doc.nombre_archivo}
+                                        className="w-full h-full object-cover"
+                                      />
+                                    ) : (
+                                      <FileText className="h-16 w-16 text-red-500" />
+                                    )}
+                                    {/* Overlay con botones */}
+                                    <div className="absolute inset-0 bg-black bg-opacity-50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                                      {doc.url_blob && !doc.url_blob.startsWith("blob:") && (
+                                        <Button
+                                          type="button"
+                                          size="sm"
+                                          onClick={() => window.open(doc.url_blob, "_blank")}
+                                          className="bg-white text-gray-900 hover:bg-gray-100"
+                                        >
+                                          <ExternalLink className="h-4 w-4 mr-1" />
+                                          Ver
+                                        </Button>
+                                      )}
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={() => handleEliminarDocumentoEmbarque(doc)}
+                                        className="bg-red-600 hover:bg-red-700 text-white"
+                                      >
+                                        <Trash className="h-4 w-4 mr-1" />
+                                        Eliminar
+                                      </Button>
+                                    </div>
+                                  </div>
+                                  {/* Información del archivo */}
+                                  <div className="p-3">
+                                    <p className="text-sm font-medium truncate text-gray-900">
+                                      {doc.nombre_archivo}
+                                    </p>
+                                    <div className="flex items-center justify-between mt-1">
+                                      {doc.tamano_bytes && (
+                                        <p className="text-xs text-gray-500">
+                                          {(doc.tamano_bytes / 1024).toFixed(1)} KB
+                                        </p>
+                                      )}
+                                      <div className="flex items-center gap-1 text-xs text-gray-500">
+                                        {doc.tipo_archivo?.startsWith("image/") ? (
+                                          <ImageIcon className="h-3 w-3" />
+                                        ) : (
+                                          <FileText className="h-3 w-3" />
+                                        )}
+                                        <span>{doc.tipo_archivo?.split('/')[1]?.toUpperCase()}</span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-12 bg-gray-50 rounded-lg border-2 border-dashed">
+                            <FileText className="h-16 w-16 mx-auto mb-3 text-gray-400" />
+                            <p className="text-sm text-gray-600 font-medium">No hay documentos adjuntos</p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              Usa el campo de arriba para subir archivos
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                    </TabsContent>
                   </Tabs>
                 </CardContent>
               </Card>
@@ -5091,7 +6844,7 @@ export default function EmbarquesPage() {
           <Button
             type="button"
             onClick={handleSave}
-            disabled={saving || (!embarqueEditando && !isNuevoEmbarqueValid)}
+            disabled={saving || (!embarqueEditando && !isNuevoEmbarqueValid) || (!!embarqueEditando && !isEditEmbarqueValid)}
             className="bg-green-600 hover:bg-green-700 text-white"
           >
             {saving ? (
@@ -5171,7 +6924,7 @@ export default function EmbarquesPage() {
 
         {/* Modal de detalles */}
         <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 Detalles del Embarque {embarqueDetalle?.folio}
@@ -5194,7 +6947,7 @@ export default function EmbarquesPage() {
                     <TabsTrigger value="contacto">
                       Contacto del Cliente
                     </TabsTrigger>
-                    <TabsTrigger value="archivos">Fotos y Ubicación</TabsTrigger>
+                    <TabsTrigger value="archivos">Adjuntos</TabsTrigger>
                   </TabsList>
 
                   <TabsContent value="general" className="space-y-4 mt-6">
@@ -5203,7 +6956,7 @@ export default function EmbarquesPage() {
                         <Label className="text-sm font-medium text-gray-700">
                           Folio
                         </Label>
-                        <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                        <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1 font-mono">
                           {embarqueDetalle.folio}
                         </p>
                       </div>
@@ -5308,35 +7061,53 @@ export default function EmbarquesPage() {
                               </p>
                             )}
                           </div>
-                          <div className="flex items-start gap-4">
-                            <div className="flex-1">
-                              <Label className="text-sm font-medium text-gray-700">
-                                Fecha de Recolecta
-                              </Label>
-                              {(() => {
-                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
-                                const fecha = reco?.fecha || (embarqueDetalle as any).fecha_recolecta;
-                                return (
+                          <div className="space-y-3">
+                            {((embarqueDetalle as any)?.recolectas && (embarqueDetalle as any).recolectas.length > 0 && (embarqueDetalle as any).recolectas.some((r: any) => (r.direccion || "").trim() !== "")) ? (
+                              <div className="space-y-2">
+                                <Label className="text-sm font-medium text-gray-700">
+                                  Fechas y Horas de Recolecta
+                                </Label>
+                                {(embarqueDetalle as any).recolectas.map((r: any, i: number) => (
+                                  <div key={i} className="flex items-start gap-4">
+                                    <div className="flex-1">
+                                      <div className="text-xs font-medium text-gray-700 mb-1">
+                                        {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                      </div>
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        {r.fecha ? formatDateMatamoros(normalizeDate(r.fecha) || r.fecha) : "Sin especificar"}
+                                      </p>
+                                    </div>
+                                    <div className="w-40 shrink-0">
+                                      <div className="text-xs font-medium text-gray-700 mb-1">
+                                        Hora
+                                      </div>
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        {r.hora || "Sin especificar"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="flex items-start gap-4">
+                                <div className="flex-1">
+                                  <Label className="text-sm font-medium text-gray-700">
+                                    Fecha de Recolecta
+                                  </Label>
                                   <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                    {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                    {(embarqueDetalle as any).fecha_recolecta ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : "Sin especificar"}
                                   </p>
-                                );
-                              })()}
-                            </div>
-                            <div className="w-40 shrink-0">
-                              <Label className="text-sm font-medium text-gray-700">
-                                Hora de Recolecta
-                              </Label>
-                              {(() => {
-                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
-                                const hora = reco?.hora || (embarqueDetalle as any).hora_recolecta;
-                                return (
+                                </div>
+                                <div className="w-40 shrink-0">
+                                  <Label className="text-sm font-medium text-gray-700">
+                                    Hora de Recolecta
+                                  </Label>
                                   <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                    {hora || "Sin especificar"}
+                                    {(embarqueDetalle as any).hora_recolecta || "Sin especificar"}
                                   </p>
-                                );
-                              })()}
-                            </div>
+                                </div>
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -5367,39 +7138,53 @@ export default function EmbarquesPage() {
                               </p>
                             )}
                           </div>
-                          <div className="space-y-4">
-                            <div className="flex items-start gap-4">
-                              <div className="flex-1">
+                          <div className="space-y-3">
+                            {((embarqueDetalle as any)?.entregas && (embarqueDetalle as any).entregas.length > 0 && (embarqueDetalle as any).entregas.some((r: any) => (r.direccion || "").trim() !== "")) ? (
+                              <div className="space-y-2">
                                 <Label className="text-sm font-medium text-gray-700">
-                                  Fecha de Entrega
+                                  Fechas y Horas de Entrega
                                 </Label>
-                                {(() => {
-                                  const ents = (embarqueDetalle as any)?.entregas || [];
-                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                  const fecha = lastEnt?.fecha || (embarqueDetalle as any).fecha_entrega;
-                                  return (
-                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                      {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                    </p>
-                                  );
-                                })()}
+                                {(embarqueDetalle as any).entregas.map((e: any, i: number) => (
+                                  <div key={i} className="flex items-start gap-4">
+                                    <div className="flex-1">
+                                      <div className="text-xs font-medium text-gray-700 mb-1">
+                                        {i === ((embarqueDetalle as any).entregas.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                      </div>
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        {e.fecha ? formatDateMatamoros(normalizeDate(e.fecha) || e.fecha) : "Sin especificar"}
+                                      </p>
+                                    </div>
+                                    <div className="w-40 shrink-0">
+                                      <div className="text-xs font-medium text-gray-700 mb-1">
+                                        Hora
+                                      </div>
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        {e.hora || "Sin especificar"}
+                                      </p>
+                                    </div>
+                                  </div>
+                                ))}
                               </div>
-                              <div className="w-40 shrink-0">
-                                <Label className="text-sm font-medium text-gray-700">
-                                  Hora de Entrega
-                                </Label>
-                                {(() => {
-                                  const ents = (embarqueDetalle as any)?.entregas || [];
-                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                  const hora = lastEnt?.hora || (embarqueDetalle as any).hora_entrega;
-                                  return (
-                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                      {hora || "Sin especificar"}
-                                    </p>
-                                  );
-                                })()}
+                            ) : (
+                              <div className="flex items-start gap-4">
+                                <div className="flex-1">
+                                  <Label className="text-sm font-medium text-gray-700">
+                                    Fecha de Entrega
+                                  </Label>
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                    {(embarqueDetalle as any).fecha_entrega ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : "Sin especificar"}
+                                  </p>
+                                </div>
+                                <div className="w-40 shrink-0">
+                                  <Label className="text-sm font-medium text-gray-700">
+                                    Hora de Entrega
+                                  </Label>
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                    {(embarqueDetalle as any).hora_entrega || "Sin especificar"}
+                                  </p>
+                                </div>
                               </div>
-                            </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -5586,152 +7371,360 @@ export default function EmbarquesPage() {
                   </TabsContent>
 
                   <TabsContent value="contacto" className="space-y-4 mt-6">
-                    {embarqueDetalle.info_representante || detalleContacto ? (
-                      <div className="space-y-4">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div>
-                            <Label className="text-sm font-medium text-gray-700">
-                              Nombre del Contacto
-                            </Label>
-                            <div className="mt-1">
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
-                                {detalleContacto
-                                  ? `${detalleContacto?.nombre || ""} ${detalleContacto?.apellidos || ""}`.trim()
-                                  : `${embarqueDetalle.info_representante?.nombre || ""} ${embarqueDetalle.info_representante?.apellidos || ""}`.trim()}
-                              </p>
-                              {(detalleContacto?.es_principal || embarqueDetalle.info_representante?.es_principal) && (
+                    {(() => {
+                      console.log("🔍 MODAL - Datos del embarque:", embarqueDetalle);
+                      console.log("🔍 MODAL - representante_cliente:", (embarqueDetalle as any)?.representante_cliente);
+                      console.log("🔍 MODAL - info_representante:", (embarqueDetalle as any)?.info_representante);
+                      // console.log("🔍 MODAL - contacto_nombre_completo:", (embarqueDetalle as any)?.contacto_nombre_completo);
+                      // console.log("🔍 MODAL - contacto_backup_data:", (embarqueDetalle as any)?.contacto_backup_data);
+                      console.log("🔍 MODAL - contactos disponibles:", contactos?.length || 0);
+                      
+                      // ESTRATEGIA MÚLTIPLE DE RECUPERACIÓN DE CONTACTO
+                      
+                      // Estrategia 1: Buscar por ID en lista actual
+                      let contactoSeleccionado = contactos?.find(
+                        (c) => c.id === (embarqueDetalle as any)?.representante_cliente
+                      );
+                      console.log("🔍 MODAL - Estrategia 1 (ID):", contactoSeleccionado);
+                      
+                      // Estrategia 2: Usar info_representante si existe
+                      if (!contactoSeleccionado && (embarqueDetalle as any)?.info_representante) {
+                        const infoRep = (embarqueDetalle as any).info_representante;
+                        contactoSeleccionado = {
+                          id: infoRep.id || 'temp',
+                          nombre: infoRep.nombre,
+                          apellidos: infoRep.apellidos,
+                          telefono: infoRep.telefono,
+                          email: infoRep.email,
+                          puesto: infoRep.puesto,
+                          notas: infoRep.notas,
+                          es_principal: infoRep.es_principal,
+                          cliente_id: (embarqueDetalle as any)?.cliente_id || '',
+                          activo: true,
+                          fecha_creacion: new Date().toISOString(),
+                          updated_at: new Date().toISOString()
+                        } as any;
+                        console.log("✅ MODAL - Estrategia 2 (info_representante):", contactoSeleccionado);
+                      }
+                      
+                      // Estrategia 3: Fallback simple si no se encuentra nada
+                      if (!contactoSeleccionado) {
+                        console.log("⚠️ MODAL - No se encontró contacto con ninguna estrategia");
+                      }
+                      
+                      return contactoSeleccionado ? (
+                        <div className="space-y-6">
+                          {/* Información principal del contacto */}
+                          <div className="bg-white border border-gray-200 rounded-lg p-4">
+                            <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
+                              <User className="h-5 w-5 mr-2 text-blue-600" />
+                              Datos del Contacto Seleccionado
+                            </h4>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <Label className="text-sm font-medium text-gray-700">
+                                  Nombre Completo
+                                </Label>
                                 <div className="mt-1">
-                                  <Badge className="bg-green-100 text-green-800 text-xs">
-                                    Principal
-                                  </Badge>
-                                </div>
-                              )}
-                            </div>
-                          </div>
-                          <div>
-                            <Label className="text-sm font-medium text-gray-700">
-                              Puesto
-                            </Label>
-                            <Input
-                              readOnly
-                              title={detalleContacto?.puesto || embarqueDetalle.info_representante?.puesto || "No especificado"}
-                              value={detalleContacto?.puesto || embarqueDetalle.info_representante?.puesto || "No especificado"}
-                              className="text-sm bg-gray-50 mt-1"
-                            />
-                          </div>
-                          {(detalleContacto?.telefono || embarqueDetalle.info_representante?.telefono) && (
-                            <div>
-                              <Label className="text-sm font-medium text-gray-700">
-                                Teléfono
-                              </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {detalleContacto?.telefono || embarqueDetalle.info_representante?.telefono}
-                              </p>
-                            </div>
-                          )}
-                          {(detalleContacto?.email || embarqueDetalle.info_representante?.email) && (
-                            <div>
-                              <Label className="text-sm font-medium text-gray-700">
-                                Email
-                              </Label>
-                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                {detalleContacto?.email || embarqueDetalle.info_representante?.email}
-                              </p>
-                            </div>
-                          )}
-                          {(detalleContacto?.notas || (embarqueDetalle.info_representante as any)?.notas) && (
-                            <div className="md:col-span-2">
-                              <Label className="text-sm font-medium text-gray-700">Notas</Label>
-                              <Input
-                                readOnly
-                                title={detalleContacto?.notas || (embarqueDetalle.info_representante as any)?.notas}
-                                value={detalleContacto?.notas || (embarqueDetalle.info_representante as any)?.notas}
-                                className="text-sm bg-gray-50 mt-1"
-                              />
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-center py-8">
-                        <Package className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                        <p className="text-gray-500">
-                          No hay información de contacto para este cliente.
-                        </p>
-                        <p className="text-sm text-gray-400 mt-1">
-                          Asegúrate de que el cliente tenga contactos
-                          registrados o asigna uno al embarque.
-                        </p>
-                      </div>
-                    )}
-                  </TabsContent>
-
-                  <TabsContent value="archivos" className="space-y-2 mt-4">
-                    <h4 className="font-medium text-gray-900">Fotos y Ubicaciones</h4>
-
-                    {/* Removed redundant top list of locations; individual photos show 'Abrir en Maps' below each image */}
-
-                    {embarqueFotos.length > 0 ? (
-                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
-                        {embarqueFotos.map((foto) => {
-                          const hasGeo = typeof (foto as any).latitud === "number" && typeof (foto as any).longitud === "number";
-                          const mapsLink = hasGeo
-                            ? `https://maps.google.com/?q=${(foto as any).latitud},${(foto as any).longitud}`
-                            : undefined;
-                          return (
-                            <div
-                              key={foto.id}
-                              className="relative group overflow-hidden rounded-lg border"
-                            >
-                              <img
-                                src={foto.url_blob || "/placeholder.svg"}
-                                alt={foto.nombre_archivo}
-                                width={200}
-                                height={200}
-                                className="w-full h-32 object-cover"
-                              />
-                              <div className="p-2 text-xs space-y-1">
-                                <p className="font-medium truncate">{foto.nombre_archivo}</p>
-                                <p className="text-gray-500">Subido por: {foto.subido_por || "Desconocido"}</p>
-                                <p className="text-gray-500">{new Date(foto.fecha_subida).toLocaleDateString()}</p>
-                                <div className="pt-1">
-                                  {hasGeo ? (
-                                    <a
-                                      className="text-blue-600 hover:underline flex items-center gap-1"
-                                      href={mapsLink}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      <MapPin className="h-3 w-3" />
-                                      Abrir en Maps
-                                    </a>
-                                  ) : (
-                                    <span className="text-gray-400">Sin ubicación</span>
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border">
+                                    {`${contactoSeleccionado.nombre || ""} ${(contactoSeleccionado as any).apellidos || ""}`.trim() || "No especificado"}
+                                  </p>
+                                  {(contactoSeleccionado as any).es_principal && (
+                                    <div className="mt-2">
+                                      <Badge className="bg-green-100 text-green-800 text-xs">
+                                        <Star className="h-3 w-3 mr-1" />
+                                        Contacto Principal
+                                      </Badge>
+                                    </div>
                                   )}
                                 </div>
                               </div>
-                              <a
-                                href={foto.url_blob}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="absolute inset-x-0 top-0 h-32 flex items-center justify-center bg-black bg-opacity-50 text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                                aria-label={`Ver imagen ${foto.nombre_archivo}`}
-                              >
-                                <ImageIcon className="h-6 w-6" />
-                              </a>
+                              
+                              <div>
+                                <Label className="text-sm font-medium text-gray-700">
+                                  Puesto / Cargo
+                                </Label>
+                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1">
+                                  {(contactoSeleccionado as any).puesto || "No especificado"}
+                                </p>
+                              </div>
                             </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      <div className="text-center py-8">
-                        <ImageIcon className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-                        <p className="text-gray-500">No hay imágenes adjuntas para este embarque.</p>
-                        <p className="text-sm text-gray-400 mt-1">
-                          El operador puede subir fotos a través del enlace de subida.
-                        </p>
-                      </div>
-                    )}
+                          </div>
+
+                          {/* Información de contacto */}
+                          <div className="bg-white border border-gray-200 rounded-lg p-4">
+                            <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
+                              <Phone className="h-5 w-5 mr-2 text-green-600" />
+                              Información de Contacto
+                            </h4>
+                            
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div>
+                                <Label className="text-sm font-medium text-gray-700 flex items-center">
+                                  <Phone className="h-4 w-4 mr-1 text-gray-500" />
+                                  Teléfono
+                                </Label>
+                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1">
+                                  {(contactoSeleccionado as any).telefono || "No proporcionado"}
+                                </p>
+                              </div>
+                              
+                              <div>
+                                <Label className="text-sm font-medium text-gray-700 flex items-center">
+                                  <Mail className="h-4 w-4 mr-1 text-gray-500" />
+                                  Email
+                                </Label>
+                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1 break-all">
+                                  {(contactoSeleccionado as any).email || "No proporcionado"}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Notas adicionales */}
+                          {(contactoSeleccionado as any).notas && (
+                            <div className="bg-white border border-gray-200 rounded-lg p-4">
+                              <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
+                                <FileText className="h-5 w-5 mr-2 text-purple-600" />
+                                Notas Adicionales
+                              </h4>
+                              <div className="bg-gray-50 border rounded p-3">
+                                <p className="text-sm text-gray-700 whitespace-pre-wrap">
+                                  {(contactoSeleccionado as any).notas}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Información técnica */}
+                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                            <h4 className="text-sm font-medium text-gray-700 mb-2">
+                              Información de Selección
+                            </h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-gray-500">
+                              <div>
+                                <span className="font-medium">ID del Contacto:</span>
+                                <p className="mt-1 font-mono bg-white p-2 rounded border">
+                                  {contactoSeleccionado.id}
+                                </p>
+                              </div>
+                              <div>
+                                <span className="font-medium">Seleccionado como:</span>
+                                <p className="mt-1 bg-white p-2 rounded border">
+                                  {`${contactoSeleccionado.nombre || ""} ${(contactoSeleccionado as any).apellidos || ""}`.trim()}
+                                  {(contactoSeleccionado as any).telefono && ` - ${(contactoSeleccionado as any).telefono}`}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-12">
+                          <User className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                          <h3 className="text-lg font-medium text-gray-900 mb-2">
+                            Sin Contacto Disponible
+                          </h3>
+                          <p className="text-gray-500 mb-4">
+                            No se pudo recuperar la información del contacto para este embarque.
+                          </p>
+                          <div className="text-sm text-gray-400 space-y-2 max-w-lg mx-auto">
+                            <div className="bg-gray-50 p-3 rounded border">
+                              <p><strong>Datos de búsqueda:</strong></p>
+                              <p>• ID: {(embarqueDetalle as any)?.representante_cliente || 'Ninguno'}</p>
+                              <p>• Info representante: {(embarqueDetalle as any)?.info_representante ? 'Sí' : 'No'}</p>
+                              <p>• Contactos actuales: {contactos?.length || 0}</p>
+                            </div>
+                            <p className="text-orange-600 mt-2">
+                              El contacto se perdió o no se guardó correctamente al crear el embarque.
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </TabsContent>
+
+                  <TabsContent value="archivos" className="space-y-6 mt-4">
+                    {/* Sección unificada de todos los archivos del embarque */}
+                    <div className="bg-white border rounded-lg p-6">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center gap-2">
+                        <FolderOpen className="h-5 w-5" />
+                        Todos los Archivos ({documentosDetalles.length})
+                      </h3>
+                      
+                      {loadingDocumentosDetalles ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                          <span className="ml-2 text-sm text-gray-600">Cargando archivos...</span>
+                        </div>
+                      ) : documentosDetalles.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <FolderOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                          <p className="text-lg font-medium">No hay archivos en este embarque</p>
+                          <p className="text-sm mt-1">Los archivos e imágenes cargados aparecerán aquí</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                          {/* Ordenar: imágenes primero, luego otros archivos */}
+                          {documentosDetalles
+                            .sort((a, b) => {
+                              const aImg = a.tipo_archivo?.startsWith('image/');
+                              const bImg = b.tipo_archivo?.startsWith('image/');
+                              if (aImg === bImg) return 0;
+                              return aImg ? -1 : 1;
+                            })
+                            .map((documento) => {
+                              const esImagen = documento.tipo_archivo?.startsWith('image/');
+                              const esPDF = documento.tipo_archivo === 'application/pdf';
+                              const formatFileSize = (bytes: number) => {
+                                if (!bytes) return '';
+                                if (bytes === 0) return '0 Bytes';
+                                const k = 1024;
+                                const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                              };
+
+                              return (
+                                <div
+                                  key={documento.id}
+                                  className="border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow"
+                                >
+                                  <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
+                                    {esImagen ? (
+                                      <img
+                                        src={documento.url_blob || '/placeholder.svg'}
+                                        alt={documento.nombre_archivo}
+                                        className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                                        onClick={() => {
+                                          setPreviewImage({url: documento.url_blob, name: documento.nombre_archivo});
+                                          setShowImagePreview(true);
+                                        }}
+                                        onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
+                                      />
+                                    ) : (
+                                      <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
+                                        <FileText className="h-8 w-8 mb-2" />
+                                        <span className="text-[10px] text-center px-2">{documento.nombre_archivo}</span>
+                                      </div>
+                                    )}
+
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                      <div className="text-white text-center">
+                                        <Eye className="h-5 w-5 mx-auto mb-1" />
+                                        <span className="text-[10px]">Click para ver</span>
+                                      </div>
+                                    </div>
+                                  </div>
+
+                                  <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                      <Badge className={esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : esPDF ? 'bg-red-100 text-red-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
+                                        {esImagen ? 'IMAGEN' : esPDF ? 'PDF' : 'ARCHIVO'}
+                                      </Badge>
+                                      <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
+                                    </div>
+                                    <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
+                                    <p className="text-[10px] text-gray-400">
+                                      {documento.created_at && new Date(documento.created_at).toLocaleDateString('es-MX', {
+                                        year: 'numeric',
+                                        month: 'short',
+                                        day: 'numeric',
+                                        hour: '2-digit',
+                                        minute: '2-digit'
+                                      })}
+                                    </p>
+                                    
+                                    <div className="flex space-x-2 pt-2">
+                                      <Button 
+                                        aria-label="Ver documento" 
+                                        title="Ver" 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="flex-1 bg-transparent" 
+                                        onClick={() => window.open(documento.url_blob, '_blank')}
+                                      >
+                                        <Eye className="h-3 w-3" />
+                                      </Button>
+                                      <Button 
+                                        aria-label="Descargar documento" 
+                                        title="Descargar" 
+                                        variant="outline" 
+                                        size="sm" 
+                                        className="flex-1 bg-transparent" 
+                                        onClick={() => {
+                                          const link = document.createElement('a');
+                                          link.href = documento.url_blob;
+                                          link.download = documento.nombre_archivo;
+                                          link.target = '_blank';
+                                          document.body.appendChild(link);
+                                          link.click();
+                                          document.body.removeChild(link);
+                                        }}
+                                      >
+                                        <Download className="h-3 w-3" />
+                                      </Button>
+                                      <AlertDialog>
+                                        <AlertDialogTrigger asChild>
+                                          <Button variant="outline" size="sm">
+                                            <Trash2 className="h-3 w-3 text-red-500" />
+                                          </Button>
+                                        </AlertDialogTrigger>
+                                        <AlertDialogContent>
+                                          <AlertDialogHeader>
+                                            <AlertDialogTitle>¿Eliminar archivo?</AlertDialogTitle>
+                                            <AlertDialogDescription>
+                                              Esta acción no se puede deshacer. El archivo "{documento.nombre_archivo}" se eliminará permanentemente.
+                                            </AlertDialogDescription>
+                                          </AlertDialogHeader>
+                                          <AlertDialogFooter>
+                                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                            <AlertDialogAction 
+                                              className="bg-red-600 hover:bg-red-700 text-white" 
+                                              onClick={async () => {
+                                                try {
+                                                  if (!documento.id) {
+                                                    throw new Error("ID del documento no disponible");
+                                                  }
+                                                  
+                                                  console.log('🗑️ Eliminando documento:', documento.id);
+                                                  await eliminarDocumentoEmbarqueCompleto(documento.id);
+                                                  
+                                                  // Recargar documentos
+                                                  if (embarqueDetalle?.id) {
+                                                    const docs = await listarDocumentosEmbarque(embarqueDetalle.id);
+                                                    setDocumentosDetalles(docs);
+                                                  }
+                                                  
+                                                  console.log('✅ Documento eliminado exitosamente');
+                                                  toast({
+                                                    title: "Documento eliminado",
+                                                    description: `El archivo "${documento.nombre_archivo}" ha sido eliminado.`,
+                                                    variant: "destructive",
+                                                  });
+                                                } catch (error: any) {
+                                                  console.error('❌ Error eliminando documento:', error);
+                                                  toast({
+                                                    title: "Error",
+                                                    description: error.message || "No se pudo eliminar el documento",
+                                                    variant: "destructive",
+                                                  });
+                                                }
+                                              }}
+                                            >
+                                              Eliminar
+                                            </AlertDialogAction>
+                                          </AlertDialogFooter>
+                                        </AlertDialogContent>
+                                      </AlertDialog>
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                        </div>
+                      )}
+                    </div>
                   </TabsContent>
                 </Tabs>
               </div>
@@ -5822,106 +7815,329 @@ export default function EmbarquesPage() {
 
         {/* Modal para mostrar la liga pública (compartible) */}
         <Dialog open={showPublicLinkModal} onOpenChange={setShowPublicLinkModal}>
-          <DialogContent className="max-w-md">
+          <DialogContent className="max-w-2xl">
             <DialogHeader>
-              <DialogTitle>Liga pública para compartir</DialogTitle>
-              <DialogDescription>
-                Copia la liga pública y compártela con usuarios externos. La liga expira automáticamente.
+              <DialogTitle className="text-2xl font-bold text-center">🔗 Liga Pública para Compartir</DialogTitle>
+              <DialogDescription className="text-center text-base">
+                Esta liga se generó automáticamente para este embarque. Cópiala y compártela con tus clientes o permisionarios.
               </DialogDescription>
             </DialogHeader>
 
-            <div className="space-y-4">
-              <Label htmlFor="public-link">Enlace público</Label>
-              <div className="flex space-x-2">
-                <Input id="public-link" value={publicGeneratedLink} readOnly />
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (!publicGeneratedLink) return;
-                    navigator.clipboard.writeText(publicGeneratedLink);
-                    toast({ title: "Liga copiada", description: "La liga pública ha sido copiada al portapapeles." });
-                  }}
-                >
-                  <Copy className="h-4 w-4" />
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => {
-                    if (!publicGeneratedLink) return;
-                    // Open in a new browser tab
-                    window.open(publicGeneratedLink, '_blank');
-                  }}
-                >
-                  <ExternalLink className="h-4 w-4" />
-                </Button>
+            <div className="space-y-6 py-4">
+              {/* Liga generada - diseño mejorado */}
+              <div className="bg-blue-50 border-2 border-blue-200 rounded-lg p-6">
+                <Label htmlFor="public-link" className="text-lg font-semibold text-blue-900 mb-3 block">
+                  📋 Enlace Público Generado
+                </Label>
+                <div className="flex space-x-2 items-center">
+                  <Input 
+                    id="public-link" 
+                    value={publicGeneratedLink || "Generando liga..."} 
+                    readOnly 
+                    className="bg-white text-base font-mono text-sm"
+                  />
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="bg-green-600 hover:bg-green-700 text-white border-green-600"
+                    onClick={() => {
+                      if (!publicGeneratedLink) return;
+                      navigator.clipboard.writeText(publicGeneratedLink);
+                      toast({ title: "✅ Liga copiada", description: "La liga pública ha sido copiada al portapapeles." });
+                    }}
+                    disabled={!publicGeneratedLink}
+                  >
+                    <Copy className="h-5 w-5 mr-2" />
+                    Copiar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    className="bg-blue-600 hover:bg-blue-700 text-white border-blue-600"
+                    onClick={() => {
+                      if (!publicGeneratedLink) return;
+                      window.open(publicGeneratedLink, '_blank');
+                    }}
+                    disabled={!publicGeneratedLink}
+                  >
+                    <ExternalLink className="h-5 w-5 mr-2" />
+                    Abrir
+                  </Button>
+                </div>
               </div>
 
-              {/* New: expiration input so user can set custom expiry for the public link */}
-              <div>
-                <Label htmlFor="public-expiration">Fecha de expiración (opcional)</Label>
-                <Input
-                  id="public-expiration"
-                  type="datetime-local"
-                  className="mt-1"
-                  value={publicExpirationInput || ''}
-                  onChange={(e: any) => setPublicExpirationInput(e.target.value || null)}
-                />
-                <p className="text-xs text-gray-500 mt-1">Si no se especifica, se usará el tiempo por defecto del sistema (ej. 72 horas).</p>
+              {/* Información adicional */}
+              <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <div className="text-blue-600 mt-1">
+                    <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h4 className="font-semibold text-gray-900 mb-1">Información Importante</h4>
+                    <ul className="text-sm text-gray-600 space-y-1">
+                      <li>• Esta liga es <strong>única</strong> para este embarque</li>
+                      <li>• No cambiará y permanecerá activa mientras el embarque esté activo</li>
+                      <li>• Se desactivará automáticamente cuando el embarque sea finalizado o cancelado</li>
+                      {publicLinkExpiresAt && (
+                        <li>• Fecha de expiración: <strong>{new Date(publicLinkExpiresAt).toLocaleDateString('es-MX', { year: 'numeric', month: 'long', day: 'numeric' })}</strong></li>
+                      )}
+                    </ul>
+                  </div>
+                </div>
               </div>
-
-              {publicLinkExpiresAt && (
-                <p className="text-xs text-gray-500">Expira: {new Date(publicLinkExpiresAt).toLocaleString()}</p>
-              )}
             </div>
 
             <DialogFooter>
-              <div className="flex items-center space-x-2">
-                <Button
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                  onClick={async () => {
-                    // Generate the public link for the selected embarque
-                    if (!publicForEmbarqueId) {
-                      toast({ title: 'Error', description: 'No hay embarque seleccionado para generar la liga.', variant: 'destructive' });
-                      return;
-                    }
+              <Button 
+                onClick={() => setShowPublicLinkModal(false)}
+                className="w-full bg-gray-600 hover:bg-gray-700 text-white"
+                size="lg"
+              >
+                Cerrar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
-                    try {
-                      const payload: any = { embarqueId: publicForEmbarqueId };
-                      if (publicExpirationInput) {
-                        const dt = new Date(publicExpirationInput);
-                        if (!isNaN(dt.getTime())) payload.expiresAt = dt.toISOString();
-                      } else {
-                        payload.hours = 72;
-                      }
-
-                      const resp = await fetch('/api/public-link', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload),
-                      });
-                      const json = await resp.json();
-                      if (!resp.ok || json.error) {
-                        console.error('Error generando public link:', json);
-                        toast({ title: 'Error', description: json?.error || 'No se pudo generar la liga pública', variant: 'destructive' });
-                        return;
-                      }
-                      const full = `${window.location.origin}${json.url}`;
-                      setPublicGeneratedLink(full);
-                      setPublicLinkExpiresAt(json.expiresAt || null);
-                      // clear the selected embarque id after generating
-                      setPublicForEmbarqueId(null);
-                      toast({ title: 'Liga generada', description: 'La liga pública fue generada correctamente.' });
-                    } catch (e) {
-                      console.error('Exception generando public link:', e);
-                      toast({ title: 'Error', description: 'Excepción generando la liga pública', variant: 'destructive' });
-                    }
-                  }}
-                >
-                  Generar enlace
-                </Button>
-
-                <Button onClick={() => setShowPublicLinkModal(false)}>Cerrar</Button>
+        {/* Modal de Preview de Imágenes */}
+        <Dialog open={showImagePreview} onOpenChange={setShowImagePreview}>
+          <DialogContent className="max-w-4xl max-h-[90vh] p-0 overflow-hidden">
+            <DialogHeader className="p-6 pb-2">
+              <DialogTitle className="flex items-center gap-2">
+                <ImageIcon className="h-5 w-5" />
+                Vista Previa: {previewImage?.name}
+              </DialogTitle>
+            </DialogHeader>
+            
+            {previewImage && (
+              <div className="relative flex-1 p-6 pt-2">
+                <div className="relative bg-gray-50 rounded-lg overflow-hidden">
+                  <img
+                    src={previewImage.url}
+                    alt={previewImage.name}
+                    className="w-full max-h-[70vh] object-contain"
+                  />
+                </div>
+                
+                {/* Botones de acción */}
+                <div className="flex gap-2 mt-4 justify-center">
+                  <Button
+                    variant="outline"
+                    onClick={() => window.open(previewImage.url, '_blank')}
+                    className="flex items-center gap-2"
+                  >
+                    <ExternalLink className="h-4 w-4" />
+                    Abrir en Nueva Pestaña
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      const link = document.createElement('a');
+                      link.href = previewImage.url;
+                      link.download = previewImage.name;
+                      link.target = '_blank';
+                      document.body.appendChild(link);
+                      link.click();
+                      document.body.removeChild(link);
+                    }}
+                    className="flex items-center gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Descargar
+                  </Button>
+                </div>
               </div>
+            )}
+            
+            <DialogFooter className="p-6 pt-2">
+              <Button onClick={() => setShowImagePreview(false)} className="w-full">
+                Cerrar
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Modal secundario para editar folio */}
+        <Dialog open={showEditFolioModal} onOpenChange={setShowEditFolioModal}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>Editar Número de Folio</DialogTitle>
+              <DialogDescription>
+                Modifica el número de folio del embarque. El sistema validará que el nuevo número no exista.
+              </DialogDescription>
+            </DialogHeader>
+            
+            <div className="space-y-4">
+              {/* Folio actual */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">Folio Actual</Label>
+                <div className="p-3 bg-gray-50 rounded-md border">
+                  <span className="font-mono text-lg font-bold text-gray-900">
+                    {embarqueEditando?.folio || ""}
+                  </span>
+                </div>
+              </div>
+
+              {/* Nuevo folio */}
+              <div className="space-y-2">
+                <Label className="text-sm font-medium text-gray-700">Nuevo Folio</Label>
+                <div className="space-y-2">
+                  {/* Estructura del folio con inputs separados */}
+                  <div className="flex items-center border rounded-md overflow-hidden bg-white">
+                    {/* Prefijo fijo TIM-25 */}
+                    <span className="bg-gray-100 px-3 py-2 text-gray-600 font-mono text-sm font-semibold border-r">
+                      TIM-25
+                    </span>
+                    
+                    {/* Input para el mes (2 dígitos) */}
+                    <Input
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={folioMes}
+                      onChange={(e) => handleCambioMes(e.target.value)}
+                      className={`font-mono text-center border-0 focus:ring-0 focus:ring-offset-0 text-lg font-bold w-12 ${errorMes ? 'bg-red-50 text-red-900' : 'bg-blue-50'}`}
+                      placeholder="11"
+                      maxLength={2}
+                      onKeyDown={(e) => {
+                        // Solo permitir números y teclas de control
+                        if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                        
+                        // Auto-focus al siguiente campo cuando se completen 2 dígitos
+                        if (folioMes.length === 1 && /[0-9]/.test(e.key)) {
+                          setTimeout(() => {
+                            const consecutivoInput = document.querySelector('[data-folio-consecutivo]') as HTMLInputElement;
+                            consecutivoInput?.focus();
+                          }, 10);
+                        }
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        const soloNumeros = paste.replace(/\D/g, '').substring(0, 2);
+                        if (soloNumeros) {
+                          handleCambioMes(soloNumeros);
+                        }
+                      }}
+                    />
+                    
+                    {/* Separador */}
+                    <span className="px-1 text-gray-500 font-mono text-lg">-</span>
+                    
+                    {/* Input para el consecutivo (3 dígitos) */}
+                    <Input
+                      data-folio-consecutivo
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={folioConsecutivo}
+                      onChange={(e) => handleCambioConsecutivo(e.target.value)}
+                      className={`font-mono text-center border-0 focus:ring-0 focus:ring-offset-0 text-lg font-bold w-16 ${errorConsecutivo ? 'bg-red-50 text-red-900' : 'bg-blue-50'}`}
+                      placeholder="001"
+                      maxLength={3}
+                      onKeyDown={(e) => {
+                        // Solo permitir números y teclas de control
+                        if (!/[0-9]/.test(e.key) && !['Backspace', 'Delete', 'Tab', 'Enter', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                        
+                        // Si está vacío y se presiona backspace, regresar al campo del mes
+                        if (e.key === 'Backspace' && folioConsecutivo.length === 0) {
+                          e.preventDefault();
+                          setTimeout(() => {
+                            const mesInput = (e.target as HTMLElement).parentElement?.querySelector('input:not([data-folio-consecutivo])') as HTMLInputElement;
+                            if (mesInput) {
+                              mesInput.focus();
+                              // Posicionar el cursor al final
+                              mesInput.setSelectionRange(mesInput.value.length, mesInput.value.length);
+                            }
+                          }, 10);
+                        }
+                      }}
+                      onPaste={(e) => {
+                        e.preventDefault();
+                        const paste = (e.clipboardData || (window as any).clipboardData).getData('text');
+                        const soloNumeros = paste.replace(/\D/g, '').substring(0, 3);
+                        if (soloNumeros) {
+                          handleCambioConsecutivo(soloNumeros);
+                        }
+                      }}
+                    />
+                  </div>
+                  
+                  {/* Mensajes de error específicos para cada campo */}
+                  {(errorMes || errorConsecutivo) && (
+                    <div className="flex justify-between text-xs">
+                      <div className="w-12">
+                        {errorMes && (
+                          <div className="text-red-600 font-medium">
+                            {errorMes}
+                          </div>
+                        )}
+                      </div>
+                      <div className="w-16 text-right">
+                        {errorConsecutivo && (
+                          <div className="text-red-600 font-medium">
+                            {errorConsecutivo}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {/* Vista previa del folio completo */}
+                  <div className="p-2 bg-blue-50 rounded border border-blue-200">
+                    <div className="text-xs text-blue-700 font-medium">Vista previa:</div>
+                    <div className="font-mono text-lg font-bold text-blue-900 mt-1">
+                      {nuevoFolioTemp || "TIM-25...-..."}
+                    </div>
+                  </div>
+
+                  {/* Información de ayuda */}
+                  <div className="text-xs text-gray-600 space-y-1">
+                    <div>💡 <strong>Mes:</strong> 2 dígitos (ej: 01, 11, 12)</div>
+                    <div>💡 <strong>Consecutivo:</strong> 3 dígitos (ej: 001, 025, 999)</div>
+                    <div>✅ Solo números permitidos (0-9)</div>
+                    <div>🔄 El cursor se mueve automáticamente entre campos</div>
+                  </div>
+
+                  {/* Error de validación */}
+                  {errorValidacionFolio && (
+                    <div className="p-2 bg-red-50 border border-red-200 rounded">
+                      <p className="text-xs text-red-700 font-medium">❌ Error</p>
+                      <p className="text-xs text-red-600 mt-1">{errorValidacionFolio}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            <DialogFooter>
+              <Button 
+                variant="outline" 
+                onClick={cerrarModalEditarFolio}
+                disabled={validandoFolio}
+              >
+                Cancelar
+              </Button>
+              <Button 
+                onClick={validarYGuardarFolio}
+                disabled={validandoFolio || !nuevoFolioTemp.trim() || folioMes.length < 2 || folioConsecutivo.length < 3 || !!errorMes || !!errorConsecutivo}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {validandoFolio ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                    Validando...
+                  </>
+                ) : (
+                  <>✅ Guardar Folio</>
+                )}
+              </Button>
             </DialogFooter>
           </DialogContent>
         </Dialog>

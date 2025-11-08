@@ -4,7 +4,7 @@ export function formatDateMatamoros(fecha: string | Date | null | undefined): st
   // Si viene como string tipo "2025-09-10", no lo convertimos a Date
   if (typeof fecha === "string" && /^\d{4}-\d{2}-\d{2}$/.test(fecha)) {
     const [year, month, day] = fecha.split("-");
-    return `${day}/${month}/${year}`;
+    return `${day}-${month}-${year}`;
   }
 
   try {
@@ -12,15 +12,40 @@ export function formatDateMatamoros(fecha: string | Date | null | undefined): st
     const d = new Date(fecha as any);
     d.setMinutes(d.getMinutes() + d.getTimezoneOffset());
 
-    return d.toLocaleDateString("es-MX", {
+    const formatted = d.toLocaleDateString("es-MX", {
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
     });
+    // Cambiar barras por guiones
+    return formatted.replace(/\//g, "-");
   } catch (e) {
     console.error("Error formateando fecha:", fecha, e);
     return String(fecha);
   }
+}
+
+// Función auxiliar para limpiar fechas que vengan con hora 00:00:00
+export function cleanDateString(fecha: string | null | undefined): string {
+  if (!fecha) return "";
+  
+  if (typeof fecha === "string") {
+    // Si ya está en formato dd-mm-yyyy, devolverlo tal cual
+    if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(fecha.trim())) {
+      return fecha.trim();
+    }
+    
+    // Si ya está en formato dd/mm/yyyy, convertir a dd-mm-yyyy
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(fecha.trim())) {
+      return fecha.trim().replace(/\//g, '-');
+    }
+    
+    // Remover la parte de la hora si es 00:00:00 o cualquier hora
+    const cleanedDate = fecha.replace(/[T ]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/, "");
+    return formatDateMatamoros(cleanedDate);
+  }
+  
+  return formatDateMatamoros(fecha);
 }
 
 export function normalizeDate(v?: string | null) {

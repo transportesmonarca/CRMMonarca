@@ -52,6 +52,7 @@ import { subirFotoEmbarque, eliminarFotoEmbarque } from "@/lib/blob"
 import { agregarAuditLog } from "@/lib/audit"
 import { compressMultipleImages, formatFileSize, needsCompression, type CompressionResult } from "@/lib/image-compression"
 import { CompressionProgress, CompressionResultSummary } from "@/components/ui/compression-progress"
+import { formatDateMatamoros, normalizeDate, cleanDateString } from "@/lib/date-utils"
 
 // Función para extraer direcciones múltiples de las observaciones
 const extraerDireccionesMultiples = (observaciones: string) => {
@@ -607,11 +608,18 @@ export default function SubirFotosEmbarquePage() {
       <div className="space-y-6">
         {/* Header */}
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Subir Fotos del Embarque</h1>
-            <p className="text-gray-600 mt-1">
-              Folio: <span className="font-semibold">{embarque.folio}</span>
-            </p>
+          <div className="flex items-center gap-4">
+            <img 
+              src="/monarca-logo.png" 
+              alt="Transportes Internacionales Monarca" 
+              className="h-12 w-auto"
+            />
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">Subir Fotos del Embarque</h1>
+              <p className="text-gray-600 mt-1">
+                Folio: <span className="font-semibold">{embarque.folio}</span>
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             {/* Botón superior derecho: activar ubicación o desactivar requisito */}
@@ -744,7 +752,7 @@ export default function SubirFotosEmbarquePage() {
                               <p className="text-sm text-gray-900 break-words">{r.direccion}</p>
                               {(r.fecha || r.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {r.fecha && <span>📅 {r.fecha}</span>}
+                                  {r.fecha && <span>📅 {cleanDateString(r.fecha)}</span>}
                                   {r.hora && <span>🕐 {r.hora}</span>}
                                 </div>
                               )}
@@ -776,7 +784,7 @@ export default function SubirFotosEmbarquePage() {
                               <p className="text-sm text-gray-900 break-words">{e.direccion}</p>
                               {(e.fecha || e.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {e.fecha && <span>📅 {e.fecha}</span>}
+                                  {e.fecha && <span>📅 {cleanDateString(e.fecha)}</span>}
                                   {e.hora && <span>🕐 {e.hora}</span>}
                                 </div>
                               )}

@@ -12,6 +12,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
     const embarqueId = link.embarque_id
     const { data: embarque } = await supabase.from('embarques').select(`*, cliente:clientes(nombre), operador:operadores(nombre,apellidos), camion:camiones(numero_economico,placas,marca), remolque:remolques(numero_economico,placas,marca)`).eq('id', embarqueId).single()
     const { data: fotos } = await supabase.from('fotos_embarques').select('*').eq('embarque_id', embarqueId)
+    const { data: documentos } = await supabase.from('documentos_embarques').select('*').eq('embarque_id', embarqueId).order('created_at', { ascending: false })
 
     // Obtener direcciones múltiples con prioridad en campos JSON
     let recolectas: any[] = []
@@ -55,7 +56,7 @@ export async function GET(req: Request, { params }: { params: { token: string } 
       }]
     }
 
-    return NextResponse.json({ embarque, fotos, recolectas, entregas })
+    return NextResponse.json({ embarque, fotos, documentos: documentos || [], recolectas, entregas })
   } catch (e: any) {
     console.error('GET /api/public-link/[token] error', e)
     return NextResponse.json({ error: e?.message || String(e) }, { status: 500 })

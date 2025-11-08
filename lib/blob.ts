@@ -78,6 +78,78 @@ export async function eliminarFotoEmbarque(pathname: string): Promise<void> {
   }
 }
 
+export async function eliminarTodosArchivosEmbarque(embarqueId: string, folioEmbarque: string): Promise<void> {
+  try {
+    console.log(`🗑️ [CLEANUP] Iniciando eliminación de archivos para embarque ${folioEmbarque} (ID: ${embarqueId})`)
+    
+    // Usar la variable de entorno disponible
+    const token = process.env.BLOB_READ_WRITE_TOKEN
+    if (!token) {
+      console.warn("Token de Blob no disponible, saltando eliminación de archivos")
+      return
+    }
+
+    // 1. Eliminar todas las imágenes del blob storage
+    try {
+      const { blobs } = await list({
+        prefix: `embarques/${folioEmbarque}/`,
+        token: token,
+      })
+
+      console.log(`🗑️ [CLEANUP] Encontrados ${blobs.length} archivos en blob storage para eliminar`)
+      
+      for (const blob of blobs) {
+        try {
+          await del(blob.pathname, { token: token })
+          console.log(`🗑️ [CLEANUP] Eliminado archivo: ${blob.pathname}`)
+        } catch (deleteError) {
+          console.warn(`⚠️ [CLEANUP] Error eliminando archivo ${blob.pathname}:`, deleteError)
+        }
+      }
+    } catch (listError) {
+      console.warn("⚠️ [CLEANUP] Error listando archivos del blob storage:", listError)
+    }
+
+    // 2. Eliminar registros de imágenes de la base de datos
+    try {
+      const { error: fotosError } = await supabase
+        .from('fotos_embarques')
+        .delete()
+        .eq('embarque_id', embarqueId)
+
+      if (fotosError) {
+        console.warn("⚠️ [CLEANUP] Error eliminando registros de fotos:", fotosError)
+      } else {
+        console.log("✅ [CLEANUP] Registros de fotos eliminados de la base de datos")
+      }
+    } catch (fotosDbError) {
+      console.warn("⚠️ [CLEANUP] Error eliminando fotos de la base de datos:", fotosDbError)
+    }
+
+    // 3. Eliminar registros de documentos de la base de datos
+    try {
+      const { error: docsError } = await supabase
+        .from('documentos_embarques')
+        .delete()
+        .eq('embarque_id', embarqueId)
+
+      if (docsError) {
+        console.warn("⚠️ [CLEANUP] Error eliminando registros de documentos:", docsError)
+      } else {
+        console.log("✅ [CLEANUP] Registros de documentos eliminados de la base de datos")
+      }
+    } catch (docsDbError) {
+      console.warn("⚠️ [CLEANUP] Error eliminando documentos de la base de datos:", docsDbError)
+    }
+
+    console.log(`✅ [CLEANUP] Limpieza completada para embarque ${folioEmbarque}`)
+    
+  } catch (error) {
+    console.error("🚨 [CLEANUP] Error general en limpieza de archivos:", error)
+    // No lanzar error para evitar que falle la cancelación del embarque
+  }
+}
+
 export async function listarFotosEmbarque(folioEmbarque: string) {
   try {
     const { blobs } = await list({

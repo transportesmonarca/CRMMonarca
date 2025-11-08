@@ -5,6 +5,7 @@ import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 
 import { supabase } from "@/lib/supabase";
 import { formatDateMatamoros, todayLocalISODate } from "@/lib/date-utils";
@@ -229,7 +230,9 @@ export default function CamionesPage() {
   const [selectedCamionKilometraje, setSelectedCamionKilometraje] =
     useState<Camion | null>(null);
   const [kilometrajeFormData, setKilometrajeFormData] = useState({
+    modo: "odometro" as "odometro" | "viaje",
     kilometraje_actual: "",
+    kilometros_viaje: "",
     tramo_recorrido: "",
     fecha_viaje: "",
     comentarios_viaje: "",
@@ -1393,36 +1396,74 @@ export default function CamionesPage() {
   "Vencimiento Seguro Mexicano",
   "Vencimiento Seguro Americano",
   "Último Mantenimiento",
+  "Total Mantenimientos",
+  "Recordatorios Activos",
+  "Total Documentos",
   "Comentarios"
     ];
 
     // Helper para escapar y forzar texto (prefijo tab) evitando interpretación numérica en Excel
     const esc = (v: any) => `"\t${(v ?? "").toString().replace(/"/g, '""')}"`;
 
-    // Consultar última fecha de mantenimiento real por camión
+    // Consultar información adicional por camión
     const ultimaFechaMantenimientoPorCamion: Record<string, string> = {};
+    const totalMantenimientosPorCamion: Record<string, number> = {};
+    const recordatoriosActivosPorCamion: Record<string, number> = {};
+    const documentosPorCamion: Record<string, number> = {};
+    
     try {
       if (registrosMantenimientoTableExists) {
         const camionIds = camiones.map(c => c.id);
         if (camionIds.length > 0) {
+          // Obtener últimas fechas de mantenimiento y total
           const { data: registros, error } = await supabase
             .from('registros_mantenimiento')
             .select('camion_id, fecha_mantenimiento')
             .in('camion_id', camionIds)
             .order('fecha_mantenimiento', { ascending: false });
           if (!error && registros) {
-            for (const reg of registros) {
-              if (!ultimaFechaMantenimientoPorCamion[reg.camion_id]) {
-                // Formatear fecha (YYYY-MM-DD o local)
-                const f = reg.fecha_mantenimiento;
-                ultimaFechaMantenimientoPorCamion[reg.camion_id] = f || '';
+            // Agrupar por camión
+            const registrosPorCamion: Record<string, any[]> = {};
+            registros.forEach(reg => {
+              registrosPorCamion[reg.camion_id] = registrosPorCamion[reg.camion_id] || [];
+              registrosPorCamion[reg.camion_id].push(reg);
+            });
+            
+            for (const camionId of Object.keys(registrosPorCamion)) {
+              const regs = registrosPorCamion[camionId];
+              totalMantenimientosPorCamion[camionId] = regs.length;
+              if (regs.length > 0) {
+                ultimaFechaMantenimientoPorCamion[camionId] = regs[0].fecha_mantenimiento || '';
               }
             }
+          }
+          
+          // Obtener recordatorios activos por camión
+          const { data: recordatorios } = await supabase
+            .from('recordatorios')
+            .select('camion_id')
+            .in('camion_id', camionIds)
+            .neq('estado', 'completado');
+          if (recordatorios) {
+            recordatorios.forEach(rec => {
+              recordatoriosActivosPorCamion[rec.camion_id] = (recordatoriosActivosPorCamion[rec.camion_id] || 0) + 1;
+            });
+          }
+          
+          // Obtener documentos por camión (si existe la tabla)
+          const { data: documentos } = await supabase
+            .from('documentos')
+            .select('camion_id')
+            .in('camion_id', camionIds);
+          if (documentos) {
+            documentos.forEach(doc => {
+              documentosPorCamion[doc.camion_id] = (documentosPorCamion[doc.camion_id] || 0) + 1;
+            });
           }
         }
       }
     } catch (e) {
-      console.error('Error consultando últimas fechas mantenimiento:', e);
+      console.error('Error consultando información adicional camiones:', e);
     }
 
     const csvContent = [
@@ -1440,6 +1481,10 @@ export default function CamionesPage() {
         const vencimientoUs = datos.fecha_vencimiento_seguro_americano || "";
   const ultimaMantRaw = ultimaFechaMantenimientoPorCamion[camion.id] || "";
   const ultimaMant = ultimaMantRaw ? new Date(ultimaMantRaw).toISOString().split('T')[0] : "";
+  const totalMant = totalMantenimientosPorCamion[camion.id] || 0;
+  const recordatoriosActivos = recordatoriosActivosPorCamion[camion.id] || 0;
+  const totalDocs = documentosPorCamion[camion.id] || 0;
+        
         return [
           esc(camion.numero_economico),
           esc(camion.marca || ""),
@@ -1457,6 +1502,9 @@ export default function CamionesPage() {
           esc(vencimientoMex),
           esc(vencimientoUs),
           esc(ultimaMant),
+          esc(totalMant.toString()),
+          esc(recordatoriosActivos.toString()),
+          esc(totalDocs.toString()),
           esc(datos.comentarios || ""),
         ].join(",");
       }),
@@ -1497,7 +1545,9 @@ export default function CamionesPage() {
 
   const limpiarFormularioKilometraje = () => {
     setKilometrajeFormData({
+      modo: "odometro",
       kilometraje_actual: "",
+      kilometros_viaje: "",
       tramo_recorrido: "",
       fecha_viaje: todayLocalISODate(),
       comentarios_viaje: "",
@@ -1573,7 +1623,6 @@ export default function CamionesPage() {
 
     if (
       !selectedCamionKilometraje ||
-      !kilometrajeFormData.kilometraje_actual ||
       !kilometrajeFormData.tramo_recorrido ||
       !kilometrajeFormData.fecha_viaje
     ) {
@@ -1582,22 +1631,34 @@ export default function CamionesPage() {
     }
 
     try {
-      const kilometrajeActual = Number.parseInt(
-        kilometrajeFormData.kilometraje_actual
-      );
-      const kilometrajeAgregado =
-        kilometrajeActual - selectedCamionKilometraje.kilometraje;
+      const { modo, kilometraje_actual, kilometros_viaje } = kilometrajeFormData;
+      const kmAnterior = Number(selectedCamionKilometraje.kilometraje || 0);
+      let kmActual = 0;
+      let kmAgregado = 0;
 
-      if (kilometrajeAgregado <= 0) {
-        toast({ title: "El kilometraje actual debe ser mayor al kilometraje anterior del camión", variant: "destructive" });
-        return;
+      if (modo === "viaje") {
+        const kmV = Number.parseInt(kilometros_viaje);
+        if (!kilometros_viaje || isNaN(kmV) || kmV <= 0) {
+          toast({ title: "Kilómetros del viaje inválidos", description: "Ingresa un número mayor a 0.", variant: "destructive" });
+          return;
+        }
+        kmAgregado = kmV;
+        kmActual = kmAnterior + kmV;
+      } else { // modo === "odometro"
+        const kmO = Number.parseInt(kilometraje_actual);
+        if (!kilometraje_actual || isNaN(kmO) || kmO <= kmAnterior) {
+          toast({ title: "Kilometraje del odómetro inválido", description: `Debe ser mayor a ${kmAnterior.toLocaleString('es-MX')} km.`, variant: "destructive" });
+          return;
+        }
+        kmActual = kmO;
+        kmAgregado = kmO - kmAnterior;
       }
 
       // Actualizar el kilometraje del camión
       const { error: errorCamion } = await supabase
         .from("camiones")
         .update({
-          kilometraje: kilometrajeActual,
+          kilometraje: kmActual,
           updated_at: new Date().toISOString(),
         })
         .eq("id", selectedCamionKilometraje.id);
@@ -1611,9 +1672,9 @@ export default function CamionesPage() {
       // Crear registro de viaje
       const registroViaje = {
         camion_id: selectedCamionKilometraje.id,
-        kilometraje_anterior: selectedCamionKilometraje.kilometraje,
-        kilometraje_agregado: kilometrajeAgregado,
-        kilometraje_nuevo: kilometrajeActual,
+        kilometraje_anterior: kmAnterior,
+        kilometraje_agregado: kmAgregado,
+        kilometraje_nuevo: kmActual,
         tramo_recorrido: kilometrajeFormData.tramo_recorrido,
         fecha_viaje: normalizeDate(kilometrajeFormData.fecha_viaje) || null,
         comentarios: kilometrajeFormData.comentarios_viaje,
@@ -1634,14 +1695,16 @@ export default function CamionesPage() {
       // Actualizar el camión seleccionado con el nuevo kilometraje
       setSelectedCamionKilometraje({
         ...selectedCamionKilometraje,
-        kilometraje: kilometrajeActual,
+        kilometraje: kmActual,
       });
-  // Reflejar inmediatamente en el detalle abierto
-  setCamionDetalle(prev => prev && prev.id === selectedCamionKilometraje.id ? { ...prev, kilometraje: kilometrajeActual } : prev);
+      // Reflejar inmediatamente en el detalle abierto
+      setCamionDetalle(prev => prev && prev.id === selectedCamionKilometraje.id ? { ...prev, kilometraje: kmActual } : prev);
 
       // Limpiar solo los campos del formulario, mantener el camión seleccionado
       setKilometrajeFormData({
+        modo: "odometro",
         kilometraje_actual: "",
+        kilometros_viaje: "",
         tramo_recorrido: "",
         fecha_viaje: new Date().toISOString().split("T")[0],
         comentarios_viaje: "",
@@ -1659,11 +1722,15 @@ export default function CamionesPage() {
         agregarAuditLog(
           "ACTUALIZAR",
           "Camiones",
-          `Actualizó kilometraje de camión ${selectedCamionKilometraje.numero_economico} a ${kilometrajeActual} (+${kilometrajeAgregado})`
+          `Actualizó kilometraje de camión ${selectedCamionKilometraje.numero_economico} a ${kmActual.toLocaleString('es-MX')} (+${kmAgregado.toLocaleString('es-MX')} km) - ${modo === 'odometro' ? 'Por odómetro' : 'Por km del viaje'}`
         );
       } catch {}
 
-  // Mensaje de éxito silencioso (se eliminó alert visible)
+      toast({ 
+        title: "Kilometraje actualizado", 
+        description: `Se agregaron ${kmAgregado.toLocaleString('es-MX')} km. Nuevo total: ${kmActual.toLocaleString('es-MX')} km.`
+      });
+
     } catch (error) {
       console.error("Error guardando kilometraje:", error);
       toast({ title: "Error al guardar kilometraje", variant: "destructive" });
@@ -1998,7 +2065,9 @@ export default function CamionesPage() {
   const seleccionarCamionKilometraje = (camion: Camion) => {
     setSelectedCamionKilometraje(camion);
     setKilometrajeFormData({
+      modo: "odometro",
       kilometraje_actual: "",
+      kilometros_viaje: "",
       tramo_recorrido: "",
       fecha_viaje: todayLocalISODate(),
       comentarios_viaje: "",
@@ -2700,6 +2769,11 @@ export default function CamionesPage() {
                             <div className="space-y-2">
                               <Label htmlFor="ultima_verificacion">
                                 Última Verificación
+                                {editingCamion && (
+                                  <span className="text-red-600 text-xs ml-2">
+                                    (No editable)
+                                  </span>
+                                )}
                               </Label>
                               <Input
                                 id="ultima_verificacion"
@@ -2711,11 +2785,18 @@ export default function CamionesPage() {
                                     ultima_verificacion: e.target.value,
                                   })
                                 }
+                                disabled={editingCamion !== null}
+                                className={editingCamion ? "bg-gray-100 cursor-not-allowed" : ""}
                               />
                             </div>
                             <div className="space-y-2">
                               <Label htmlFor="proxima_verificacion">
                                 Próxima Verificación
+                                {editingCamion && (
+                                  <span className="text-red-600 text-xs ml-2">
+                                    (No editable)
+                                  </span>
+                                )}
                               </Label>
                               <Input
                                 id="proxima_verificacion"
@@ -2727,6 +2808,8 @@ export default function CamionesPage() {
                                     frecuencia_verificacion: e.target.value,
                                   })
                                 }
+                                disabled={editingCamion !== null}
+                                className={editingCamion ? "bg-gray-100 cursor-not-allowed" : ""}
                               />
                             </div>
                           </div>
@@ -2756,6 +2839,11 @@ export default function CamionesPage() {
                             <div className="space-y-2">
                               <Label htmlFor="fecha_vencimiento_seguro_mexicano">
                                 Fecha de Vencimiento del Seguro Mexicano
+                                {editingCamion && (
+                                  <span className="text-red-600 text-xs ml-2">
+                                    (No editable)
+                                  </span>
+                                )}
                               </Label>
                               <Input
                                 id="fecha_vencimiento_seguro_mexicano"
@@ -2770,6 +2858,8 @@ export default function CamionesPage() {
                                       e.target.value,
                                   })
                                 }
+                                disabled={editingCamion !== null}
+                                className={editingCamion ? "bg-gray-100 cursor-not-allowed" : ""}
                               />
                             </div>
                           </div>
@@ -2799,6 +2889,11 @@ export default function CamionesPage() {
                             <div className="space-y-2">
                               <Label htmlFor="fecha_vencimiento_seguro_americano">
                                 Fecha de Vencimiento del Seguro Americano
+                                {editingCamion && (
+                                  <span className="text-red-600 text-xs ml-2">
+                                    (No editable)
+                                  </span>
+                                )}
                               </Label>
                               <Input
                                 id="fecha_vencimiento_seguro_americano"
@@ -2813,6 +2908,8 @@ export default function CamionesPage() {
                                       e.target.value,
                                   })
                                 }
+                                disabled={editingCamion !== null}
+                                className={editingCamion ? "bg-gray-100 cursor-not-allowed" : ""}
                               />
                             </div>
                           </div>
@@ -5081,25 +5178,73 @@ export default function CamionesPage() {
             </DialogHeader>
 
             <div className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="kilometraje_actual">
-                    Kilometraje Actual *
-                  </Label>
-                  <Input
-                    id="kilometraje_actual"
-                    type="number"
-                    min={selectedCamionKilometraje?.kilometraje || 0}
-                    value={kilometrajeFormData.kilometraje_actual}
-                    onChange={(e) =>
-                      setKilometrajeFormData({
-                        ...kilometrajeFormData,
-                        kilometraje_actual: e.target.value,
-                      })
-                    }
-                    placeholder="Nuevo kilometraje"
-                  />
+              {/* Selector de modo */}
+              <div className="space-y-2">
+                <Label>¿Cómo deseas capturar?</Label>
+                <div className="flex items-center gap-6 text-sm">
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="modo_km_odometro"
+                      checked={kilometrajeFormData.modo === 'odometro'}
+                      onCheckedChange={(checked) =>
+                        setKilometrajeFormData(v => ({
+                          ...v,
+                          modo: checked === true ? 'odometro' : 'viaje',
+                        }))
+                      }
+                    />
+                    <label htmlFor="modo_km_odometro" className="cursor-pointer select-none">
+                      Odómetro actual
+                    </label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Checkbox
+                      id="modo_km_viaje"
+                      checked={kilometrajeFormData.modo === 'viaje'}
+                      onCheckedChange={(checked) =>
+                        setKilometrajeFormData(v => ({
+                          ...v,
+                          modo: checked === true ? 'viaje' : 'odometro',
+                        }))
+                      }
+                    />
+                    <label htmlFor="modo_km_viaje" className="cursor-pointer select-none">
+                      Km del viaje
+                    </label>
+                  </div>
                 </div>
+              </div>
+
+              {/* Campo dinámico según el modo seleccionado */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {kilometrajeFormData.modo === 'odometro' ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="km_actual">Kilometraje (odómetro actual) *</Label>
+                    <Input
+                      id="km_actual"
+                      type="number"
+                      placeholder="Ej. 456000"
+                      min={Math.max(0, Number(selectedCamionKilometraje?.kilometraje || 0) + 1)}
+                      step={1}
+                      value={kilometrajeFormData.kilometraje_actual}
+                      onChange={(e) => setKilometrajeFormData(v => ({ ...v, kilometraje_actual: e.target.value }))}
+                    />
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <Label htmlFor="km_viaje">Kilómetros del viaje *</Label>
+                    <Input
+                      id="km_viaje"
+                      type="number"
+                      placeholder="Ej. 850"
+                      min={1}
+                      step={1}
+                      value={kilometrajeFormData.kilometros_viaje}
+                      onChange={(e) => setKilometrajeFormData(v => ({ ...v, kilometros_viaje: e.target.value }))}
+                    />
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <Label htmlFor="fecha_viaje">Fecha del Viaje *</Label>
                   <Input
@@ -5115,6 +5260,39 @@ export default function CamionesPage() {
                   />
                 </div>
               </div>
+
+              {/* Preview de kilómetros a sumar y nuevo total */}
+              {(() => {
+                const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
+                if (kilometrajeFormData.modo === 'odometro') {
+                  const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
+                  if (!Number.isNaN(kmO) && kmO > kmAnterior) {
+                    const sum = kmO - kmAnterior;
+                    return (
+                      <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                        Se sumarían +{sum.toLocaleString('es-MX')} km. Nuevo total: {kmO.toLocaleString('es-MX')} km
+                      </div>
+                    );
+                  } else if (!Number.isNaN(kmO)) {
+                    return (
+                      <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
+                        El odómetro debe ser mayor al actual ({kmAnterior.toLocaleString('es-MX')} km).
+                      </div>
+                    );
+                  }
+                } else {
+                  const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
+                  if (!Number.isNaN(kmV) && kmV > 0) {
+                    const total = kmAnterior + kmV;
+                    return (
+                      <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
+                        Se sumarían +{kmV.toLocaleString('es-MX')} km. Nuevo total: {total.toLocaleString('es-MX')} km
+                      </div>
+                    );
+                  }
+                }
+                return null;
+              })()}
 
               <div className="space-y-2">
                 <Label htmlFor="tramo_recorrido">Tramo Recorrido *</Label>
@@ -5146,21 +5324,6 @@ export default function CamionesPage() {
                   rows={3}
                 />
               </div>
-
-              {selectedCamionKilometraje &&
-                kilometrajeFormData.kilometraje_actual && (
-                  <div className="p-3 bg-blue-50 rounded-lg">
-                    <p className="text-sm text-blue-800">
-                      <strong>Kilometraje a agregar:</strong>{" "}
-                      {(
-                        Number.parseInt(
-                          kilometrajeFormData.kilometraje_actual
-                        ) - selectedCamionKilometraje.kilometraje
-                      ).toLocaleString()}{" "}
-                      km
-                    </p>
-                  </div>
-                )}
             </div>
 
             <div className="flex justify-end space-x-2 mt-6">
@@ -5172,7 +5335,19 @@ export default function CamionesPage() {
               </Button>
               <Button
                 onClick={guardarKilometraje}
-                className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+                className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={(() => {
+                  const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
+                  const tramoOk = Boolean((kilometrajeFormData.tramo_recorrido || '').trim());
+                  const fechaOk = Boolean(kilometrajeFormData.fecha_viaje);
+                  if (kilometrajeFormData.modo === 'odometro') {
+                    const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
+                    return !(tramoOk && fechaOk && !Number.isNaN(kmO) && kmO > kmAnterior);
+                  } else {
+                    const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
+                    return !(tramoOk && fechaOk && !Number.isNaN(kmV) && kmV > 0);
+                  }
+                })()}
               >
                 Guardar Kilometraje
               </Button>

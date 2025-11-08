@@ -49,12 +49,22 @@ import {
   AlertTriangle,
   Package,
   Eye,
+  Upload,
+  FileText,
+  Image,
+  UploadCloud,
+  X,
+  Download,
+  ExternalLink,
+  Shield,
+  Calendar,
 } from "lucide-react";
 import { useState, useEffect } from "react";
-import { supabase, type Remolque, type MarcaRemolque } from "@/lib/supabase";
+import { supabase, type Remolque, type MarcaRemolque, type DocumentoRemolque } from "@/lib/supabase";
 import { formatDateMatamoros, normalizeDate, todayLocalISODate } from '@/lib/date-utils';
 import { agregarAuditLog } from "@/lib/audit";
 import { toast } from "@/hooks/use-toast";
+import { subirDocumentoRemolque, eliminarDocumentoRemolque, listarDocumentosRemolque } from "@/lib/blob";
 
 export default function RemolquesPage() {
   // --- Estados y lógica para gestión de marcas de remolques ---
@@ -161,8 +171,13 @@ export default function RemolquesPage() {
   // Historial de mantenimiento remolques
   const [historialMantenimientoRemolque, setHistorialMantenimientoRemolque] = useState<any[]>([]);
   const [loadingHistorialMantenimientoRemolque, setLoadingHistorialMantenimientoRemolque] = useState(false);
+  const [loadingDocumentosRemolque, setLoadingDocumentosRemolque] = useState(false);
   const [currentPageMantenimientoRemolque, setCurrentPageMantenimientoRemolque] = useState(1);
   const [pageSizeMantenimientoRemolque, setPageSizeMantenimientoRemolque] = useState(5);
+
+  // Estados para el historial de actualizaciones
+  const [historialActualizaciones, setHistorialActualizaciones] = useState<any[]>([]);
+  const [loadingHistorialActualizaciones, setLoadingHistorialActualizaciones] = useState(false);
   const [mantenimientoRemolqueFormData, setMantenimientoRemolqueFormData] = useState({
     fecha_mantenimiento: "",
     tipo_mantenimiento: "preventivo",
@@ -171,6 +186,13 @@ export default function RemolquesPage() {
   });
   const [showFormMantenimientoRemolque, setShowFormMantenimientoRemolque] = useState(false);
   const [addingMantenimientoRemolque, setAddingMantenimientoRemolque] = useState(false);
+
+  // Estados para documentos de remolques
+  const [documentosRemolque, setDocumentosRemolque] = useState<DocumentoRemolque[]>([]);
+  const [documentosSeleccionados, setDocumentosSeleccionados] = useState<File[]>([]);
+  const [uploadingDocumentos, setUploadingDocumentos] = useState(false);
+  const [loadingDocumentos, setLoadingDocumentos] = useState(false);
+  const [imagenPreview, setImagenPreview] = useState<{ url: string; nombre: string } | null>(null);
 
   // Estado del formulario
   const [formData, setFormData] = useState({
@@ -241,6 +263,11 @@ export default function RemolquesPage() {
       vigenciaSeguro: randDateFuture(90, 365),
       estado: pick(estados),
       comentarios: pick(comentarios),
+    });
+
+    toast({
+      title: "Datos generados",
+      description: `Remolque ${numeroEconomico} creado con datos aleatorios`,
     });
   };
 
@@ -332,6 +359,9 @@ export default function RemolquesPage() {
       comentarios: "",
     });
     setEditingRemolque(null);
+    // Limpiar documentos seleccionados
+    setDocumentosSeleccionados([]);
+    setDocumentosRemolque([]);
   };
 
   
@@ -592,6 +622,28 @@ export default function RemolquesPage() {
         formData.vigenciaSeguro
       );
 
+      // Subir documentos si hay alguno seleccionado
+      try {
+        if (documentosSeleccionados.length > 0 && remolqueId) {
+          const resultados = await subirDocumentosRemolque(remolqueId);
+          if (resultados.length > 0) {
+            toast({ 
+              title: 'Documentos subidos', 
+              description: `Se subieron ${resultados.length} documento(s) correctamente`,
+              variant: 'default' 
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Error subiendo documentos:', error);
+        // No fallar el guardado del remolque por error en documentos
+        toast({ 
+          title: 'Remolque guardado, error en documentos', 
+          description: 'El remolque se guardó correctamente pero hubo un error subiendo los documentos',
+          variant: 'destructive' 
+        });
+      }
+
       // Mostrar éxito y actualizar estado local para reflejar cambios de inmediato
       toast({ title: editingRemolque ? 'Remolque actualizado' : 'Remolque guardado', variant: 'success' });
 
@@ -645,8 +697,10 @@ export default function RemolquesPage() {
     // Cargar historial para que la pestaña Mantenimiento muestre datos cuando el usuario abra el modal de edición
     try {
       await cargarHistorialMantenimientoRemolque(remolque.id);
+      // Cargar documentos del remolque
+      await cargarDocumentosRemolque(remolque.id);
     } catch (e) {
-      console.warn('No se pudo cargar historial al editar remolque', e);
+      console.warn('No se pudo cargar historial/documentos al editar remolque', e);
     }
     setShowForm(true);
   };
@@ -655,11 +709,22 @@ export default function RemolquesPage() {
   const [showDetallesRemolque, setShowDetallesRemolque] = useState(false);
   const [remolqueDetalle, setRemolqueDetalle] = useState<Remolque | null>(null);
   const [detalleTabRemolque, setDetalleTabRemolque] = useState('general');
+  
+  // Estados para actualización rápida de seguros e inspecciones
+  const [showModalRenovarRemolque, setShowModalRenovarRemolque] = useState(false);
+  const [tipoActualizacion, setTipoActualizacion] = useState<'inspeccion' | 'seguro' | null>(null);
+  const [nuevaFechaInspeccion, setNuevaFechaInspeccion] = useState('');
+  const [nuevaFechaSeguro, setNuevaFechaSeguro] = useState('');
+  const [comentarioActualizacion, setComentarioActualizacion] = useState('');
+  const [actualizandoRemolque, setActualizandoRemolque] = useState(false);
+  
   const verDetallesRemolque = (remolque: Remolque) => {
     setRemolqueDetalle(remolque);
     setShowDetallesRemolque(true);
     setDetalleTabRemolque('general');
     cargarHistorialMantenimientoRemolque(remolque.id);
+    cargarDocumentosRemolque(remolque.id);
+    cargarHistorialActualizaciones(remolque.id);
   };
 
   // Cargar historial de mantenimiento para un remolque
@@ -693,6 +758,30 @@ export default function RemolquesPage() {
     }
   }, [historialMantenimientoRemolque, currentPageMantenimientoRemolque, pageSizeMantenimientoRemolque]);
 
+  // Cargar historial de actualizaciones para un remolque
+  const cargarHistorialActualizaciones = async (remolqueId: string) => {
+    try {
+      setLoadingHistorialActualizaciones(true);
+      const { data, error } = await supabase
+        .from('historial_actualizaciones_remolques')
+        .select('*')
+        .eq('remolque_id', remolqueId)
+        .order('fecha_registro', { ascending: false });
+
+      if (error) {
+        console.log('Tabla historial_actualizaciones_remolques no existe o error:', error.message);
+        setHistorialActualizaciones([]);
+      } else {
+        setHistorialActualizaciones(data || []);
+      }
+    } catch (e) {
+      console.error('Error cargando historial de actualizaciones', e);
+      setHistorialActualizaciones([]);
+    } finally {
+      setLoadingHistorialActualizaciones(false);
+    }
+  };
+
   const resetFormMantenimientoRemolque = () => {
     setMantenimientoRemolqueFormData({
       fecha_mantenimiento: "",
@@ -700,6 +789,141 @@ export default function RemolquesPage() {
       detalles_mantenimiento: "",
       proximo_mantenimiento: "",
     });
+  };
+
+  // Funciones SIMPLES para actualización rápida
+  const cerrarModalActualizacion = () => {
+    setShowModalRenovarRemolque(false);
+    setTipoActualizacion(null);
+    setNuevaFechaInspeccion('');
+    setNuevaFechaSeguro('');
+    setComentarioActualizacion('');
+  };
+
+  const abrirModalActualizarInspeccion = () => {
+    if (!remolqueDetalle) {
+      toast({ title: "Error", description: "No hay remolque seleccionado", variant: "destructive" });
+      return;
+    }
+    setTipoActualizacion('inspeccion');
+    setNuevaFechaInspeccion('');
+    setShowModalRenovarRemolque(true);
+  };
+
+  const abrirModalActualizarSeguro = () => {
+    if (!remolqueDetalle) {
+      toast({ title: "Error", description: "No hay remolque seleccionado", variant: "destructive" });
+      return;
+    }
+    setTipoActualizacion('seguro');
+    setNuevaFechaSeguro('');
+    setShowModalRenovarRemolque(true);
+  };
+
+  const actualizarFechaRemolque = async () => {
+    if (!remolqueDetalle) return;
+
+    try {
+      setActualizandoRemolque(true);
+      const actualizaciones: any = {};
+      let mensaje = '';
+
+      // Debug logs para verificar fechas
+      console.log('🔍 DEBUG - Fechas antes de procesar:');
+      console.log('- remolqueDetalle.proxima_inspeccion:', remolqueDetalle.proxima_inspeccion);
+      console.log('- nuevaFechaInspeccion:', nuevaFechaInspeccion);
+      console.log('- nuevaFechaSeguro:', nuevaFechaSeguro);
+
+      if (tipoActualizacion === 'inspeccion' && nuevaFechaInspeccion) {
+        // La fecha actual de próxima inspección se convierte en última inspección
+        if (remolqueDetalle.proxima_inspeccion) {
+          // Normalizar la fecha actual para evitar problemas de zona horaria
+          actualizaciones.fecha_ultima_inspeccion = normalizeDate(remolqueDetalle.proxima_inspeccion);
+          console.log('🔍 DEBUG - fecha_ultima_inspeccion normalizada:', actualizaciones.fecha_ultima_inspeccion);
+        }
+        // La nueva fecha se convierte en próxima inspección (también normalizada)
+        actualizaciones.proxima_inspeccion = normalizeDate(nuevaFechaInspeccion);
+        console.log('🔍 DEBUG - proxima_inspeccion normalizada:', actualizaciones.proxima_inspeccion);
+        mensaje = `Próxima inspección actualizada a ${new Date(nuevaFechaInspeccion).toLocaleDateString('es-MX')}`;
+      } else if (tipoActualizacion === 'seguro' && nuevaFechaSeguro) {
+        actualizaciones.vigencia_seguro = normalizeDate(nuevaFechaSeguro);
+        mensaje = `Fecha de vigencia del seguro actualizada a ${new Date(nuevaFechaSeguro).toLocaleDateString('es-MX')}`;
+      }
+
+      if (Object.keys(actualizaciones).length === 0) {
+        toast({ title: "Error", description: "Debes ingresar una fecha válida", variant: "destructive" });
+        return;
+      }
+
+      // Actualizar en la base de datos
+      const { error } = await supabase
+        .from('remolques')
+        .update({
+          ...actualizaciones,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', remolqueDetalle.id);
+
+      if (error) {
+        console.error('Error actualizando remolque:', error);
+        toast({ title: "Error al actualizar", description: "No se pudo actualizar la fecha", variant: "destructive" });
+        return;
+      }
+
+      // Actualizar el estado local
+      setRemolqueDetalle(prev => prev ? { ...prev, ...actualizaciones } : null);
+
+      // Registrar en el historial de actualizaciones
+      try {
+        const fechaAnterior = tipoActualizacion === 'inspeccion' 
+          ? remolqueDetalle.proxima_inspeccion 
+          : remolqueDetalle.vigencia_seguro;
+        
+        const fechaNueva = tipoActualizacion === 'inspeccion' 
+          ? nuevaFechaInspeccion 
+          : nuevaFechaSeguro;
+
+        await supabase.from('historial_actualizaciones_remolques').insert({
+          remolque_id: remolqueDetalle.id,
+          numero_economico: remolqueDetalle.numero_economico,
+          tipo_actualizacion: tipoActualizacion,
+          fecha_anterior: fechaAnterior ? normalizeDate(fechaAnterior) : null,
+          fecha_nueva: normalizeDate(fechaNueva),
+          comentario: comentarioActualizacion || null,
+          fecha_registro: new Date().toISOString()
+        });
+      } catch (historialError) {
+        console.error('Error registrando en historial:', historialError);
+        // No fallar la operación por error en historial
+      }
+
+      // Recargar la lista de remolques
+      await cargarDatos();
+
+      // Registrar en audit log con comentario si existe
+      const detalles = comentarioActualizacion 
+        ? `${mensaje}. Comentario: ${comentarioActualizacion}`
+        : mensaje;
+
+      try {
+        agregarAuditLog(
+          "ACTUALIZAR",
+          "Remolques",
+          `Actualización rápida - ${detalles} para remolque ${remolqueDetalle.numero_economico}`
+        );
+      } catch {}
+
+      // Cerrar modal y limpiar estados
+      cerrarModalActualizacion();
+
+      toast({ title: "Actualización exitosa", description: mensaje });
+
+    } catch (error) {
+      console.error('Error en actualizarFechaRemolque:', error);
+      toast({ title: "Error", description: "Ocurrió un error al actualizar", variant: "destructive" });
+    } finally {
+      setActualizandoRemolque(false);
+    }
   };
 
   const agregarMantenimientoRemolque = async () => {
@@ -842,6 +1066,221 @@ export default function RemolquesPage() {
         `Descargó reporte del remolque ${remolque.numero_economico} (ID: ${remolque.id})`
       );
     } catch {}
+  };
+
+  // Funciones para manejo de documentos de remolques
+  const cargarDocumentosRemolque = async (remolqueId: string) => {
+    try {
+      console.log('🔍 Cargando documentos para remolque ID:', remolqueId);
+      setLoadingDocumentosRemolque(true);
+      const documentos = await listarDocumentosRemolque(remolqueId);
+      console.log('📄 Documentos cargados:', documentos);
+      console.log('📊 Cantidad de documentos:', documentos.length);
+      setDocumentosRemolque(documentos);
+    } catch (error) {
+      console.error('❌ Error cargando documentos del remolque:', error);
+      toast({ 
+        title: 'Error cargando documentos', 
+        description: 'No se pudieron cargar los documentos del remolque',
+        variant: 'destructive' 
+      });
+    } finally {
+      setLoadingDocumentosRemolque(false);
+    }
+  };
+
+  const handleDocumentosSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(event.target.files || []);
+    
+    // Verificar límite de 8 documentos
+    const totalDocumentos = documentosRemolque.length + documentosSeleccionados.length + files.length;
+    if (totalDocumentos > 8) {
+      toast({ 
+        title: 'Límite excedido', 
+        description: `Solo puedes tener máximo 8 documentos. Actualmente tienes ${documentosRemolque.length + documentosSeleccionados.length} y estás agregando ${files.length}.`,
+        variant: 'destructive' 
+      });
+      return;
+    }
+
+    // Validar cada archivo
+    for (const file of files) {
+      if (file.size > 10 * 1024 * 1024) {
+        toast({ 
+          title: 'Archivo muy grande', 
+          description: `El archivo ${file.name} es muy grande. Tamaño máximo: 10MB`,
+          variant: 'destructive' 
+        });
+        return;
+      }
+
+      const tiposPermitidos = [
+        "image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/webp", "application/pdf"
+      ];
+      
+      if (!tiposPermitidos.includes(file.type)) {
+        toast({ 
+          title: 'Tipo no permitido', 
+          description: `El archivo ${file.name} no es un tipo permitido. Solo se permiten imágenes y PDFs`,
+          variant: 'destructive' 
+        });
+        return;
+      }
+    }
+
+    setDocumentosSeleccionados(prev => [...prev, ...files]);
+  };
+
+  const eliminarDocumentoSeleccionado = (index: number) => {
+    setDocumentosSeleccionados(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const subirDocumentosRemolque = async (remolqueId: string) => {
+    if (documentosSeleccionados.length === 0) return [];
+    
+    try {
+      setUploadingDocumentos(true);
+      const resultados: string[] = [];
+
+      // Verificar que tenemos un remolqueId válido
+      if (!remolqueId || remolqueId.trim() === '') {
+        throw new Error('ID del remolque no válido');
+      }
+
+      for (const file of documentosSeleccionados) {
+        try {
+          const { url, pathname } = await subirDocumentoRemolque(
+            remolqueId, 
+            file, 
+            'documento_general'
+          );
+
+          // Guardar en la base de datos
+          const documentData = {
+            remolque_id: remolqueId,
+            tipo_documento: 'documento_general',
+            nombre_archivo: file.name,
+            url_blob: url,
+            pathname: pathname,
+            tamano_bytes: file.size,
+            tipo_mime: file.type,
+            subido_por: 'Usuario',
+            activo: true
+          };
+
+          console.log('Insertando documento con remolqueId:', remolqueId);
+          console.log('Datos del documento:', documentData);
+
+          const { data, error } = await supabase.from('documentos_remolques').insert(documentData).select();
+
+          if (error) {
+            console.error('Error detallado guardando documento en BD:', {
+              error,
+              errorMessage: error.message,
+              errorCode: error.code,
+              errorDetails: error.details,
+              errorHint: error.hint,
+              remolqueId,
+              fileName: file.name
+            });
+            
+            // Verificar si es un error de tabla que no existe
+            if (error.code === '42P01' || error.message?.includes('relation') || error.message?.includes('does not exist')) {
+              throw new Error(`La tabla documentos_remolques no existe en la base de datos. Ejecuta el script de creación primero.`);
+            }
+            
+            throw new Error(`Error guardando ${file.name}: ${error.message || 'Error desconocido'}`);
+          }
+
+          console.log('Documento guardado exitosamente:', data);
+
+          resultados.push(file.name);
+        } catch (error) {
+          console.error(`Error subiendo ${file.name}:`, error);
+          throw error;
+        }
+      }
+
+      // Limpiar archivos seleccionados y recargar documentos
+      setDocumentosSeleccionados([]);
+      await cargarDocumentosRemolque(remolqueId);
+      
+      return resultados;
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      if (/almacenamiento|quota|insufficient|507/i.test(msg)) {
+        toast({ 
+          title: 'Almacenamiento lleno', 
+          description: 'El almacenamiento está lleno. Contacta al administrador.',
+          variant: 'destructive' 
+        });
+      } else {
+        toast({ 
+          title: 'Error subiendo documentos', 
+          description: msg,
+          variant: 'destructive' 
+        });
+      }
+      throw error;
+    } finally {
+      setUploadingDocumentos(false);
+    }
+  };
+
+  const eliminarDocumentoRemolqueBD = async (documento: DocumentoRemolque) => {
+    try {
+      await eliminarDocumentoRemolque(documento.id);
+      await cargarDocumentosRemolque(documento.remolque_id);
+      toast({ 
+        title: 'Documento eliminado', 
+        description: 'El documento se eliminó correctamente',
+        variant: 'default' 
+      });
+    } catch (error) {
+      console.error('Error eliminando documento:', error);
+      toast({ 
+        title: 'Error eliminando documento', 
+        description: 'No se pudo eliminar el documento',
+        variant: 'destructive' 
+      });
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  const getFileIcon = (tipoMime?: string) => {
+    if (!tipoMime) return <FileText className="w-12 h-12" />;
+    
+    if (tipoMime.includes('pdf')) {
+      return (
+        <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+    
+    if (tipoMime.startsWith('image/')) {
+      return (
+        <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 20 20">
+          <path fillRule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clipRule="evenodd" />
+        </svg>
+      );
+    }
+    
+    return <FileText className="w-12 h-12" />;
+  };
+
+  const getFileTypeColor = (tipoMime?: string) => {
+    if (!tipoMime) return 'text-gray-400';
+    if (tipoMime.includes('pdf')) return 'text-red-500';
+    if (tipoMime.startsWith('image/')) return 'text-blue-500';
+    return 'text-gray-400';
   };
 
   const eliminarRemolque = async (id: string) => {
@@ -1319,17 +1758,32 @@ export default function RemolquesPage() {
                         Completa la información del remolque
                       </DialogDescription>
                     </div>
+                    {!editingRemolque && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={generarDatosAleatorios}
+                        className="flex items-center gap-2 text-green-600 border-green-200 hover:bg-green-50"
+                      >
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                        </svg>
+                        Auto-completar
+                      </Button>
+                    )}
                   </div>
                 </DialogHeader>
                 
 
                 <Tabs defaultValue="general" className="w-full">
-                  <TabsList className={`grid w-full ${editingRemolque ? "grid-cols-5" : "grid-cols-4"}`}>
+                  <TabsList className={`grid w-full ${editingRemolque ? "grid-cols-6" : "grid-cols-5"}`}>
                     <TabsTrigger value="general">
                       Información General
                     </TabsTrigger>
                     <TabsTrigger value="info-tecnica">Info Técnica</TabsTrigger>
                     <TabsTrigger value="seguros">Inspecciones & Seguros</TabsTrigger>
+                    <TabsTrigger value="documentos">Documentos</TabsTrigger>
                     {editingRemolque && (
                       <TabsTrigger value="mantenimiento">Mantenimiento</TabsTrigger>
                     )}
@@ -1541,6 +1995,8 @@ export default function RemolquesPage() {
                                 fechaUltimaInspeccion: e.target.value,
                               })
                             }
+                            disabled={!!editingRemolque}
+                            className={!!editingRemolque ? "bg-gray-100 cursor-not-allowed" : ""}
                           />
                         </div>
                         <div className="space-y-2">
@@ -1557,6 +2013,8 @@ export default function RemolquesPage() {
                                 proximaInspeccion: e.target.value,
                               })
                             }
+                            disabled={!!editingRemolque}
+                            className={!!editingRemolque ? "bg-gray-100 cursor-not-allowed" : ""}
                           />
                         </div>
                         <div className="space-y-2">
@@ -1589,8 +2047,210 @@ export default function RemolquesPage() {
                                 vigenciaSeguro: e.target.value,
                               })
                             }
+                            disabled={!!editingRemolque}
+                            className={!!editingRemolque ? "bg-gray-100 cursor-not-allowed" : ""}
                           />
                         </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="documentos">
+                    <div className="py-4 space-y-4">
+                      <h3 className="text-lg font-medium mb-4">Documentos del Remolque</h3>
+                      <p className="text-sm text-gray-600 mb-4">
+                        Sube hasta 8 documentos relacionados con el remolque (pólizas, verificaciones, manuales, etc.). 
+                        Formatos permitidos: imágenes y PDFs. Tamaño máximo: 10MB por archivo.
+                      </p>
+                      
+                      {/* Área de carga de documentos */}
+                      <div className="space-y-4">
+                        <div
+                          onDragOver={(e) => e.preventDefault()}
+                          onDrop={async (e) => {
+                            e.preventDefault();
+                            const files = Array.from(e.dataTransfer?.files || []);
+                            
+                            // Validar archivos directamente
+                            const totalDocumentos = documentosRemolque.length + documentosSeleccionados.length + files.length;
+                            if (totalDocumentos > 8) {
+                              toast({ 
+                                title: 'Límite excedido', 
+                                description: `Solo puedes tener máximo 8 documentos. Actualmente tienes ${documentosRemolque.length + documentosSeleccionados.length} y estás agregando ${files.length}.`,
+                                variant: 'destructive' 
+                              });
+                              return;
+                            }
+
+                            // Validar cada archivo
+                            for (const file of files) {
+                              if (file.size > 10 * 1024 * 1024) {
+                                toast({ 
+                                  title: 'Archivo muy grande', 
+                                  description: `El archivo ${file.name} es muy grande. Tamaño máximo: 10MB`,
+                                  variant: 'destructive' 
+                                });
+                                return;
+                              }
+
+                              const tiposPermitidos = [
+                                "image/jpeg", "image/jpg", "image/png", "image/gif", "image/bmp", "image/webp", "application/pdf"
+                              ];
+                              
+                              if (!tiposPermitidos.includes(file.type)) {
+                                toast({ 
+                                  title: 'Tipo no permitido', 
+                                  description: `El archivo ${file.name} no es un tipo permitido. Solo se permiten imágenes y PDFs`,
+                                  variant: 'destructive' 
+                                });
+                                return;
+                              }
+                            }
+
+                            setDocumentosSeleccionados(prev => [...prev, ...files]);
+                          }}
+                          className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-gray-400 transition-colors cursor-pointer"
+                          onClick={() => document.getElementById('documentos-input')?.click()}
+                        >
+                          <UploadCloud className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                          <p className="text-sm text-gray-600">
+                            Arrastra documentos aquí o haz clic para seleccionar
+                          </p>
+                          <p className="text-xs text-gray-500 mt-1">
+                            Máximo 8 archivos • Imágenes y PDFs • 10MB por archivo
+                          </p>
+                        </div>
+
+                        <input
+                          id="documentos-input"
+                          type="file"
+                          multiple
+                          accept="image/*,application/pdf"
+                          onChange={handleDocumentosSelect}
+                          className="hidden"
+                        />
+
+                        {/* Archivos seleccionados (pendientes de subir) */}
+                        {documentosSeleccionados.length > 0 && (
+                          <div className="space-y-2">
+                            <h4 className="font-medium text-sm text-gray-700">Archivos seleccionados ({documentosSeleccionados.length}):</h4>
+                            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+                              {documentosSeleccionados.map((file, index) => (
+                                <div key={index} className="relative border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
+                                  {/* Vista en miniatura */}
+                                  <div className="relative h-24 bg-gray-50 flex items-center justify-center">
+                                    {file.type.startsWith('image/') ? (
+                                      <img 
+                                        src={URL.createObjectURL(file)}
+                                        alt={file.name}
+                                        className="w-full h-full object-cover"
+                                        onLoad={(e) => {
+                                          // Liberar memoria después de cargar la imagen
+                                          setTimeout(() => {
+                                            try {
+                                              URL.revokeObjectURL((e.target as HTMLImageElement).src);
+                                            } catch {}
+                                          }, 1000);
+                                        }}
+                                      />
+                                    ) : (
+                                      <div className="flex flex-col items-center">
+                                        <FileText className="h-8 w-8 text-red-600" />
+                                        <span className="text-xs text-gray-500 mt-1">PDF</span>
+                                      </div>
+                                    )}
+                                    
+                                    {/* Botón de eliminar en la esquina */}
+                                    <Button
+                                      size="sm"
+                                      variant="destructive"
+                                      onClick={() => eliminarDocumentoSeleccionado(index)}
+                                      className="absolute top-1 right-1 h-6 w-6 p-0 rounded-full"
+                                    >
+                                      <X className="h-3 w-3" />
+                                    </Button>
+                                  </div>
+                                  
+                                  {/* Información del archivo */}
+                                  <div className="p-2">
+                                    <p className="text-xs font-medium truncate" title={file.name}>{file.name}</p>
+                                    <p className="text-xs text-gray-500">{formatFileSize(file.size)}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Documentos ya subidos */}
+                        {editingRemolque && (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <h4 className="font-medium text-sm text-gray-700">Documentos subidos ({documentosRemolque.length}/8):</h4>
+                              {loadingDocumentos && (
+                                <div className="flex items-center gap-2 text-sm text-gray-500">
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                                  Cargando...
+                                </div>
+                              )}
+                            </div>
+                            
+                            {documentosRemolque.length === 0 ? (
+                              <div className="text-center py-8 text-gray-500 border-2 border-dashed border-gray-200 rounded-lg">
+                                <FileText className="h-12 w-12 mx-auto mb-2 text-gray-300" />
+                                <p>No hay documentos subidos</p>
+                                <p className="text-xs mt-1">Los documentos aparecerán aquí después de guardar el remolque</p>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-1 gap-2 max-h-60 overflow-y-auto">
+                                {documentosRemolque.map((doc) => (
+                                  <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded">
+                                    <div className="flex items-center gap-3">
+                                      {doc.tipo_mime?.startsWith('image/') ? (
+                                        <Image className="h-5 w-5 text-green-600" />
+                                      ) : (
+                                        <FileText className="h-5 w-5 text-red-600" />
+                                      )}
+                                      <div>
+                                        <p className="text-sm font-medium truncate max-w-xs">{doc.nombre_archivo}</p>
+                                        <p className="text-xs text-gray-500">
+                                          {doc.tamano_bytes && formatFileSize(doc.tamano_bytes)} • 
+                                          {new Date(doc.created_at).toLocaleDateString('es-MX')}
+                                        </p>
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => window.open(doc.url_blob, '_blank')}
+                                        className="text-blue-600 hover:text-blue-700"
+                                      >
+                                        <Eye className="h-4 w-4" />
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="ghost"
+                                        onClick={() => eliminarDocumentoRemolqueBD(doc)}
+                                        className="text-red-600 hover:text-red-700"
+                                      >
+                                        <Trash2 className="h-4 w-4" />
+                                      </Button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Estado de carga */}
+                        {uploadingDocumentos && (
+                          <div className="flex items-center justify-center gap-2 p-4 bg-blue-50 border border-blue-200 rounded">
+                            <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-blue-600"></div>
+                            <span className="text-sm text-blue-700">Subiendo documentos...</span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </TabsContent>
@@ -2183,7 +2843,15 @@ export default function RemolquesPage() {
         </div>
 
         {/* Modal Detalles Remolque */}
-        <Dialog open={showDetallesRemolque} onOpenChange={(o)=>{setShowDetallesRemolque(o); if(!o){setRemolqueDetalle(null);} }}>
+        <Dialog 
+          open={showDetallesRemolque} 
+          onOpenChange={(o)=>{
+            // No cerrar si el modal de actualización está abierto
+            if (showModalRenovarRemolque) return;
+            setShowDetallesRemolque(o); 
+            if(!o){setRemolqueDetalle(null);} 
+          }}
+        >
           <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle className="text-2xl font-semibold">
@@ -2195,10 +2863,11 @@ export default function RemolquesPage() {
               <div className="space-y-4">
 
                 <Tabs value={detalleTabRemolque} onValueChange={setDetalleTabRemolque} className="w-full">
-                  <TabsList className="grid w-full grid-cols-5">
+                  <TabsList className="grid w-full grid-cols-6">
                     <TabsTrigger value="general">General</TabsTrigger>
                     <TabsTrigger value="info-tecnica">Info Técnica</TabsTrigger>
                     <TabsTrigger value="seguros">Inspecciones & Seguros</TabsTrigger>
+                    <TabsTrigger value="documentos">Documentos</TabsTrigger>
                     <TabsTrigger value="mantenimiento">Mantenimiento</TabsTrigger>
                     <TabsTrigger value="comentarios">Comentarios</TabsTrigger>
                   </TabsList>
@@ -2229,14 +2898,218 @@ export default function RemolquesPage() {
                   </TabsContent>
 
                   <TabsContent value="seguros">
-                    <div className="py-4 space-y-4">
-                      <h3 className="text-sm font-semibold text-gray-900">Inspecciones & Seguros</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
-                        <div><span className="font-medium text-gray-600">Última Inspección:</span><p>{remolqueDetalle.fecha_ultima_inspeccion ? formatDateMatamoros(remolqueDetalle.fecha_ultima_inspeccion) : '—'}</p></div>
-                        <div><span className="font-medium text-gray-600">Próxima Inspección:</span><p>{remolqueDetalle.proxima_inspeccion ? formatDateMatamoros(remolqueDetalle.proxima_inspeccion) : '—'}</p></div>
-                        <div><span className="font-medium text-gray-600">Póliza Seguro:</span><p>{remolqueDetalle.poliza_seguro || '—'}</p></div>
-                        <div><span className="font-medium text-gray-600">Vigencia Seguro:</span><p>{remolqueDetalle.vigencia_seguro ? formatDateMatamoros(remolqueDetalle.vigencia_seguro) : '—'}</p></div>
+                    <div className="py-4 space-y-6">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-gray-900">Inspecciones & Seguros</h3>
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={abrirModalActualizarInspeccion}
+                          >
+                            <Calendar className="h-4 w-4 mr-1" />
+                            Actualizar Inspección
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={abrirModalActualizarSeguro}
+                          >
+                            <Shield className="h-4 w-4 mr-1" />
+                            Actualizar Seguro
+                          </Button>
+                        </div>
                       </div>
+                      
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Sección de Inspecciones */}
+                        <div className="p-4 rounded-lg border border-gray-200">
+                          <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                            <Calendar className="h-4 w-4 mr-2" />
+                            Inspecciones
+                          </h4>
+                          <div className="space-y-3 text-sm">
+                            <div>
+                              <span className="font-medium text-gray-700">Última Inspección:</span>
+                              <p className="text-gray-900">
+                                {remolqueDetalle.fecha_ultima_inspeccion ? formatDateMatamoros(remolqueDetalle.fecha_ultima_inspeccion) : '—'}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Próxima Inspección:</span>
+                              <p className={`font-medium ${
+                                remolqueDetalle.proxima_inspeccion 
+                                  ? new Date(remolqueDetalle.proxima_inspeccion) < new Date() 
+                                    ? 'text-red-600' 
+                                    : new Date(remolqueDetalle.proxima_inspeccion) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                                      ? 'text-orange-600'
+                                      : 'text-green-600'
+                                  : 'text-gray-500'
+                              }`}>
+                                {remolqueDetalle.proxima_inspeccion ? formatDateMatamoros(remolqueDetalle.proxima_inspeccion) : '—'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Sección de Seguros */}
+                        <div className="p-4 rounded-lg border border-gray-200">
+                          <h4 className="font-semibold text-gray-900 mb-3 flex items-center">
+                            <Shield className="h-4 w-4 mr-2" />
+                            Seguro
+                          </h4>
+                          <div className="space-y-3 text-sm">
+                            <div>
+                              <span className="font-medium text-gray-700">Póliza de Seguro:</span>
+                              <p className="text-gray-900">{remolqueDetalle.poliza_seguro || '—'}</p>
+                            </div>
+                            <div>
+                              <span className="font-medium text-gray-700">Vigencia del Seguro:</span>
+                              <p className={`font-medium ${
+                                remolqueDetalle.vigencia_seguro 
+                                  ? new Date(remolqueDetalle.vigencia_seguro) < new Date() 
+                                    ? 'text-red-600' 
+                                    : new Date(remolqueDetalle.vigencia_seguro) < new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                                      ? 'text-orange-600'
+                                      : 'text-green-600'
+                                  : 'text-gray-500'
+                              }`}>
+                                {remolqueDetalle.vigencia_seguro ? formatDateMatamoros(remolqueDetalle.vigencia_seguro) : '—'}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </TabsContent>
+
+                  <TabsContent value="documentos">
+                    <div className="py-4 space-y-4">
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-semibold text-gray-900">Documentos del Remolque</h3>
+                        <span className="text-xs text-gray-500">({documentosRemolque.length} documentos)</span>
+                      </div>
+                      
+                      {loadingDocumentosRemolque ? (
+                        <div className="text-center py-8">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#16A34A] mx-auto"></div>
+                          <p className="text-sm text-gray-600 mt-2">Cargando documentos...</p>
+                        </div>
+                      ) : (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                          {/* Debug info */}
+                          {process.env.NODE_ENV === 'development' && (
+                            <div className="col-span-full text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                              Debug: {documentosRemolque.length} documentos • Remolque ID: {remolqueDetalle?.id}
+                            </div>
+                          )}
+                          
+                          {documentosRemolque.length === 0 ? (
+                            <div className="col-span-full text-center py-8">
+                              <FileText className="mx-auto h-12 w-12 text-gray-400" />
+                              <p className="text-sm text-gray-600 mt-2">No hay documentos subidos</p>
+                              <p className="text-xs text-gray-500 mt-1">
+                                {remolqueDetalle?.id ? `Buscando en remolque: ${remolqueDetalle.id}` : 'Sin ID de remolque'}
+                              </p>
+                            </div>
+                          ) : (
+                            documentosRemolque.map((doc) => (
+                              <div key={doc.id} className="border border-gray-200 rounded-lg overflow-hidden bg-white shadow-sm hover:shadow-md transition-shadow">
+                                {/* Preview del archivo */}
+                                <div className="relative h-32 bg-gray-50 flex items-center justify-center">
+                                  {doc.tipo_mime?.startsWith('image/') ? (
+                                    <img 
+                                      src={doc.url_blob} 
+                                      alt={doc.nombre_archivo}
+                                      className="w-full h-full object-cover cursor-pointer hover:opacity-90 transition-opacity"
+                                      onClick={() => setImagenPreview({ url: doc.url_blob, nombre: doc.nombre_archivo })}
+                                      onError={(e) => {
+                                        // Si falla la carga de la imagen, mostrar icono
+                                        (e.target as HTMLImageElement).style.display = 'none';
+                                        const parent = (e.target as HTMLImageElement).parentElement;
+                                        if (parent) {
+                                          parent.innerHTML = `
+                                            <div class="flex flex-col items-center justify-center h-full text-gray-400">
+                                              <svg class="w-8 h-8 mb-2" fill="currentColor" viewBox="0 0 20 20">
+                                                <path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clip-rule="evenodd"></path>
+                                              </svg>
+                                              <span class="text-xs">Error de imagen</span>
+                                            </div>
+                                          `;
+                                        }
+                                      }}
+                                    />
+                                  ) : doc.tipo_mime?.includes('pdf') ? (
+                                    <div className={`flex flex-col items-center justify-center h-full ${getFileTypeColor(doc.tipo_mime)} cursor-pointer hover:opacity-80 transition-all`}
+                                         onClick={() => window.open(doc.url_blob, '_blank')}>
+                                      {getFileIcon(doc.tipo_mime)}
+                                      <span className="text-xs font-medium mt-2">PDF</span>
+                                    </div>
+                                  ) : (
+                                    <div className={`flex flex-col items-center justify-center h-full ${getFileTypeColor(doc.tipo_mime)} cursor-pointer hover:opacity-80 transition-all`}
+                                         onClick={() => window.open(doc.url_blob, '_blank')}>
+                                      {getFileIcon(doc.tipo_mime)}
+                                      <span className="text-xs mt-2">
+                                        {doc.tipo_mime?.split('/')[1]?.toUpperCase() || 'Archivo'}
+                                      </span>
+                                    </div>
+                                  )}
+                                  
+                                  {/* Overlay con tipo de archivo */}
+                                  <div className="absolute top-2 right-2 bg-black bg-opacity-70 text-white text-xs px-2 py-0.5 rounded-md backdrop-blur-sm">
+                                    {doc.tipo_mime?.includes('pdf') ? 'PDF' : 
+                                     doc.tipo_mime?.startsWith('image/') ? 
+                                       doc.tipo_mime.split('/')[1]?.toUpperCase() || 'IMG' : 
+                                       'FILE'}
+                                  </div>
+                                  
+                                  {/* Indicador de click para imágenes */}
+                                  {doc.tipo_mime?.startsWith('image/') && (
+                                    <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-10 transition-all flex items-center justify-center">
+                                      <div className="bg-white bg-opacity-90 text-gray-800 text-xs px-2 py-1 rounded-full opacity-0 hover:opacity-100 transition-opacity">
+                                        Click para ampliar
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Información del archivo */}
+                                <div className="p-3">
+                                  <div className="flex items-start justify-between mb-2">
+                                    <div className="flex-1 min-w-0">
+                                      <p className="text-sm font-medium text-gray-900 truncate" title={doc.nombre_archivo}>
+                                        {doc.nombre_archivo}
+                                      </p>
+                                      <p className="text-xs text-gray-500 mt-1">
+                                        {formatFileSize(doc.tamano_bytes || 0)} • {new Date(doc.created_at).toLocaleDateString()}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  
+                                  <div className="flex items-center gap-2 mt-3">
+                                  <a
+                                    href={doc.url_blob}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="flex-1 inline-flex items-center justify-center px-3 py-1.5 text-xs font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+                                  >
+                                    <ExternalLink className="w-3 h-3 mr-1" />
+                                    Ver
+                                  </a>
+                                  <button
+                                    onClick={() => eliminarDocumentoRemolqueBD(doc)}
+                                    className="px-3 py-1.5 text-xs font-medium text-red-600 bg-red-50 border border-red-200 rounded-md hover:bg-red-100 transition-colors"
+                                    title="Eliminar documento"
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </button>
+                                  </div>
+                                </div>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      )}
                     </div>
                   </TabsContent>
 
@@ -2375,6 +3248,50 @@ export default function RemolquesPage() {
           </DialogContent>
         </Dialog>
 
+        {/* Modal de imagen completa */}
+        <Dialog open={!!imagenPreview} onOpenChange={() => setImagenPreview(null)}>
+          <DialogContent className="max-w-4xl w-full max-h-[90vh]">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Image className="w-5 h-5" />
+                {imagenPreview?.nombre}
+              </DialogTitle>
+            </DialogHeader>
+            
+            {imagenPreview && (
+              <div className="flex flex-col items-center justify-center p-4">
+                <div className="relative max-w-full max-h-[70vh] overflow-hidden rounded-lg border">
+                  <img
+                    src={imagenPreview.url}
+                    alt={imagenPreview.nombre}
+                    className="max-w-full max-h-full object-contain"
+                    style={{ maxHeight: '70vh' }}
+                  />
+                </div>
+                
+                <div className="flex items-center gap-4 mt-4">
+                  <a
+                    href={imagenPreview.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-600 bg-blue-50 border border-blue-200 rounded-md hover:bg-blue-100 transition-colors"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Abrir en nueva ventana
+                  </a>
+                  <button
+                    onClick={() => setImagenPreview(null)}
+                    className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-600 bg-gray-50 border border-gray-200 rounded-md hover:bg-gray-100 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                    Cerrar
+                  </button>
+                </div>
+              </div>
+            )}
+          </DialogContent>
+        </Dialog>
+
         {/* Controles de paginación inferior */}
         {remolquesFiltrados.length > 0 && (
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -2444,6 +3361,103 @@ export default function RemolquesPage() {
           </Card>
         )}
       </div>
+
+      {/* Modal de actualización rápida - RECONSTRUIDO SIMPLE */}
+      {showModalRenovarRemolque && (
+        <div 
+          className="fixed inset-0 flex items-center justify-center p-4"
+          style={{ zIndex: 9990, pointerEvents: 'auto' }}
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div 
+            className="absolute inset-0 bg-black/50" 
+            onClick={cerrarModalActualizacion}
+            style={{ pointerEvents: 'auto' }}
+          />
+          <div 
+            className="relative bg-white rounded-lg shadow-xl w-full max-w-lg"
+            style={{ zIndex: 9991, pointerEvents: 'auto' }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b">
+              <h3 className="text-lg font-semibold">
+                {tipoActualizacion === 'seguro' ? 'Actualizar Seguro' : 'Actualizar Inspección'}
+              </h3>
+              <button 
+                onClick={cerrarModalActualizacion} 
+                className="text-gray-500 hover:text-gray-700"
+                style={{ pointerEvents: 'auto' }}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body */}
+            <div className="p-4 space-y-4">
+              {/* Fecha actual */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {tipoActualizacion === 'seguro' ? 'Vigencia actual del seguro' : 'Última inspección'}
+                </label>
+                <div className="w-full px-3 py-2 border rounded-md bg-gray-50 text-sm text-gray-800">
+                  {tipoActualizacion === 'seguro'
+                    ? (remolqueDetalle?.vigencia_seguro
+                        ? formatDateMatamoros(remolqueDetalle.vigencia_seguro)
+                        : 'Sin fecha registrada')
+                    : (remolqueDetalle?.proxima_inspeccion
+                        ? formatDateMatamoros(remolqueDetalle.proxima_inspeccion)
+                        : 'Sin fecha registrada')}
+                </div>
+              </div>
+
+              {/* Nueva fecha */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {tipoActualizacion === 'seguro' ? 'Nueva vigencia de seguro' : 'Próxima inspección'}
+                </label>
+                <input
+                  type="date"
+                  value={tipoActualizacion === 'seguro' ? nuevaFechaSeguro : nuevaFechaInspeccion}
+                  onChange={(e) => {
+                    if (tipoActualizacion === 'seguro') {
+                      setNuevaFechaSeguro(e.target.value);
+                    } else {
+                      setNuevaFechaInspeccion(e.target.value);
+                    }
+                  }}
+                  className="w-full px-3 py-2 border rounded-md"
+                  style={{ pointerEvents: 'auto' }}
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
+                />
+              </div>
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 p-4 border-t">
+              <button
+                onClick={cerrarModalActualizacion}
+                className="px-4 py-2 text-sm border rounded-md hover:bg-gray-50"
+                disabled={actualizandoRemolque}
+                  style={{ pointerEvents: 'auto' }}
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={actualizarFechaRemolque}
+                disabled={!(tipoActualizacion === 'seguro' ? nuevaFechaSeguro : nuevaFechaInspeccion) || actualizandoRemolque}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                  style={{ pointerEvents: 'auto' }}
+              >
+                {actualizandoRemolque ? 'Guardando...' : 'Guardar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </MainLayout>
   );
 }

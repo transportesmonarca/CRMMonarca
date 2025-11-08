@@ -45,9 +45,13 @@ import {
   MapPin,
   FileText,
   FileSpreadsheet,
+  ExternalLink,
+  Download,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
+import { listarDocumentosEmbarque } from "@/lib/blob";
+import * as React from "react";
 import { useToast } from "@/hooks/use-toast";
 import ModalUbicacionOperador from "@/components/ModalUbicacionOperador";
 import { obtenerUltimaUbicacionOperador, UbicacionConOperador } from "@/lib/ubicacion";
@@ -65,7 +69,7 @@ import {
   type ContactoCliente,
   type TipoServicio,
 } from "@/lib/supabase";
-import { normalizeDate, formatDateMatamoros } from "@/lib/date-utils";
+import { normalizeDate, formatDateMatamoros, cleanDateString } from "@/lib/date-utils";
 import { getAlertThresholds, calcularNivelAlerta } from "@/lib/alert-thresholds";
 import { agregarAuditLog } from "@/lib/audit";
 import { getCurrentUser } from "@/lib/auth";
@@ -243,6 +247,157 @@ const embarqueEsFleteFalso = (embarque: any) => {
 
 // Alias para compatibilidad con la nomenclatura de otros archivos
 const esFleteFalso = embarqueEsFleteFalso;
+
+// Componente para mostrar el historial de modificaciones
+const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
+  const [modificaciones, setModificaciones] = useState<any[]>([]);
+  const [loadingMods, setLoadingMods] = useState(true);
+
+  useEffect(() => {
+    const cargarModificaciones = async () => {
+      try {
+        const { data, error } = await supabase
+          .from("embarque_modificaciones")
+          .select("*")
+          .eq("embarque_id", embarqueId)
+          .order("fecha_modificacion", { ascending: false });
+
+        if (error) {
+          console.error("Error cargando modificaciones:", error);
+          setModificaciones([]);
+        } else {
+          setModificaciones(data || []);
+        }
+      } catch (error) {
+        console.error("Error:", error);
+        setModificaciones([]);
+      } finally {
+        setLoadingMods(false);
+      }
+    };
+
+    cargarModificaciones();
+  }, [embarqueId]);
+
+  if (loadingMods) {
+    return (
+      <div className="flex items-center justify-center py-8">
+        <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-600"></div>
+        <span className="ml-2 text-sm text-gray-600">
+          Cargando modificaciones...
+        </span>
+      </div>
+    );
+  }
+
+  if (modificaciones.length === 0) {
+    return (
+      <div className="bg-white border rounded-lg p-4">
+        <p className="text-sm text-gray-600">
+          No se encontraron registros de modificaciones en la base de datos.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {modificaciones.map((mod, index) => (
+        <div
+          key={mod.id || index}
+          className="bg-white border rounded-lg p-4"
+        >
+          <div className="flex justify-between items-start mb-3">
+            <div className="flex items-center space-x-2">
+              <span className="text-sm font-semibold text-red-700">
+                Modificación #{modificaciones.length - index}
+              </span>
+            </div>
+            <span className="text-xs text-gray-500">
+              {new Date(mod.fecha_modificacion).toLocaleString("es-MX", { timeZone: "America/Matamoros" })}
+            </span>
+          </div>
+
+          <div className="space-y-3">
+            {/* Justificación en bloque completo */}
+            <div>
+              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Justificación</div>
+              <p className="text-sm text-gray-900 mt-0.5">
+                {mod.razon || "Sin justificación registrada"}
+              </p>
+            </div>
+
+            {/* Resto de campos en fila debajo de la justificación */}
+            <div className="flex flex-col md:flex-row md:flex-wrap gap-4 md:gap-6">
+              {(mod.operador_original_nombre || mod.operador_nuevo_nombre) && (
+                <div className="min-w-[220px]">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Operador</div>
+                  <div className="mt-0.5 space-y-0.5">
+                    {mod.operador_original_nombre && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.operador_original_nombre}</p>
+                    )}
+                    {mod.operador_nuevo_nombre && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.operador_nuevo_nombre}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {(mod.camion_original_numero || mod.camion_nuevo_numero) && (
+                <div className="min-w-[220px] md:border-l md:pl-4">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Tractocamión</div>
+                  <div className="mt-0.5 space-y-0.5">
+                    {mod.camion_original_numero && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.camion_original_numero}</p>
+                    )}
+                    {mod.camion_nuevo_numero && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.camion_nuevo_numero}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {(mod.remolque_original_numero || mod.remolque_nuevo_numero) && (
+                <div className="min-w-[220px] md:border-l md:pl-4">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Remolque</div>
+                  <div className="mt-0.5 space-y-0.5">
+                    {mod.remolque_original_numero && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.remolque_original_numero}</p>
+                    )}
+                    {mod.remolque_nuevo_numero && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.remolque_nuevo_numero}</p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {(mod.precio_flete_original || mod.precio_flete_nuevo || mod.flete_en_falso) && (
+                <div className="min-w-[220px] md:border-l md:pl-4">
+                  <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Flete</div>
+                  <div className="mt-0.5 space-y-0.5">
+                    {mod.precio_flete_original && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> ${typeof mod.precio_flete_original === "number" ? mod.precio_flete_original.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : mod.precio_flete_original} {mod.moneda_flete_original || "MXN"}</p>
+                    )}
+                    {mod.precio_flete_nuevo && (
+                      <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> ${typeof mod.precio_flete_nuevo === "number" ? mod.precio_flete_nuevo.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : mod.precio_flete_nuevo} {mod.moneda_flete_nueva || "MXN"}</p>
+                    )}
+                    {mod.flete_en_falso && (
+                      <p className="text-sm text-red-600"><span className="font-medium">⚠️ Marcado como flete en falso</span></p>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-gray-500 md:ml-auto">
+                Usuario: {mod.usuario_modificacion || "Sistema"}
+              </div>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+};
 
 export default function AsignarOperadoresPage() {
   const searchParams = useSearchParams();
@@ -656,6 +811,20 @@ export default function AsignarOperadoresPage() {
     };
   }>({});
 
+  // Tipo para documentos de embarque
+  interface DocumentoEmbarque {
+    id?: string;
+    embarque_id?: string;
+    nombre_archivo: string;
+    url_blob: string;
+    pathname: string;
+    tipo_archivo?: string;
+    tamano_bytes?: number;
+    uploaded_at?: string;
+    created_at?: string;
+    _tempFile?: File; // Para archivos temporales antes de crear el embarque
+  }
+
   // ...existing code...
   // Tipo para datos de modificación
   interface ModificacionData {
@@ -711,6 +880,12 @@ export default function AsignarOperadoresPage() {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showFinalizarDialog, setShowFinalizarDialog] = useState(false);
   const [embarqueAFinalizar, setEmbarqueAFinalizar] = useState<Embarque | null>(null);
+  
+  // Estados para la pestaña de adjuntos
+  const [documentosEmbarque, setDocumentosEmbarque] = useState<DocumentoEmbarque[]>([]);
+  const [fotosAdjuntas, setFotosAdjuntas] = useState<FotoEmbarque[]>([]);
+  const [loadingAdjuntos, setLoadingAdjuntos] = useState(true);
+  
   const { toast } = useToast();
 
   // Kilometraje (reutiliza lógica de Camiones en forma simplificada)
@@ -971,7 +1146,7 @@ export default function AsignarOperadoresPage() {
       const { data: operadoresData, error: operadoresError } = await supabase
         .from("operadores")
         .select("*")
-        .eq("estado", "activo")
+        .neq("estado", "fuera-de-servicio")
         .order("nombre");
 
       if (operadoresError) {
@@ -997,6 +1172,7 @@ export default function AsignarOperadoresPage() {
       const { data: remolquesData, error: remolquesError } = await supabase
         .from("remolques")
         .select("*")
+        .neq("estado", "fuera-de-servicio")
         .order("numero_economico");
 
       if (remolquesError) {
@@ -1215,6 +1391,28 @@ export default function AsignarOperadoresPage() {
       setLoadingFotos(false);
     }
   };
+
+  const cargarDocumentosEmbarque = async (embarqueId: string) => {
+    if (!embarqueId) return;
+    setLoadingAdjuntos(true);
+    try {
+      const documentos = await listarDocumentosEmbarque(embarqueId) as DocumentoEmbarque[];
+      setDocumentosEmbarque(documentos);
+    } catch (error) {
+      console.error("Error cargando documentos:", error);
+      setDocumentosEmbarque([]);
+    } finally {
+      setLoadingAdjuntos(false);
+    }
+  };
+
+  // Cargar adjuntos cuando cambie el embarque seleccionado
+  React.useEffect(() => {
+    if (embarqueDetalle?.id) {
+      cargarDocumentosEmbarque(embarqueDetalle.id);
+      setFotosAdjuntas([]); // Reset fotos adjuntas
+    }
+  }, [embarqueDetalle?.id]);
 
   const contarFotosEmbarque = async (embarqueId: string) => {
     if (!embarqueId) return;
@@ -2497,7 +2695,7 @@ export default function AsignarOperadoresPage() {
       (c) => c.cliente_id === embarqueDetalle.cliente?.id
     );
     const contactoNombre = contactoCliente
-      ? `${contactoCliente.nombre} ${contactoCliente.apellidos || ""}`
+      ? `${contactoCliente.nombre}`
       : "No especificado";
 
     const printContent = `
@@ -2977,155 +3175,7 @@ export default function AsignarOperadoresPage() {
     document.body.removeChild(link);
   };
 
-  const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
-    const [modificaciones, setModificaciones] = useState<any[]>([]);
-    const [loadingMods, setLoadingMods] = useState(true);
 
-    useEffect(() => {
-      const cargarModificaciones = async () => {
-        try {
-          const { data, error } = await supabase
-            .from("embarque_modificaciones")
-            .select("*")
-            .eq("embarque_id", embarqueId)
-            .order("fecha_modificacion", { ascending: false });
-
-          if (error) {
-            console.error("Error cargando modificaciones:", error);
-            setModificaciones([]);
-          } else {
-            setModificaciones(data || []);
-          }
-        } catch (error) {
-          console.error("Error:", error);
-          setModificaciones([]);
-        } finally {
-          setLoadingMods(false);
-        }
-      };
-
-      cargarModificaciones();
-    }, [embarqueId]);
-
-    if (loadingMods) {
-      return (
-        <div className="flex items-center justify-center py-8">
-          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-red-600"></div>
-          <span className="ml-2 text-sm text-gray-600">
-            Cargando modificaciones...
-          </span>
-        </div>
-      );
-    }
-
-    if (modificaciones.length === 0) {
-      return (
-        <div className="bg-white border rounded-lg p-4">
-          <p className="text-sm text-gray-600">
-            No se encontraron registros de modificaciones en la base de datos.
-          </p>
-        </div>
-      );
-    }
-
-    return (
-      <div className="space-y-4">
-        {modificaciones.map((mod, index) => (
-          <div
-            key={mod.id || index}
-            className="bg-white border rounded-lg p-4"
-          >
-            <div className="flex justify-between items-start mb-3">
-              <div className="flex items-center space-x-2">
-                <span className="text-sm font-semibold text-red-700">
-                  Modificación #{modificaciones.length - index}
-                </span>
-              </div>
-              <span className="text-xs text-gray-500">
-                {new Date(mod.fecha_modificacion).toLocaleString("es-MX", { timeZone: "America/Matamoros" })}
-              </span>
-            </div>
-
-            <div className="space-y-3">
-              {/* Justificación en bloque completo */}
-              <div>
-                <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Justificación</div>
-                <p className="text-sm text-gray-900 mt-0.5">
-                  {mod.razon || "Sin justificación registrada"}
-                </p>
-              </div>
-
-              {/* Resto de campos en fila debajo de la justificación */}
-              <div className="flex flex-col md:flex-row md:flex-wrap gap-4 md:gap-6">
-                {(mod.operador_original_nombre || mod.operador_nuevo_nombre) && (
-                  <div className="min-w-[220px]">
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Operador</div>
-                    <div className="mt-0.5 space-y-0.5">
-                      {mod.operador_original_nombre && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.operador_original_nombre}</p>
-                      )}
-                      {mod.operador_nuevo_nombre && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.operador_nuevo_nombre}</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {(mod.camion_original_numero || mod.camion_nuevo_numero) && (
-                  <div className="min-w-[220px] md:border-l md:pl-4">
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Tractocamión</div>
-                    <div className="mt-0.5 space-y-0.5">
-                      {mod.camion_original_numero && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.camion_original_numero}</p>
-                      )}
-                      {mod.camion_nuevo_numero && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.camion_nuevo_numero}</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {(mod.remolque_original_numero || mod.remolque_nuevo_numero) && (
-                  <div className="min-w-[220px] md:border-l md:pl-4">
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Remolque</div>
-                    <div className="mt-0.5 space-y-0.5">
-                      {mod.remolque_original_numero && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> {mod.remolque_original_numero}</p>
-                      )}
-                      {mod.remolque_nuevo_numero && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> {mod.remolque_nuevo_numero}</p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                {(mod.precio_flete_original || mod.precio_flete_nuevo || mod.flete_en_falso) && (
-                  <div className="min-w-[220px] md:border-l md:pl-4">
-                    <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Cambio de Flete</div>
-                    <div className="mt-0.5 space-y-0.5">
-                      {mod.precio_flete_original && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Anterior:</span> ${typeof mod.precio_flete_original === "number" ? mod.precio_flete_original.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : mod.precio_flete_original} {mod.moneda_flete_original || "MXN"}</p>
-                      )}
-                      {mod.precio_flete_nuevo && (
-                        <p className="text-sm text-gray-700"><span className="font-medium">Nuevo:</span> ${typeof mod.precio_flete_nuevo === "number" ? mod.precio_flete_nuevo.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : mod.precio_flete_nuevo} {mod.moneda_flete_nueva || "MXN"}</p>
-                      )}
-                      {mod.flete_en_falso && (
-                        <p className="text-sm text-red-600"><span className="font-medium">⚠️ Marcado como flete en falso</span></p>
-                      )}
-                    </div>
-                  </div>
-                )}
-
-                <div className="text-xs text-gray-500 md:ml-auto">
-                  Usuario: {mod.usuario_modificacion || "Sistema"}
-                </div>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    );
-  };
 
   if (loading) {
     return (
@@ -3143,11 +3193,11 @@ export default function AsignarOperadoresPage() {
   return (
     <>
       <MainLayout>
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Asignación de Embarques
+        <div className="space-y-4">
+          <div className="flex justify-between items-center">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                Asignación de Embarques
             </h1>
             <p className="text-gray-600 mt-2">
               Asignar recursos a embarques listos
@@ -3370,9 +3420,9 @@ export default function AsignarOperadoresPage() {
             const analisisContingencia = analizarContingencia(embarque.estado || '');
             
             return (
-            <Card
-              key={`${embarque.folio}-${(embarque as any)._fuente || 'legacy'}`}
-              id={`embarque-card-${embarque.id}`}
+              <Card
+                key={`${embarque.folio}-${(embarque as any)._fuente || 'legacy'}`}
+                id={`embarque-card-${embarque.id}`}
               className={`
                 ${highlightId === embarque.id ? "ring-2 ring-blue-500" : ""}
                 ${analisisContingencia.esFleteFalso ? "!bg-orange-50 !border-orange-200" : ""}
@@ -3387,164 +3437,6 @@ export default function AsignarOperadoresPage() {
               <CardHeader>
                 <div className="flex justify-between items-start">
                   <div>
-
-                  {/* Modal de Kilometraje */}
-                  <Dialog open={showKilometrajeModal} onOpenChange={setShowKilometrajeModal}>
-                    <DialogContent hideOverlay className="sm:max-w-[560px] z-[70]">
-                      <DialogHeader>
-                        <DialogTitle>Capturar Kilometraje</DialogTitle>
-                        <DialogDescription>
-                          {selectedCamionKilometraje
-                            ? `Tractocamión ${selectedCamionKilometraje.numero_economico} (actual: ${Number(selectedCamionKilometraje.kilometraje || 0).toLocaleString('es-MX')} km)`
-                            : 'Selecciona un embarque con tractocamión asignado'}
-                        </DialogDescription>
-                      </DialogHeader>
-                      <div className="grid gap-3 py-2">
-                        <div className="grid grid-cols-1 gap-2">
-                          <Label>¿Cómo deseas capturar?</Label>
-                          <div className="flex items-center gap-6 text-sm">
-                            <div className="flex items-center gap-2">
-                              <Checkbox
-                                id="modo_km_odometro"
-                                checked={kilometrajeFormData.modo === 'odometro'}
-                                onCheckedChange={(checked)=>
-                                  setKilometrajeFormData(v=>({
-                                    ...v,
-                                    modo: checked === true ? 'odometro' : 'viaje',
-                                  }))
-                                }
-                              />
-                              <label htmlFor="modo_km_odometro" className="cursor-pointer select-none">
-                                Odómetro actual
-                              </label>
-                            </div>
-                            <div className="flex items-center gap-2">
-                              <Checkbox
-                                id="modo_km_viaje"
-                                checked={kilometrajeFormData.modo === 'viaje'}
-                                onCheckedChange={(checked)=>
-                                  setKilometrajeFormData(v=>({
-                                    ...v,
-                                    modo: checked === true ? 'viaje' : 'odometro',
-                                  }))
-                                }
-                              />
-                              <label htmlFor="modo_km_viaje" className="cursor-pointer select-none">
-                                Km del viaje
-                              </label>
-                            </div>
-                          </div>
-                        </div>
-                        {kilometrajeFormData.modo === 'odometro' ? (
-                          <div className="grid grid-cols-1 gap-2">
-                            <Label htmlFor="km_actual">Kilometraje (odómetro actual)</Label>
-                            <Input
-                              id="km_actual"
-                              type="number"
-                              placeholder="Ej. 456000"
-                              min={Math.max(0, Number(selectedCamionKilometraje?.kilometraje || 0) + 1)}
-                              step={1}
-                              value={kilometrajeFormData.kilometraje_actual}
-                              onChange={(e)=>setKilometrajeFormData(v=>({...v, kilometraje_actual: e.target.value}))}
-                            />
-                          </div>
-                        ) : (
-                          <div className="grid grid-cols-1 gap-2">
-                            <Label htmlFor="km_viaje">Kilómetros del viaje</Label>
-                            <Input
-                              id="km_viaje"
-                              type="number"
-                              placeholder="Ej. 850"
-                              min={1}
-                              step={1}
-                              value={kilometrajeFormData.kilometros_viaje}
-                              onChange={(e)=>setKilometrajeFormData(v=>({...v, kilometros_viaje: e.target.value}))}
-                            />
-                          </div>
-                        )}
-                        {/* Preview de kilómetros a sumar y nuevo total */}
-                        {(() => {
-                          const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
-                          if (kilometrajeFormData.modo === 'odometro') {
-                            const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
-                            if (!Number.isNaN(kmO) && kmO > kmAnterior) {
-                              const sum = kmO - kmAnterior;
-                              return (
-                                <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
-                                  Se sumarían +{sum.toLocaleString('es-MX')} km. Nuevo total: {kmO.toLocaleString('es-MX')} km
-                                </div>
-                              );
-                            } else if (!Number.isNaN(kmO)) {
-                              return (
-                                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2">
-                                  El odómetro debe ser mayor al actual ({kmAnterior.toLocaleString('es-MX')} km).
-                                </div>
-                              );
-                            }
-                          } else {
-                            const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
-                            if (!Number.isNaN(kmV) && kmV > 0) {
-                              const total = kmAnterior + kmV;
-                              return (
-                                <div className="text-xs text-blue-700 bg-blue-50 border border-blue-200 rounded p-2">
-                                  Se sumarían +{kmV.toLocaleString('es-MX')} km. Nuevo total: {total.toLocaleString('es-MX')} km
-                                </div>
-                              );
-                            }
-                          }
-                          return null;
-                        })()}
-                        <div className="grid grid-cols-1 gap-2">
-                          <Label htmlFor="tramo">Tramo recorrido</Label>
-                          <Input
-                            id="tramo"
-                            placeholder="Ej. Matamoros → Monterrey"
-                            value={kilometrajeFormData.tramo_recorrido}
-                            onChange={(e)=>setKilometrajeFormData(v=>({...v, tramo_recorrido: e.target.value}))}
-                          />
-                        </div>
-                        <div className="grid grid-cols-1 gap-2">
-                          <Label htmlFor="fecha_viaje">Fecha del viaje</Label>
-                          <Input
-                            id="fecha_viaje"
-                            type="date"
-                            value={kilometrajeFormData.fecha_viaje}
-                            onChange={(e)=>setKilometrajeFormData(v=>({...v, fecha_viaje: e.target.value}))}
-                          />
-                        </div>
-                        <div className="grid grid-cols-1 gap-2">
-                          <Label htmlFor="comentarios">Comentarios</Label>
-                          <Textarea
-                            id="comentarios"
-                            placeholder="Opcional"
-                            value={kilometrajeFormData.comentarios_viaje}
-                            onChange={(e)=>setKilometrajeFormData(v=>({...v, comentarios_viaje: e.target.value}))}
-                          />
-                        </div>
-                      </div>
-                      <DialogFooter>
-                        <Button variant="outline" onClick={()=>setShowKilometrajeModal(false)}>Cancelar</Button>
-                        <Button
-                          onClick={guardarKilometraje}
-                          className="bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          disabled={(() => {
-                            const kmAnterior = Number(selectedCamionKilometraje?.kilometraje || 0);
-                            const tramoOk = Boolean((kilometrajeFormData.tramo_recorrido || '').trim());
-                            const fechaOk = Boolean(kilometrajeFormData.fecha_viaje);
-                            if (kilometrajeFormData.modo === 'odometro') {
-                              const kmO = Number.parseInt(kilometrajeFormData.kilometraje_actual);
-                              return !(tramoOk && fechaOk && !Number.isNaN(kmO) && kmO > kmAnterior);
-                            } else {
-                              const kmV = Number.parseInt(kilometrajeFormData.kilometros_viaje);
-                              return !(tramoOk && fechaOk && !Number.isNaN(kmV) && kmV > 0);
-                            }
-                          })()}
-                        >
-                          Guardar
-                        </Button>
-                      </DialogFooter>
-                    </DialogContent>
-                  </Dialog>
                     <CardTitle>
                       <span className="inline-flex items-center text-blue-600 text-xl">
                         <Package className="h-5 w-5 text-blue-600 mr-1" />
@@ -3735,7 +3627,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <Camera className="h-4 w-4 mr-1" />
-                          Fotos
+                          Reporte Operador
                         </Button>
                       )}
                       {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
@@ -3749,7 +3641,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <FileText className="h-4 w-4 mr-1" />
-                          Reporte
+                          Reporte Cliente
                         </Button>
                       )}
                       {/* Kilometraje - abrir modal para el tractocamión asignado */}
@@ -4713,6 +4605,18 @@ export default function AsignarOperadoresPage() {
                                 const camionSeleccionado = camiones.find(
                                   (cam) => cam.id === asignacion.camion_id
                                 );
+                                
+                                // Validar que operador y camión estén disponibles
+                                if (operadorSeleccionado && operadorSeleccionado.estado !== "disponible" && operadorSeleccionado.estado !== "activo") {
+                                  alert("No se puede asignar: El operador seleccionado no está disponible");
+                                  return;
+                                }
+                                
+                                if (camionSeleccionado && camionSeleccionado.estado !== "disponible" && camionSeleccionado.estado !== "activo") {
+                                  alert("No se puede asignar: El tractocamión seleccionado no está disponible");
+                                  return;
+                                }
+                                
                                 setPendingAsignacion({
                                   embarqueId: embarque.id,
                                   embarqueFolio: embarque.folio || null,
@@ -4723,13 +4627,30 @@ export default function AsignarOperadoresPage() {
                                 });
                                 setShowConfirmAsignar(true);
                               }}
-                              disabled={
-                                saving ||
-                                !asignaciones[embarque.id]?.operador_id ||
-                                !asignaciones[embarque.id]?.camion_id ||
-                                !asignaciones[embarque.id]?.precio_flete ||
-                                !asignaciones[embarque.id]?.moneda_flete
-                              }
+                              disabled={(() => {
+                                const asignacion = asignaciones[embarque.id];
+                                if (saving || 
+                                    !asignacion?.operador_id || 
+                                    !asignacion?.camion_id || 
+                                    !asignacion?.precio_flete || 
+                                    !asignacion?.moneda_flete) {
+                                  return true;
+                                }
+                                
+                                // Verificar si el operador seleccionado está NO disponible
+                                const operadorSeleccionado = operadores.find(op => op.id === asignacion.operador_id);
+                                if (operadorSeleccionado && operadorSeleccionado.estado !== "disponible" && operadorSeleccionado.estado !== "activo") {
+                                  return true;
+                                }
+                                
+                                // Verificar si el camión seleccionado está NO disponible
+                                const camionSeleccionado = camiones.find(cam => cam.id === asignacion.camion_id);
+                                if (camionSeleccionado && camionSeleccionado.estado !== "disponible" && camionSeleccionado.estado !== "activo") {
+                                  return true;
+                                }
+                                
+                                return false;
+                              })()}
                               className="w-full bg-blue-600 hover:bg-blue-700 text-white font-medium"
                             >
                               {saving ? (
@@ -4749,12 +4670,12 @@ export default function AsignarOperadoresPage() {
                       </div>
                     )}
                   </div>
-                  )}
+                )}
                 </div>
               </CardContent>
             </Card>
           );
-          })}
+        })}
         </div>
       </div>
 
@@ -4834,6 +4755,16 @@ export default function AsignarOperadoresPage() {
                       onClick={() => setActiveTab("contacto-cliente")}
                     >
                       Contacto del Cliente
+                    </button>
+                    <button
+                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                        activeTab === "adjuntos"
+                          ? "border-blue-500 text-blue-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700"
+                      }`}
+                      onClick={() => setActiveTab("adjuntos")}
+                    >
+                      📎 Adjuntos
                     </button>
                     {embarqueDetalle?.modificado && (
                       <button
@@ -5047,57 +4978,53 @@ export default function AsignarOperadoresPage() {
                                 <h4 className="font-medium text-gray-900">
                                   Información de Recolecta
                                 </h4>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div className="md:col-span-2">
+                                <div className="space-y-4">
+                                  <div>
                                     <Label className="text-sm font-medium text-gray-700">
-                                      Dirección de Recolecta
+                                      Direcciones de Recolecta
                                     </Label>
                                     {(recolectasFinales.length > 0 && recolectasFinales.some((r: any) => (r.direccion || "").trim() !== "")) ? (
-                                      <div className="space-y-2 mt-1">
+                                      <div className="space-y-3 mt-1">
                                         {recolectasFinales.map((r, i) => (
-                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
-                                            <div className="font-medium text-xs text-gray-700">
-                                              {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-4 rounded border">
+                                            <div className="font-medium text-xs text-gray-700 mb-2">
+                                              {i === 0 ? "Recolecta Principal" : `Recolecta ${i + 1}`}
                                             </div>
-                                            <div className="whitespace-pre-wrap mt-1">{r.direccion || "Sin especificar"}</div>
+                                            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                              <div className="md:col-span-3">
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Dirección</div>
+                                                <div className="whitespace-pre-wrap">{r.direccion || "Sin especificar"}</div>
+                                              </div>
+                                              <div>
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Fecha</div>
+                                                <div>{r.fecha ? formatDateMatamoros(normalizeDate(r.fecha) || r.fecha) : "Sin especificar"}</div>
+                                              </div>
+                                              <div>
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Hora</div>
+                                                <div>{r.hora || "Sin especificar"}</div>
+                                              </div>
+                                            </div>
                                           </div>
                                         ))}
                                       </div>
                                     ) : (
-                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
-                                        {recolectasFinales[0]?.direccion || embarqueDetalle.direccion_recolecta || "Sin especificar"}
-                                      </p>
+                                      <div className="text-sm text-gray-900 bg-gray-50 p-4 rounded border mt-1">
+                                        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                          <div className="md:col-span-3">
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Dirección</div>
+                                            <div>{embarqueDetalle.direccion_recolecta || "Sin especificar"}</div>
+                                          </div>
+                                          <div>
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Fecha</div>
+                                            <div>{embarqueDetalle.fecha_recolecta ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta) : "Sin especificar"}</div>
+                                          </div>
+                                          <div>
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Hora</div>
+                                            <div>{embarqueDetalle.hora_recolecta || "Sin especificar"}</div>
+                                          </div>
+                                        </div>
+                                      </div>
                                     )}
-                                  </div>
-                                  <div className="flex items-start gap-4">
-                                    <div className="flex-1">
-                                      <Label className="text-sm font-medium text-gray-700">
-                                        Fecha de Recolecta
-                                      </Label>
-                                      {(() => {
-                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
-                                        const fecha = reco?.fecha || embarqueDetalle.fecha_recolecta;
-                                        return (
-                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                            {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                          </p>
-                                        );
-                                      })()}
-                                    </div>
-                                    <div className="w-40 shrink-0">
-                                      <Label className="text-sm font-medium text-gray-700">
-                                        Hora de Recolecta
-                                      </Label>
-                                      {(() => {
-                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
-                                        const hora = reco?.hora || embarqueDetalle.hora_recolecta;
-                                        return (
-                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                            {hora || "Sin especificar"}
-                                          </p>
-                                        );
-                                      })()}
-                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -5107,61 +5034,53 @@ export default function AsignarOperadoresPage() {
                                 <h4 className="font-medium text-gray-900">
                                   Información de Entrega
                                 </h4>
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                                  <div className="md:col-span-2">
+                                <div className="space-y-4">
+                                  <div>
                                     <Label className="text-sm font-medium text-gray-700">
-                                      Dirección de Entrega
+                                      Direcciones de Entrega
                                     </Label>
                                     {(entregasFinales.length > 0 && entregasFinales.some((e: any) => (e.direccion || "").trim() !== "")) ? (
-                                      <div className="space-y-2 mt-1">
+                                      <div className="space-y-3 mt-1">
                                         {entregasFinales.map((e, i) => (
-                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-3 rounded">
-                                            <div className="font-medium text-xs text-gray-700">
-                                              {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                          <div key={i} className="text-sm text-gray-900 bg-gray-50 p-4 rounded border">
+                                            <div className="font-medium text-xs text-gray-700 mb-2">
+                                              {i === (entregasFinales.length - 1) ? "Entrega Final" : `Entrega ${i + 1}`}
                                             </div>
-                                            <div className="whitespace-pre-wrap mt-1">{e.direccion || "Sin especificar"}</div>
+                                            <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                              <div className="md:col-span-3">
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Dirección</div>
+                                                <div className="whitespace-pre-wrap">{e.direccion || "Sin especificar"}</div>
+                                              </div>
+                                              <div>
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Fecha</div>
+                                                <div>{e.fecha ? formatDateMatamoros(normalizeDate(e.fecha) || e.fecha) : "Sin especificar"}</div>
+                                              </div>
+                                              <div>
+                                                <div className="font-medium text-xs text-gray-600 mb-1">Hora</div>
+                                                <div>{e.hora || "Sin especificar"}</div>
+                                              </div>
+                                            </div>
                                           </div>
                                         ))}
                                       </div>
                                     ) : (
-                                      <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded mt-1">
-                                        {entregasFinales[0]?.direccion || embarqueDetalle.direccion_entrega || "Sin especificar"}
-                                      </p>
+                                      <div className="text-sm text-gray-900 bg-gray-50 p-4 rounded border mt-1">
+                                        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                                          <div className="md:col-span-3">
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Dirección</div>
+                                            <div>{embarqueDetalle.direccion_entrega || "Sin especificar"}</div>
+                                          </div>
+                                          <div>
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Fecha</div>
+                                            <div>{embarqueDetalle.fecha_entrega ? formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega) : "Sin especificar"}</div>
+                                          </div>
+                                          <div>
+                                            <div className="font-medium text-xs text-gray-600 mb-1">Hora</div>
+                                            <div>{embarqueDetalle.hora_entrega || "Sin especificar"}</div>
+                                          </div>
+                                        </div>
+                                      </div>
                                     )}
-                                  </div>
-                                  <div className="space-y-4">
-                                    <div className="flex items-start gap-4">
-                                      <div className="flex-1">
-                                        <Label className="text-sm font-medium text-gray-700">
-                                          Fecha de Entrega
-                                        </Label>
-                                        {(() => {
-                                          const ents = entregasFinales || [];
-                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                          const fecha = lastEnt?.fecha || embarqueDetalle.fecha_entrega;
-                                          return (
-                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                              {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                            </p>
-                                          );
-                                        })()}
-                                      </div>
-                                      <div className="w-40 shrink-0">
-                                        <Label className="text-sm font-medium text-gray-700">
-                                          Hora de Entrega
-                                        </Label>
-                                        {(() => {
-                                          const ents = entregasFinales || [];
-                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                          const hora = lastEnt?.hora || embarqueDetalle.hora_entrega;
-                                          return (
-                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                              {hora || "Sin especificar"}
-                                            </p>
-                                          );
-                                        })()}
-                                      </div>
-                                    </div>
                                   </div>
                                 </div>
                               </div>
@@ -5460,22 +5379,43 @@ export default function AsignarOperadoresPage() {
                     <div className="space-y-6">
                       <div className="bg-white border rounded-lg p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
-                          Contacto Principal del Cliente
+                          Contacto del Cliente Seleccionado
                         </h3>
                         {(() => {
-                          const contacto = contactosClientes.find(
-                            (c) =>
-                              c.cliente_id === embarqueDetalle.cliente?.id &&
-                              c.es_principal
-                          );
-                          if (!contacto) {
-                            return (
-                              <p className="text-gray-500">
-                                No se ha especificado un contacto principal para
-                                este cliente.
-                              </p>
+                          // Buscar primero el contacto seleccionado al crear el embarque
+                          let contacto = null;
+                          
+                          // Si el embarque tiene representante_cliente, buscar ese contacto específico
+                          if (embarqueDetalle.representante_cliente) {
+                            contacto = contactosClientes.find(
+                              (c) => c.id === embarqueDetalle.representante_cliente
                             );
                           }
+                          
+                          // Si no se encontró, buscar el contacto principal como fallback
+                          if (!contacto) {
+                            contacto = contactosClientes.find(
+                              (c) =>
+                                c.cliente_id === embarqueDetalle.cliente?.id &&
+                                c.es_principal
+                            );
+                          }
+                          
+                          if (!contacto) {
+                            return (
+                              <div className="text-center py-8">
+                                <p className="text-gray-500 mb-2">
+                                  No se encontró información del contacto para este embarque.
+                                </p>
+                                <p className="text-xs text-gray-400">
+                                  {embarqueDetalle.representante_cliente 
+                                    ? "El contacto seleccionado no está disponible en el sistema."
+                                    : "No se especificó un contacto al crear el embarque."}
+                                </p>
+                              </div>
+                            );
+                          }
+                          
                           return (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                               <div className="space-y-1">
@@ -5483,7 +5423,7 @@ export default function AsignarOperadoresPage() {
                                   Nombre
                                 </label>
                                 <p className="text-sm font-medium text-gray-900">
-                                  {contacto.nombre} {contacto.apellidos || ""}
+                                  {contacto.nombre}
                                 </p>
                               </div>
 
@@ -5533,6 +5473,162 @@ export default function AsignarOperadoresPage() {
                     </div>
                   )}
 
+                  {/* Adjuntos Tab */}
+                  {activeTab === "adjuntos" && (
+                    <div className="space-y-6">
+                      <div className="bg-white border rounded-lg p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center">
+                          <FileText className="h-5 w-5 mr-2" />
+                          Archivos Adjuntos del Embarque
+                        </h3>
+                        
+                        {loadingAdjuntos ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                            <span className="ml-2 text-sm text-gray-600">
+                              Cargando archivos adjuntos...
+                            </span>
+                          </div>
+                        ) : (
+                          (() => {
+                            const totalArchivos = documentosEmbarque.length;
+                            
+                            if (totalArchivos === 0) {
+                              return (
+                                <div className="text-center py-8">
+                                  <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                                  <p className="text-gray-500 text-lg mb-2">No hay archivos adjuntos</p>
+                                  <p className="text-sm text-gray-400">
+                                    Los documentos subidos durante la creación del embarque aparecerán aquí
+                                  </p>
+                                </div>
+                              );
+                            }
+                            
+                            return (
+                              <div className="space-y-6">
+                                {/* Sección de Documentos */}
+                                {documentosEmbarque.length > 0 && (
+                                  <div>
+                                    <h4 className="text-md font-medium text-gray-800 mb-3 flex items-center">
+                                      <FileText className="h-4 w-4 mr-2" />
+                                      Documentos ({documentosEmbarque.length})
+                                    </h4>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                      {documentosEmbarque
+                                        .sort((a, b) => {
+                                          const aImg = a.tipo_archivo?.startsWith('image/') || false;
+                                          const bImg = b.tipo_archivo?.startsWith('image/') || false;
+                                          if (aImg === bImg) return 0;
+                                          return aImg ? -1 : 1;
+                                        })
+                                        .map((documento, index) => {
+                                          const esImagen = documento.tipo_archivo?.startsWith('image/');
+                                          const esPDF = documento.tipo_archivo === 'application/pdf';
+                                          
+                                          // Función para formatear el tamaño de archivo
+                                          const formatFileSize = (bytes: number) => {
+                                            if (!bytes) return '';
+                                            if (bytes === 0) return '0 Bytes';
+                                            const k = 1024;
+                                            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                            const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                                          };
+                                          
+                                          return (
+                                            <div
+                                              key={documento.id || index}
+                                              className="border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow"
+                                            >
+                                              <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
+                                                {esImagen ? (
+                                                  <img
+                                                    src={documento.url_blob || '/placeholder.svg'}
+                                                    alt={documento.nombre_archivo}
+                                                    className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                                                    onClick={() => window.open(documento.url_blob, '_blank')}
+                                                    onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
+                                                  />
+                                                ) : (
+                                                  <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
+                                                    <FileText className="h-8 w-8 mb-2" />
+                                                    <span className="text-[10px] text-center px-2">{documento.nombre_archivo}</span>
+                                                  </div>
+                                                )}
+
+                                                <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                                  <div className="text-white text-center">
+                                                    <Eye className="h-5 w-5 mx-auto mb-1" />
+                                                    <span className="text-[10px]">Click para ver</span>
+                                                  </div>
+                                                </div>
+                                              </div>
+
+                                              <div className="space-y-2">
+                                                <div className="flex items-center justify-between">
+                                                  <Badge className={esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : esPDF ? 'bg-red-100 text-red-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
+                                                    {esImagen ? 'IMAGEN' : esPDF ? 'PDF' : 'ARCHIVO'}
+                                                  </Badge>
+                                                  <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
+                                                </div>
+                                                <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
+                                                <p className="text-[10px] text-gray-400">
+                                                  {documento.created_at && new Date(documento.created_at).toLocaleDateString('es-MX', {
+                                                    year: 'numeric',
+                                                    month: 'short',
+                                                    day: 'numeric',
+                                                    hour: '2-digit',
+                                                    minute: '2-digit'
+                                                  })}
+                                                </p>
+                                                
+                                                <div className="flex space-x-2 pt-2">
+                                                  <Button 
+                                                    aria-label="Ver documento" 
+                                                    title="Ver" 
+                                                    variant="outline" 
+                                                    size="sm" 
+                                                    className="flex-1 bg-transparent" 
+                                                    onClick={() => window.open(documento.url_blob, '_blank')}
+                                                  >
+                                                    <Eye className="h-3 w-3" />
+                                                  </Button>
+                                                  <Button 
+                                                    aria-label="Descargar documento" 
+                                                    title="Descargar" 
+                                                    variant="outline" 
+                                                    size="sm" 
+                                                    className="flex-1 bg-transparent" 
+                                                    onClick={() => {
+                                                      const link = document.createElement('a');
+                                                      link.href = documento.url_blob;
+                                                      link.download = documento.nombre_archivo;
+                                                      link.target = '_blank';
+                                                      document.body.appendChild(link);
+                                                      link.click();
+                                                      document.body.removeChild(link);
+                                                    }}
+                                                  >
+                                                    <Download className="h-3 w-3" />
+                                                  </Button>
+                                                </div>
+                                              </div>
+                                            </div>
+                                          );
+                                        })}
+                                    </div>
+                                  </div>
+                                )}
+                                
+                              </div>
+                            );
+                          })()
+                        )}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Modificaciones Tab */}
                   {activeTab === "modificaciones" &&
                     embarqueDetalle?.modificado && (
@@ -5560,7 +5656,6 @@ export default function AsignarOperadoresPage() {
                           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-4">
                             {fotosEmbarque.map((foto) => (
                               <div key={foto.id} className="rounded-lg border border-gray-200 bg-white p-2">
-                                {/* Área de vista previa clickable (solo aquí abre el visor) */}
                                 <div
                                   className="group relative block cursor-pointer"
                                   onClick={() => setSelectedImage(foto.url_blob)}
@@ -5569,47 +5664,44 @@ export default function AsignarOperadoresPage() {
                                     <img
                                       src={foto.url_blob || "/placeholder.svg"}
                                       alt={foto.nombre_archivo}
-                                      className="w-full h-40 object-cover rounded-md shadow-sm transition-transform duration-300 group-hover:scale-[1.02]"
+                                      className="w-full h-32 object-cover rounded transition-transform duration-300 group-hover:scale-[1.02]"
                                     />
                                   ) : (
-                                    <div className="w-full h-40 rounded-md bg-gray-50 border border-dashed border-gray-300 flex items-center justify-center text-gray-500">
+                                    <div className="w-full h-32 rounded bg-gray-50 border border-dashed border-gray-300 flex items-center justify-center text-gray-500">
                                       <div className="flex flex-col items-center">
-                                        <FileText className="h-8 w-8 mb-1" />
-                                        <span className="text-xs">Documento</span>
+                                        <FileText className="h-6 w-6 mb-1" />
+                                        <span className="text-xs">Archivo</span>
                                       </div>
                                     </div>
                                   )}
-                                  <div className="pointer-events-none absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 rounded-md flex items-center justify-center">
-                                    <Eye className="h-7 w-7 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
+                                  <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-300 rounded flex items-center justify-center">
+                                    <Eye className="h-5 w-5 text-white opacity-0 group-hover:opacity-100 transition-opacity" />
                                   </div>
                                 </div>
-                                {/* Pie con nombre y ubicación (no abre el visor) */}
                                 <div className="mt-2">
                                   <p className="text-xs font-medium text-gray-800 truncate" title={foto.nombre_archivo}>
                                     {foto.nombre_archivo}
                                   </p>
-                                  <div className="mt-1">
-                                    {foto.latitud != null && foto.longitud != null ? (
-                                      <a
-                                        href={`https://www.google.com/maps?q=${foto.latitud},${foto.longitud}`}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:underline"
-                                      >
-                                        <MapPin className="h-3.5 w-3.5" /> Ver ubicación
-                                      </a>
-                                    ) : (
-                                      <span className="text-[11px] text-gray-400">Sin geolocalización</span>
-                                    )}
-                                  </div>
+                                  {foto.comentario && (
+                                    <p className="text-xs text-gray-500 truncate mt-1">
+                                      💬 {foto.comentario}
+                                    </p>
+                                  )}
+                                  <p className="text-xs text-gray-400 mt-1">
+                                    {new Date(foto.fecha_subida).toLocaleDateString()}
+                                  </p>
                                 </div>
                               </div>
                             ))}
                           </div>
                         ) : (
                           <div className="text-center py-8">
-                            <p className="text-gray-500">
-                              No hay fotos de evidencia para este embarque.
+                            <FileText className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+                            <p className="text-gray-500 text-lg mb-2">
+                              No hay fotos de evidencia
+                            </p>
+                            <p className="text-sm text-gray-400">
+                              Las fotos del embarque aparecerán aquí
                             </p>
                           </div>
                         )}
@@ -5617,31 +5709,17 @@ export default function AsignarOperadoresPage() {
                     </div>
                   )}
                 </div>
-
+                
                 {/* Action Buttons */}
                 <div className="border-t pt-4 mt-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex justify-start space-x-4">
-                      <Button
-                        onClick={descargarExcel}
-                        variant="outline"
-                        size="sm"
-                        className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                      >
-                        Descargar Excel
-                      </Button>
-                      <Button
-                        onClick={imprimirDetalles}
-                        variant="outline"
-                        size="sm"
-                        className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                      >
-                        Imprimir Detalles
-                      </Button>
-                    </div>
+                  <div className="flex gap-3 justify-end">
                     <Button
-                      onClick={() => setShowDetailsModal(false)}
                       variant="outline"
+                      onClick={() => {
+                        setShowDetailsModal(false);
+                        setEmbarqueDetalle(null);
+                        setActiveTab("detalle");
+                      }}
                       size="sm"
                       className="ml-auto border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                     >
@@ -6750,8 +6828,9 @@ export default function AsignarOperadoresPage() {
           </div>
         </div>
       )}
-    </MainLayout>
-    {/* Dialog de confirmación para finalizar un embarque */}
+      </MainLayout>
+
+      {/* Dialog de confirmación para finalizar un embarque */}
     <Dialog open={showFinalizarDialog} onOpenChange={setShowFinalizarDialog}>
       <DialogContent>
         {embarqueAFinalizar ? (

@@ -60,6 +60,7 @@ import {
   MessageSquare,
   Save,
   Zap,
+  FolderOpen,
 } from "lucide-react";
 import { exportOperadoresToExcel, exportOperadorDetalleToExcel } from "./excel-export";
 import { useState, useEffect, useRef } from "react";
@@ -3755,9 +3756,6 @@ export default function OperadoresPage() {
                     <TabsTrigger value="licencias" className="flex items-center gap-2">
                       <FileText className="h-4 w-4" /> Licencias
                     </TabsTrigger>
-                    <TabsTrigger value="fotografias" className="flex items-center gap-2">
-                      <ImageIcon className="h-4 w-4" /> Fotografías {(documentos.filter(doc => doc.tipo_mime?.startsWith('image/')).length + (perfilFoto ? 1 : 0))}
-                    </TabsTrigger>
                     <TabsTrigger value="contactos" className="flex items-center gap-2">
                       <Contact className="h-4 w-4" /> Contactos de Emergencia
                     </TabsTrigger>
@@ -3766,6 +3764,9 @@ export default function OperadoresPage() {
                     </TabsTrigger>
                     <TabsTrigger value="observaciones" className="flex items-center gap-2">
                       <FileText className="h-4 w-4" /> Observaciones
+                    </TabsTrigger>
+                    <TabsTrigger value="fotografias" className="flex items-center gap-2">
+                      <FolderOpen className="h-4 w-4" /> Archivos
                     </TabsTrigger>
                   </TabsList>
                   {/* Tab Contactos de Emergencia */}

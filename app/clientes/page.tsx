@@ -51,11 +51,15 @@ import {
   supabase,
   type Cliente,
   obtenerContactosCliente,
+  obtenerContactosClienteTabla,
   guardarContactosCliente,
+  guardarContactosClienteRobusto,
   type ContactoCliente,
   obtenerFormasFacturacion,
   guardarFormasFacturacion,
   obtenerRepresentantesCliente,
+  diagnosticarConexionSupabase,
+  diagnosticarTablaContactos,
 } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
 import { toast } from "@/hooks/use-toast";
@@ -98,9 +102,21 @@ export default function ClientesPage() {
 
   // Estado para contactos múltiples (usando la nueva tabla)
   const [contactos, setContactos] = useState<ContactoCliente[]>([]);
+  
+  // Estado para representantes (separado de contactos)
+  const [representantes, setRepresentantes] = useState<ContactoCliente[]>([]);
 
   // Contacto en captura (para nuevo contacto)
   const [nuevoContacto, setNuevoContacto] = useState({
+    nombre: "",
+    puesto: "",
+    telefono: "",
+    email: "",
+    notas: "",
+  });
+  
+  // Representante en captura (para nuevo representante)
+  const [nuevoRepresentante, setNuevoRepresentante] = useState({
     nombre: "",
     puesto: "",
     telefono: "",
@@ -121,6 +137,46 @@ export default function ClientesPage() {
     nombre: "",
     descripcion: "",
   });
+
+  // Estados para paginación de contactos
+  const [paginaContactos, setPaginaContactos] = useState(1);
+  const [contactosPorPagina, setContactosPorPagina] = useState(5);
+
+  // Estados para paginación de contactos en modal de detalles
+  const [paginaContactosDetalle, setPaginaContactosDetalle] = useState(1);
+  const [contactosPorPaginaDetalle, setContactosPorPaginaDetalle] = useState(10);
+
+  // Funciones para paginación de contactos
+  const calcularPaginacionContactos = () => {
+    const inicio = (paginaContactos - 1) * contactosPorPagina;
+    const fin = inicio + contactosPorPagina;
+    const contactosPaginados = contactos.slice(inicio, fin);
+    const totalPaginas = Math.ceil(contactos.length / contactosPorPagina);
+    
+    return {
+      contactosPaginados,
+      totalPaginas,
+      inicio: inicio + 1,
+      fin: Math.min(fin, contactos.length),
+      total: contactos.length
+    };
+  };
+
+  // Funciones para paginación de contactos en modal de detalles
+  const calcularPaginacionContactosDetalle = () => {
+    const inicio = (paginaContactosDetalle - 1) * contactosPorPaginaDetalle;
+    const fin = inicio + contactosPorPaginaDetalle;
+    const contactosPaginados = selectedClientContacts.slice(inicio, fin);
+    const totalPaginas = Math.ceil(selectedClientContacts.length / contactosPorPaginaDetalle);
+    
+    return {
+      contactosPaginados,
+      totalPaginas,
+      inicio: inicio + 1,
+      fin: Math.min(fin, selectedClientContacts.length),
+      total: selectedClientContacts.length
+    };
+  };
 
   // Generador simple de UUID v4 (sin dependencias)
   const uuidv4 = () => {
@@ -202,6 +258,8 @@ export default function ClientesPage() {
       description: `Se generaron datos aleatorios para ${empresaRandom}`,
     });
   };
+
+
 
   // Estados temporales para edición de formas de facturación desde el modal
   const [editingFormas, setEditingFormas] = useState<FormaFacturacion[]>([]);
@@ -332,9 +390,73 @@ export default function ClientesPage() {
       empresa_facturadora: "",
     });
   setContactos([]);
+  setRepresentantes([]);
   setNuevoContacto({ nombre: "", puesto: "", telefono: "", email: "", notas: "" });
+  setNuevoRepresentante({ nombre: "", puesto: "", telefono: "", email: "", notas: "" });
     setEditingClient(null);
     setActiveTab("general");
+  };
+
+  // Función para generar datos aleatorios de contactos
+  const generarContactosAleatorios = (cantidad: number = 10) => {
+    const nombres = [
+      "Juan", "María", "Carlos", "Ana", "Luis", "Carmen", "José", "Laura", "Pedro", "Sofia",
+      "Miguel", "Isabel", "Roberto", "Patricia", "Fernando", "Gabriela", "Ricardo", "Alejandra",
+      "Daniel", "Valentina", "Jorge", "Natalia", "Francisco", "Andrea", "Manuel", "Carolina"
+    ];
+    const apellidos = [
+      "García", "Rodríguez", "Martínez", "López", "González", "Hernández", "Pérez", "Sánchez",
+      "Ramírez", "Torres", "Flores", "Rivera", "Gómez", "Díaz", "Cruz", "Morales", "Jiménez",
+      "Ruiz", "Álvarez", "Mendoza", "Castillo", "Ortiz", "Silva", "Vargas", "Romero"
+    ];
+    const puestos = [
+      "Gerente de Compras", "Coordinador de Logística", "Director de Operaciones",
+      "Jefe de Almacén", "Supervisor de Transporte", "Analista de Inventarios",
+      "Gerente de Ventas", "Coordinador de Importaciones", "Jefe de Tráfico",
+      "Gerente General", "Director Comercial", "Coordinador de Exportaciones"
+    ];
+    const dominios = ["empresa.com", "logistics.mx", "transport.com.mx", "grupo.mx", "corporativo.com"];
+
+    const nuevosContactos: ContactoCliente[] = [];
+    
+    for (let i = 0; i < cantidad; i++) {
+      const nombre = nombres[Math.floor(Math.random() * nombres.length)];
+      const apellido1 = apellidos[Math.floor(Math.random() * apellidos.length)];
+      const apellido2 = apellidos[Math.floor(Math.random() * apellidos.length)];
+      const nombreCompleto = `${nombre} ${apellido1} ${apellido2}`;
+      const puesto = puestos[Math.floor(Math.random() * puestos.length)];
+      const dominio = dominios[Math.floor(Math.random() * dominios.length)];
+      const email = `${nombre.toLowerCase()}.${apellido1.toLowerCase()}@${dominio}`;
+      const telefono = `55-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
+      
+      const existePrincipal = contactos.some(c => c.es_principal) || i > 0;
+      
+      nuevosContactos.push({
+        id: `temp-${Date.now()}-${i}`,
+        cliente_id: "",
+        nombre: nombreCompleto,
+        telefono: telefono,
+        email: email,
+        puesto: puesto,
+        notas: `Contacto generado automáticamente`,
+        es_principal: !existePrincipal && i === 0,
+        activo: true,
+        fecha_creacion: "",
+        updated_at: "",
+      });
+    }
+    
+    setContactos([...contactos, ...nuevosContactos]);
+    
+    // Ir a la última página
+    const todosContactos = [...contactos, ...nuevosContactos];
+    const totalPaginas = Math.ceil(todosContactos.length / contactosPorPagina);
+    setPaginaContactos(totalPaginas);
+    
+    toast({
+      title: "Contactos generados",
+      description: `Se agregaron ${cantidad} contactos aleatorios`,
+    });
   };
 
   // Funciones para manejar contactos
@@ -345,7 +467,7 @@ export default function ClientesPage() {
       nuevoContacto.telefono.trim() ||
       nuevoContacto.email.trim();
     if (!tieneDatos) return;
-    if (contactos.length >= 5) return;
+    // Límite de contactos removido - se permite ilimitado
 
     // Caso: sólo existe el placeholder vacío inicial marcado como principal
     if (
@@ -383,8 +505,13 @@ export default function ClientesPage() {
       fecha_creacion: "",
       updated_at: "",
     };
-    setContactos([...contactos, nuevo]);
+    const nuevosContactos = [...contactos, nuevo];
+    setContactos(nuevosContactos);
     setNuevoContacto({ nombre: "", puesto: "", telefono: "", email: "", notas: "" });
+    
+    // Ir a la última página para mostrar el nuevo contacto
+    const totalPaginas = Math.ceil(nuevosContactos.length / contactosPorPagina);
+    setPaginaContactos(totalPaginas);
   };
 
   const eliminarContacto = (id: string) => {
@@ -404,6 +531,12 @@ export default function ClientesPage() {
       }
       setContactos(restantes);
     }
+    
+    // Ajustar la página si quedamos en una página vacía
+    const totalPaginas = Math.ceil(restantes.length / contactosPorPagina);
+    if (paginaContactos > totalPaginas && totalPaginas > 0) {
+      setPaginaContactos(totalPaginas);
+    }
   };
 
   const actualizarContacto = (
@@ -416,6 +549,39 @@ export default function ClientesPage() {
         contacto.id === id ? { ...contacto, [campo]: valor } : contacto
       )
     );
+  };
+
+  // 🎯 Funciones para manejar representantes
+  const agregarRepresentante = () => {
+    // Validar que haya algún dato mínimo
+    const tieneDatos =
+      nuevoRepresentante.nombre.trim() ||
+      nuevoRepresentante.telefono.trim() ||
+      nuevoRepresentante.email.trim();
+    if (!tieneDatos) return;
+
+    const nuevo: ContactoCliente = {
+      id: `temp-rep-${Date.now()}`,
+      cliente_id: "",
+      nombre: nuevoRepresentante.nombre.trim(),
+      telefono: nuevoRepresentante.telefono.trim(),
+      email: nuevoRepresentante.email.trim(),
+      puesto: nuevoRepresentante.puesto.trim(),
+      notas: nuevoRepresentante.notas.trim(),
+      es_principal: false, // Los representantes nunca son principales
+      activo: true,
+      fecha_creacion: "",
+      updated_at: "",
+      tipo_contacto: 'representante' // ⭐ NUEVO CAMPO
+    };
+    
+    setRepresentantes([...representantes, nuevo]);
+    setNuevoRepresentante({ nombre: "", puesto: "", telefono: "", email: "", notas: "" });
+  };
+
+  const eliminarRepresentante = (id: string) => {
+    const restantes = representantes.filter((rep) => rep.id !== id);
+    setRepresentantes(restantes);
   };
 
   // Funciones para manejar formas de facturación
@@ -433,6 +599,101 @@ export default function ClientesPage() {
 
   const eliminarFormaFacturacion = (id: string) => {
     setFormasFacturacion(formasFacturacion.filter((forma) => forma.id !== id));
+  };
+
+  // Función para rellenar el formulario con datos de ejemplo
+  const rellenarDatosEjemplo = () => {
+    const empresasEjemplo = [
+      "Transportes del Norte S.A. de C.V.",
+      "Logística Industrial ACME",
+      "Distribuidora Continental",
+      "Carga Express México",
+      "Comercializadora Internacional"
+    ];
+    
+    const rfcsEjemplo = [
+      "TDN850614G73",
+      "LIA920315K42",
+      "DCO801203M56",
+      "CEX750928P81",
+      "CIM860517N29"
+    ];
+    
+    const direccionesEjemplo = [
+      "Av. Industria 1234, Col. Parque Industrial, 64000 Monterrey, N.L.",
+      "Blvd. Logística 567, Col. Zona Comercial, 45000 Guadalajara, Jal.",
+      "Calle Comercio 890, Col. Centro, 06000 Ciudad de México, CDMX",
+      "Av. Maquiladora 123, Col. Industrial, 32000 Cd. Juárez, Chih.",
+      "Carretera Federal 456, Col. Exportadora, 88000 Nuevo Laredo, Tamps."
+    ];
+    
+    const correos = [
+      "contacto@transportesdelnorte.com.mx",
+      "ventas@logisticaacme.com",
+      "administracion@distribuidoracontinental.mx",
+      "servicios@cargaexpress.com.mx",
+      "internacional@comercializadoracim.com"
+    ];
+    
+    const telefonos = [
+      "+52 81 8000-1234",
+      "+52 33 3500-5678",
+      "+52 55 5200-9876",
+      "+52 656 700-2345",
+      "+52 867 800-6789"
+    ];
+    
+    // Seleccionar datos aleatorios
+    const indice = Math.floor(Math.random() * empresasEjemplo.length);
+    
+    setFormData({
+      nombre_comercial: empresasEjemplo[indice],
+      rfc: rfcsEjemplo[indice],
+      direccion: direccionesEjemplo[indice],
+      correo_contacto: correos[indice],
+      telefono: telefonos[indice],
+      forma_facturacion: formasFacturacion.length > 0 ? formasFacturacion[0].id : "",
+      divisa_pago: "MXN",
+      empresa_facturadora: empresasEjemplo[indice]
+    });
+
+    // Agregar contactos de ejemplo
+    const contactosEjemplo: ContactoCliente[] = [
+      {
+        id: `temp-${Date.now()-1}`,
+        cliente_id: "",
+        nombre: "María González Hernández",
+        puesto: "Gerente de Logística",
+        telefono: "+52 81 8000-1235",
+        email: "maria.gonzalez@transportesdelnorte.com.mx",
+        es_principal: true,
+        activo: true,
+        fecha_creacion: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notas: "Contacto principal para coordinación de embarques"
+      },
+      {
+        id: `temp-${Date.now()}`,
+        cliente_id: "",
+        nombre: "Carlos Rodríguez López",
+        puesto: "Coordinador de Operaciones",
+        telefono: "+52 81 8000-1236",
+        email: "carlos.rodriguez@transportesdelnorte.com.mx",
+        es_principal: false,
+        activo: true,
+        fecha_creacion: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        notas: "Responsable de seguimiento y estatus de entregas"
+      }
+    ];
+    
+    setContactos(contactosEjemplo);
+
+    toast({ 
+      title: "Datos de ejemplo cargados", 
+      description: "El formulario se ha rellenado con datos de ejemplo. Puedes modificar cualquier campo antes de guardar.",
+      duration: 3000
+    });
   };
 
   const guardarCliente = async () => {
@@ -463,10 +724,7 @@ export default function ClientesPage() {
       return;
     }
 
-    if (formData.telefono && formData.telefono.length > 15) {
-  toast({ title: `El teléfono es demasiado largo (${formData.telefono.length} caracteres). Máximo permitido: 15 caracteres`, variant: "destructive" });
-      return;
-    }
+    // Validación de teléfono removida - formato libre permitido
 
     // Validar que al menos un contacto tenga información
     const contactosValidos = contactos.filter(
@@ -512,17 +770,49 @@ export default function ClientesPage() {
           .eq("id", editingClient.id);
 
         if (error) {
-          console.error("Error actualizando cliente:", error);
-          console.error("Datos que se intentaron actualizar:", clienteData);
-          console.error("ID del cliente:", editingClient?.id);
-          console.error("Error message:", error.message);
-          console.error("Error details:", error.details);
-          
-          toast({ 
-            title: "Error al actualizar cliente", 
-            description: error.message || error.details || "Error desconocido",
-            variant: "destructive" 
-          });
+          try {
+            console.error("❌ Error actualizando cliente:");
+            
+            // Logs seguros para evitar errores de serialización
+            if (error.message) {
+              console.error("   - Message:", error.message);
+            }
+            if (error.details) {
+              console.error("   - Details:", error.details);
+            }
+            if (error.hint) {
+              console.error("   - Hint:", error.hint);
+            }
+            if (error.code) {
+              console.error("   - Code:", error.code);
+            }
+            
+            console.error("   - Datos que se intentaron actualizar:", clienteData);
+            console.error("   - ID del cliente:", editingClient?.id);
+            
+            // Mostrar el error completo de forma segura
+            try {
+              console.error("   - Error completo:", error);
+            } catch (logError) {
+              console.error("   - No se pudo mostrar error completo:", logError);
+            }
+            
+            const errorMessage = error.message || error.details || error.hint || 'Error desconocido al actualizar cliente';
+            
+            toast({ 
+              title: "Error al actualizar cliente", 
+              description: errorMessage,
+              variant: "destructive" 
+            });
+            
+          } catch (handlingError) {
+            console.error("❌ Error manejando el error de actualización de cliente:", String(handlingError));
+            toast({
+              title: "Error al actualizar cliente",
+              description: "Error interno del sistema. Revisa la consola.",
+              variant: "destructive",
+            });
+          }
           return;
         }
 
@@ -535,18 +825,42 @@ export default function ClientesPage() {
           );
         } catch {}
 
-        // Guardar contactos en la nueva tabla
+        // Guardar contactos Y representantes usando la función robusta
         try {
-          const contactosGuardados = await guardarContactosCliente(
+          console.log("💾 Guardando contactos con función robusta...");
+          const contactosConTipo = contactos.map(c => ({ 
+            ...c, 
+            tipo_contacto: c.es_principal ? 'principal' : 'contacto' 
+          }));
+          
+          const representantesConTipo = representantes.map(r => ({ 
+            ...r, 
+            tipo_contacto: 'representante' as const
+          }));
+          
+          // Combinar contactos y representantes en un solo array
+          const todosLosContactos = [...contactosConTipo, ...representantesConTipo];
+          
+          const contactosGuardados = await guardarContactosClienteRobusto(
             editingClient.id,
-            contactos
+            todosLosContactos
           );
           if (!contactosGuardados) {
-            console.warn("No se pudieron guardar los contactos, pero el cliente se actualizó correctamente");
-            toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "default" });
+            console.warn("No se pudieron guardar los contactos/representantes con la función robusta");
+            toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "destructive" });
+            
+            // Ejecutar diagnóstico para entender el problema
+            console.log("🔧 Ejecutando diagnóstico debido al error en actualización...");
+            await diagnosticarTablaContactos();
+          } else {
+            console.log("✅ Contactos y representantes guardados exitosamente con función robusta");
           }
         } catch (errorContactos) {
-          console.error("Error guardando contactos durante actualización:", errorContactos);
+          console.error("Error guardando contactos/representantes durante actualización:", errorContactos);
+          
+          // Ejecutar diagnóstico para entender el problema
+          console.log("🔧 Ejecutando diagnóstico debido a excepción en actualización...");
+          await diagnosticarTablaContactos();
           toast({ title: "Cliente actualizado, pero hubo un error guardando los contactos", variant: "default" });
         }
       } else {
@@ -561,16 +875,67 @@ export default function ClientesPage() {
           .single();
 
         if (error) {
-          console.error("Error creando cliente:", error);
-          console.error("Datos que se intentaron insertar:", clienteData);
-          console.error("Error message:", error.message);
-          console.error("Error details:", error.details);
-          
-          toast({ 
-            title: "Error al crear cliente", 
-            description: error.message || error.details || "Error desconocido",
-            variant: "destructive" 
-          });
+          try {
+            console.error("❌ Error creando cliente:");
+            
+            // Logs seguros para evitar errores de serialización
+            if (error.message) {
+              console.error("   - Message:", error.message);
+            }
+            if (error.details) {
+              console.error("   - Details:", error.details);
+            }
+            if (error.hint) {
+              console.error("   - Hint:", error.hint);
+            }
+            if (error.code) {
+              console.error("   - Code:", error.code);
+            }
+            
+            console.error("   - Datos que se intentaron insertar:");
+            console.error("     * nombre:", clienteData.nombre);
+            console.error("     * rfc:", clienteData.rfc);
+            console.error("     * direccion:", clienteData.direccion);
+            console.error("     * email:", clienteData.email);
+            console.error("     * telefono:", clienteData.telefono);
+            
+            // Mostrar el error completo de forma segura
+            try {
+              console.error("   - Error completo:", error);
+            } catch (logError) {
+              console.error("   - No se pudo mostrar error completo:", logError);
+            }
+            
+            // Intentar serializar el error de forma segura
+            try {
+              const errorInfo = {
+                message: error.message || 'Sin mensaje',
+                details: error.details || 'Sin detalles',
+                hint: error.hint || 'Sin sugerencias',
+                code: error.code || 'Sin código',
+                timestamp: new Date().toISOString()
+              };
+              console.error("   - Error resumido:", JSON.stringify(errorInfo, null, 2));
+            } catch (serializationError) {
+              console.error("   - Error en serialización:", String(serializationError));
+            }
+            
+            const errorMessage = error.message || error.details || error.hint || 'Error desconocido al crear cliente';
+            
+            toast({ 
+              title: "Error al crear cliente", 
+              description: errorMessage,
+              variant: "destructive" 
+            });
+            
+          } catch (handlingError) {
+            console.error("❌ Error manejando el error de creación de cliente:", String(handlingError));
+            toast({
+              title: "Error al crear cliente",
+              description: "Error interno del sistema. Revisa la consola.",
+              variant: "destructive",
+            });
+          }
           return;
         }
 
@@ -583,36 +948,72 @@ export default function ClientesPage() {
           );
         } catch {}
 
-        // Guardar contactos en la nueva tabla
+        // Guardar contactos Y representantes usando la función robusta
         try {
-          const contactosGuardados = await guardarContactosCliente(
+          console.log("💾 Guardando contactos y representantes con función robusta...");
+          const contactosConTipo = contactos.map(c => ({ 
+            ...c, 
+            tipo_contacto: c.es_principal ? 'principal' : 'contacto' 
+          }));
+          
+          const representantesConTipo = representantes.map(r => ({ 
+            ...r, 
+            tipo_contacto: 'representante' as const
+          }));
+          
+          // Combinar contactos y representantes en un solo array
+          const todosLosContactos = [...contactosConTipo, ...representantesConTipo];
+          const totalItems = contactos.length + representantes.length;
+          
+          const contactosGuardados = await guardarContactosClienteRobusto(
             nuevoCliente.id,
-            contactos
+            todosLosContactos
           );
           if (!contactosGuardados) {
-            console.warn("No se pudieron guardar los contactos, pero el cliente se creó correctamente");
-            toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "default" });
+            console.warn("No se pudieron guardar los contactos/representantes con la función robusta");
+            toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "destructive" });
+            
+            // Ejecutar diagnóstico para entender el problema
+            console.log("🔧 Ejecutando diagnóstico debido al error en creación...");
+            await diagnosticarTablaContactos();
+          } else {
+            console.log("✅ Contactos y representantes guardados exitosamente con función robusta");
+            toast({ 
+              title: `✅ Cliente, ${contactos.length} contactos y ${representantes.length} representantes guardados exitosamente`, 
+              variant: "default" 
+            });
           }
         } catch (errorContactos) {
-          console.error("Error guardando contactos:", errorContactos);
-          toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "default" });
+          console.error("Error guardando contactos/representantes:", errorContactos);
+          toast({ title: "Cliente creado, pero hubo un error guardando los contactos", variant: "destructive" });
+          
+          // Ejecutar diagnóstico para entender el problema
+          console.log("🔧 Ejecutando diagnóstico debido a excepción en creación...");
+          await diagnosticarTablaContactos();
         }
       }
 
-  toast({ title: editingClient ? "Cliente actualizado exitosamente" : "Cliente creado exitosamente", variant: "success" });
+  toast({ title: editingClient ? "Cliente actualizado exitosamente" : "Cliente creado exitosamente" });
       limpiarFormulario();
       setShowForm(false);
       await cargarClientes();
     } catch (error) {
       console.error("Error guardando cliente:", error);
       console.error("Tipo de error:", typeof error);
-      console.error("Detalles del error:", JSON.stringify(error, null, 2));
+      
+      // Serialización segura del error
+      try {
+        console.error("Detalles del error:", JSON.stringify(error, null, 2));
+      } catch (jsonError) {
+        console.error("No se pudo serializar el error a JSON");
+      }
+      
       console.error("Stack trace:", (error as any)?.stack);
       console.error("Message:", (error as any)?.message);
       
       const errorMessage = (error as any)?.message || 
                           (error as any)?.details || 
-                          JSON.stringify(error) || 
+                          String(error) || 
                           "Error desconocido";
       
       toast({ 
@@ -653,7 +1054,7 @@ export default function ClientesPage() {
 
     // Cargar contactos desde la nueva tabla
     try {
-      const contactosCliente = await obtenerContactosCliente(cliente.id);
+      const contactosCliente = await obtenerContactosClienteTabla(cliente.id);
       if (contactosCliente.length > 0) {
         setContactos(contactosCliente);
       } else {
@@ -1075,7 +1476,7 @@ export default function ClientesPage() {
       const cliente = clientes.find((c) => c.id === clienteId) || selectedClient;
 
       // Contactos y representantes desde la API
-      const contactos = await obtenerContactosCliente(clienteId);
+      const contactos = await obtenerContactosClienteTabla(clienteId);
       const representantes = await obtenerRepresentantesCliente(clienteId);
 
       const escape = (v: any) => `"\t${(v ?? "").toString().replace(/"/g, '""')}"`;
@@ -1141,17 +1542,41 @@ export default function ClientesPage() {
   };
 
   const verDetallesCliente = async (cliente: Cliente) => {
+    console.log("🔍 Abriendo detalles del cliente:", { id: cliente.id, nombre: cliente.nombre });
+    
     setSelectedClient(cliente);
     setShowDetailModal(true);
     setActiveTab("general"); // Reset tab to general when opening details
+    setPaginaContactosDetalle(1); // Reset pagination when opening details
 
     // Cargar contactos para el modal de detalles
     try {
-      const contactosData = await obtenerContactosCliente(cliente.id);
+      console.log("📞 Cargando contactos para cliente:", cliente.id);
+      const contactosData = await obtenerContactosClienteTabla(cliente.id);
+      console.log(`✅ Contactos cargados: ${contactosData.length}`);
       setSelectedClientContacts(contactosData);
+      
+      if (contactosData.length === 0) {
+        console.log("ℹ️ No se encontraron contactos para este cliente");
+        toast({
+          title: "Sin contactos",
+          description: "Este cliente no tiene contactos registrados",
+          variant: "default"
+        });
+      }
     } catch (error) {
-      console.error("Error cargando contactos para detalles:", error);
+      console.error("💥 Error cargando contactos para detalles:", error);
       setSelectedClientContacts([]);
+      
+      // Ejecutar diagnóstico
+      console.log("🔧 Ejecutando diagnóstico de conexión...");
+      diagnosticarConexionSupabase();
+      
+      toast({
+        title: "Error cargando contactos",
+        description: "No se pudieron cargar los contactos del cliente. Revisa la consola para más detalles.",
+        variant: "destructive"
+      });
     }
   };
 
@@ -1190,16 +1615,17 @@ export default function ClientesPage() {
               <Download className="h-4 w-4 mr-2" />
               Descargar Excel
             </Button>
-            <Dialog open={showForm} onOpenChange={setShowForm}>
-              <DialogTrigger asChild>
-                <Button
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                  onClick={() => limpiarFormulario()}
-                >
-                  <Plus className="h-4 w-4 mr-2" />
-                  Nuevo Cliente
-                </Button>
-              </DialogTrigger>
+            <div className="flex gap-2">
+              <Dialog open={showForm} onOpenChange={setShowForm}>
+                <DialogTrigger asChild>
+                  <Button
+                    className="bg-green-600 hover:bg-green-700 text-white"
+                    onClick={() => limpiarFormulario()}
+                  >
+                    <Plus className="h-4 w-4 mr-2" />
+                    Nuevo Cliente
+                  </Button>
+                </DialogTrigger>
 
                 <DialogContent
                   className={`w-full h-screen md:h-auto md:max-w-5xl md:w-[1100px] ${
@@ -1222,13 +1648,26 @@ export default function ClientesPage() {
 
                   {/* Desktop header: keep original header for md+ */}
                   <DialogHeader className="hidden md:block">
-                      <div>
-                        <DialogTitle>
-                          {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
-                        </DialogTitle>
-                        <DialogDescription>
-                          Completa la información del cliente
-                        </DialogDescription>
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <DialogTitle>
+                            {editingClient ? "Editar Cliente" : "Nuevo Cliente"}
+                          </DialogTitle>
+                          <DialogDescription>
+                            Completa la información del cliente
+                          </DialogDescription>
+                        </div>
+                        {!editingClient && (
+                          <Button 
+                            variant="outline" 
+                            size="sm"
+                            onClick={rellenarDatosEjemplo}
+                            className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
+                          >
+                            <FileText className="h-4 w-4" />
+                            Rellenar datos de ejemplo
+                          </Button>
+                        )}
                       </div>
                   </DialogHeader>
 
@@ -1257,6 +1696,18 @@ export default function ClientesPage() {
                       >
                         Contactos
                       </button>
+                      {/* Pestaña de Representantes ocultada - funcionalidad duplicada con Contactos 
+                      <button
+                        onClick={() => setActiveTab("representantes")}
+                        className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                          activeTab === "representantes"
+                            ? "border-blue-500 text-blue-600"
+                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                        }`}
+                      >
+                        Representantes
+                      </button>
+                      */}
                       <button
                         onClick={() => setActiveTab("facturacion")}
                         className={`py-2 px-1 border-b-2 font-medium text-sm ${
@@ -1370,18 +1821,33 @@ export default function ClientesPage() {
                     {/* Pestaña Contactos */}
                     {activeTab === "contactos" && (
                       <div className="space-y-6">
-                        <div className="flex items-center justify-between gap-2">
-                          <h3 className="text-lg font-semibold">Agregar Contacto</h3>
-                          <Button
-                            type="button"
-                            disabled={contactos.length >= 5 || !nuevoContacto.nombre.trim()}
-                            onClick={agregarContacto}
-                            className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-60"
-                          >
-                            Guardar Contacto
-                          </Button>
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <div>
+                            <h3 className="text-lg font-semibold">Agregar Contacto</h3>
+                            <p className="text-sm text-gray-600">Total de contactos: <span className="font-semibold text-blue-600">{contactos.length}</span></p>
+                          </div>
+                          <div className="flex gap-2 items-center">
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => generarContactosAleatorios(10)}
+                              className="h-9 bg-blue-50 hover:bg-blue-100 border-blue-300"
+                            >
+                              <Plus className="h-4 w-4 mr-1" />
+                              Agregar 10 Contactos
+                            </Button>
+                            <Button
+                              type="button"
+                              disabled={!nuevoContacto.nombre.trim()}
+                              onClick={agregarContacto}
+                              className="bg-green-600 hover:bg-green-700 text-white disabled:opacity-60"
+                            >
+                              Guardar Contacto
+                            </Button>
+                          </div>
                         </div>
-                        <p className="text-xs text-gray-500">Captura un contacto y pulsa Guardar Contacto. Se listarán abajo. Máximo 5.</p>
+
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div className="space-y-2">
                             <Label>Nombre *</Label>
@@ -1446,7 +1912,7 @@ export default function ClientesPage() {
                                 </tr>
                               </thead>
                               <tbody>
-                                {contactos.map((c) => (
+                                {calcularPaginacionContactos().contactosPaginados.map((c) => (
                                   <tr key={c.id} className="border-t">
                                     <td className="px-2 py-1">{c.nombre}</td>
                                     <td className="px-2 py-1">{c.puesto}</td>
@@ -1477,9 +1943,189 @@ export default function ClientesPage() {
                               </tbody>
                             </table>
                           </div>
+
+                          {/* Controles de paginación */}
+                          {contactos.length > 0 && (
+                            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t bg-gray-50">
+                              <div className="flex items-center gap-4">
+                                <div className="flex items-center gap-2">
+                                  <Label className="text-sm font-medium">Mostrar:</Label>
+                                  <Select 
+                                    value={contactosPorPagina.toString()} 
+                                    onValueChange={(value) => {
+                                      setContactosPorPagina(Number(value));
+                                      setPaginaContactos(1);
+                                    }}
+                                  >
+                                    <SelectTrigger className="w-20">
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="5">5</SelectItem>
+                                      <SelectItem value="10">10</SelectItem>
+                                      <SelectItem value="15">15</SelectItem>
+                                      <SelectItem value="20">20</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                  <span className="text-sm text-gray-600">por página</span>
+                                </div>
+                                <div className="text-sm text-gray-600">
+                                  Mostrando {calcularPaginacionContactos().inicio} - {calcularPaginacionContactos().fin} de {calcularPaginacionContactos().total} contactos
+                                </div>
+                              </div>
+                              
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPaginaContactos(Math.max(1, paginaContactos - 1))}
+                                  disabled={paginaContactos === 1}
+                                >
+                                  Anterior
+                                </Button>
+                                <div className="flex items-center gap-1">
+                                  {Array.from({ length: calcularPaginacionContactos().totalPaginas }, (_, i) => (
+                                    <Button
+                                      key={i + 1}
+                                      variant={paginaContactos === i + 1 ? "default" : "outline"}
+                                      size="sm"
+                                      onClick={() => setPaginaContactos(i + 1)}
+                                      className="w-8 h-8 p-0"
+                                    >
+                                      {i + 1}
+                                    </Button>
+                                  ))}
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPaginaContactos(Math.min(calcularPaginacionContactos().totalPaginas, paginaContactos + 1))}
+                                  disabled={paginaContactos === calcularPaginacionContactos().totalPaginas}
+                                >
+                                  Siguiente
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       </div>
                     )}
+
+                    {/* 🎯 Pestaña Representantes - OCULTADA por funcionalidad duplicada
+                    {activeTab === "representantes" && (
+                      <div className="space-y-6">
+                        <div className="flex items-center justify-between gap-2">
+                          <div>
+                            <h3 className="text-lg font-semibold">Agregar Representante</h3>
+                            <p className="text-sm text-gray-600">Total de representantes: <span className="font-semibold text-purple-600">{representantes.length}</span></p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            <Button
+                              type="button"
+                              disabled={!nuevoRepresentante.nombre.trim()}
+                              onClick={agregarRepresentante}
+                              className="bg-purple-600 hover:bg-purple-700 text-white disabled:opacity-60"
+                            >
+                              Guardar Representante
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                          <div className="space-y-2">
+                            <Label>Nombre *</Label>
+                            <Input
+                              value={nuevoRepresentante.nombre}
+                              onChange={(e) => setNuevoRepresentante({ ...nuevoRepresentante, nombre: e.target.value })}
+                              placeholder="Nombre completo"
+                              maxLength={100}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Puesto</Label>
+                            <Input
+                              value={nuevoRepresentante.puesto || ""}
+                              onChange={(e) => setNuevoRepresentante({ ...nuevoRepresentante, puesto: e.target.value })}
+                              placeholder="Director, Gerente, etc."
+                              maxLength={50}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Teléfono</Label>
+                            <Input
+                              value={nuevoRepresentante.telefono || ""}
+                              onChange={(e) => setNuevoRepresentante({ ...nuevoRepresentante, telefono: e.target.value })}
+                              placeholder="55-1234-5678"
+                              maxLength={15}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Correo</Label>
+                            <Input
+                              type="email"
+                              value={nuevoRepresentante.email || ""}
+                              onChange={(e) => setNuevoRepresentante({ ...nuevoRepresentante, email: e.target.value })}
+                              placeholder="representante@empresa.com"
+                              maxLength={100}
+                            />
+                          </div>
+                          <div className="space-y-2 md:col-span-4">
+                            <Label>Notas</Label>
+                            <Textarea
+                              value={nuevoRepresentante.notas || ""}
+                              onChange={(e) => setNuevoRepresentante({ ...nuevoRepresentante, notas: e.target.value })}
+                              placeholder="Autoridad, responsabilidades, etc."
+                              rows={2}
+                              maxLength={250}
+                            />
+                          </div>
+                        </div>
+                        <div>
+                          <h4 className="text-md font-semibold mb-2">Representantes Registrados</h4>
+                          {representantes.length > 0 ? (
+                            <div className="overflow-x-auto max-h-64 overflow-y-auto border rounded">
+                              <table className="min-w-full text-sm">
+                                <thead className="bg-gray-100">
+                                  <tr>
+                                    <th className="px-2 py-1 text-left">Nombre</th>
+                                    <th className="px-2 py-1 text-left">Puesto</th>
+                                    <th className="px-2 py-1 text-left">Teléfono</th>
+                                    <th className="px-2 py-1 text-left">Correo</th>
+                                    <th className="px-2 py-1 text-left">Notas</th>
+                                    <th className="px-2 py-1 text-left">Acciones</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {representantes.map((rep) => (
+                                    <tr key={rep.id} className="border-t">
+                                      <td className="px-2 py-1 font-medium text-purple-700">{rep.nombre}</td>
+                                      <td className="px-2 py-1">{rep.puesto}</td>
+                                      <td className="px-2 py-1">{rep.telefono}</td>
+                                      <td className="px-2 py-1">{rep.email}</td>
+                                      <td className="px-2 py-1">{rep.notas ? rep.notas.substring(0, 40) + (rep.notas.length > 40 ? "..." : "") : "-"}</td>
+                                      <td className="px-2 py-1">
+                                        <Button
+                                          type="button"
+                                          size="icon"
+                                          variant="ghost"
+                                          onClick={() => eliminarRepresentante(rep.id)}
+                                        >
+                                          <X className="h-4 w-4" />
+                                        </Button>
+                                      </td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ) : (
+                            <div className="text-center py-8 text-gray-500 border rounded">
+                              <p>No hay representantes registrados</p>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    */}
 
                     {/* Pestaña Facturación y Pagos */}
                     {activeTab === "facturacion" && (
@@ -1640,6 +2286,9 @@ export default function ClientesPage() {
                 </div>
               </DialogContent>
             </Dialog>
+
+
+          </div>
           </div>
         </div>
 
@@ -2162,6 +2811,18 @@ export default function ClientesPage() {
                     >
                       Contactos
                     </button>
+                    {/* Pestaña de Representantes ocultada - funcionalidad duplicada con Contactos 
+                    <button
+                      onClick={() => setActiveTab("representantes")}
+                      className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                        activeTab === "representantes"
+                          ? "border-purple-500 text-purple-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                      }`}
+                    >
+                      Representantes
+                    </button>
+                    */}
                     <button
                       onClick={() => setActiveTab("facturacion")}
                       className={`py-2 px-1 border-b-2 font-medium text-sm ${
@@ -2172,16 +2833,7 @@ export default function ClientesPage() {
                     >
                       Facturación y Pagos
                     </button>
-                    <button
-                      onClick={() => setActiveTab("sistema")}
-                      className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                        activeTab === "sistema"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                      }`}
-                    >
-                      Sistema
-                    </button>
+
                   </nav>
                 </div>
 
@@ -2251,46 +2903,167 @@ export default function ClientesPage() {
                           </span>
                         </div>
                       </div>
+
+                      {/* Agregar Última Actualización */}
+                      {selectedClient.updated_at && (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div>
+                            <span className="block text-xs text-gray-500 mb-1">Última Actualización</span>
+                            <span className="text-sm">
+                              {new Date(selectedClient.updated_at).toLocaleDateString("es-ES", {
+                                year: "numeric",
+                                month: "long",
+                                day: "numeric",
+                                hour: "2-digit",
+                                minute: "2-digit",
+                              })}
+                            </span>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   )}
 
                   {/* Pestaña Contactos */}
                   {activeTab === "contactos" && (
-                    <div>
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold">Contactos del Cliente</h3>
+                          <p className="text-sm text-gray-600">
+                            Total de contactos: <span className="font-semibold text-blue-600">{selectedClientContacts.length}</span>
+                          </p>
+                        </div>
+                        {selectedClientContacts.length > contactosPorPaginaDetalle && (
+                          <div className="flex items-center gap-2">
+                            <Label className="text-sm font-medium">Mostrar:</Label>
+                            <Select 
+                              value={contactosPorPaginaDetalle.toString()} 
+                              onValueChange={(value) => {
+                                setContactosPorPaginaDetalle(Number(value));
+                                setPaginaContactosDetalle(1);
+                              }}
+                            >
+                              <SelectTrigger className="w-20">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="5">5</SelectItem>
+                                <SelectItem value="10">10</SelectItem>
+                                <SelectItem value="20">20</SelectItem>
+                                <SelectItem value="50">50</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        )}
+                      </div>
+
                       {selectedClientContacts.length > 0 ? (
-                        <div className="border rounded-lg overflow-x-auto">
-                          <table className="min-w-full text-sm">
-                            <thead>
-                              <tr className="bg-gray-50">
-                                <th className="px-3 py-2 text-left font-semibold">Contacto</th>
-                                <th className="px-3 py-2 text-left font-semibold">Puesto</th>
-                                <th className="px-3 py-2 text-left font-semibold">Teléfono</th>
-                                <th className="px-3 py-2 text-left font-semibold">Email</th>
-                                <th className="px-3 py-2 text-left font-semibold">Notas</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {selectedClientContacts.map((contacto) => (
-                                <tr key={contacto.id} className="border-t align-top">
-                                  <td className="px-3 py-2">
-                                    <div className="flex items-center gap-2">
-                                      <User className="h-4 w-4 text-gray-600" />
-                                      <span className="font-medium text-gray-900">{contacto.nombre || "Sin nombre"}</span>
-                                      {contacto.es_principal && (
-                                        <Badge className="bg-green-100 text-green-800 text-xs">Principal</Badge>
-                                      )}
-                                    </div>
-                                  </td>
-                                  <td className="px-3 py-2">{contacto.puesto || "-"}</td>
-                                  <td className="px-3 py-2">{contacto.telefono || "-"}</td>
-                                  <td className="px-3 py-2 break-all">{contacto.email || "-"}</td>
-                                  <td className="px-3 py-2">
-                                    <div className="whitespace-pre-wrap break-words">{contacto.notas || "-"}</div>
-                                  </td>
+                        <div className="space-y-4">
+                          <div className="border rounded-lg overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead>
+                                <tr className="bg-gray-50">
+                                  <th className="px-3 py-2 text-left font-semibold">Contacto</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Puesto</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Teléfono</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Email</th>
+                                  <th className="px-3 py-2 text-left font-semibold">Notas</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                              </thead>
+                              <tbody>
+                                {calcularPaginacionContactosDetalle().contactosPaginados.map((contacto) => (
+                                  <tr key={contacto.id} className="border-t align-top hover:bg-gray-50">
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-2">
+                                        <User className="h-4 w-4 text-gray-600" />
+                                        <div>
+                                          <span className="font-medium text-gray-900">
+                                            {contacto.nombre || "Sin nombre"}
+                                          </span>
+                                          {contacto.es_principal && (
+                                            <Badge className="bg-green-100 text-green-800 text-xs ml-2">Principal</Badge>
+                                          )}
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span className="text-gray-700">{contacto.puesto || "-"}</span>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-1">
+                                        <Phone className="h-3 w-3 text-gray-500" />
+                                        <span className="text-gray-700">{contacto.telefono || "-"}</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-1">
+                                        <Mail className="h-3 w-3 text-gray-500" />
+                                        <span className="text-gray-700 break-all">{contacto.email || "-"}</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2 max-w-xs">
+                                      <div className="whitespace-pre-wrap break-words text-gray-600 text-xs">
+                                        {contacto.notas ? truncateText(contacto.notas, 100) : "-"}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Controles de paginación para contactos */}
+                          {selectedClientContacts.length > contactosPorPaginaDetalle && (
+                            <div className="flex flex-col sm:flex-row justify-between items-center gap-4 p-4 border-t bg-gray-50 rounded-b-lg">
+                              <div className="text-sm text-gray-600">
+                                Mostrando {calcularPaginacionContactosDetalle().inicio} - {calcularPaginacionContactosDetalle().fin} de {calcularPaginacionContactosDetalle().total} contactos
+                              </div>
+                              
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPaginaContactosDetalle(Math.max(1, paginaContactosDetalle - 1))}
+                                  disabled={paginaContactosDetalle === 1}
+                                >
+                                  Anterior
+                                </Button>
+                                <div className="flex items-center gap-1">
+                                  {Array.from({ length: Math.min(5, calcularPaginacionContactosDetalle().totalPaginas) }, (_, i) => {
+                                    const totalPaginas = calcularPaginacionContactosDetalle().totalPaginas;
+                                    let startPage = Math.max(1, paginaContactosDetalle - 2);
+                                    let endPage = Math.min(totalPaginas, startPage + 4);
+                                    startPage = Math.max(1, endPage - 4);
+                                    
+                                    const pageNum = startPage + i;
+                                    if (pageNum <= endPage) {
+                                      return (
+                                        <Button
+                                          key={pageNum}
+                                          variant={paginaContactosDetalle === pageNum ? "default" : "outline"}
+                                          size="sm"
+                                          onClick={() => setPaginaContactosDetalle(pageNum)}
+                                          className="w-8 h-8 p-0"
+                                        >
+                                          {pageNum}
+                                        </Button>
+                                      );
+                                    }
+                                    return null;
+                                  })}
+                                </div>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setPaginaContactosDetalle(Math.min(calcularPaginacionContactosDetalle().totalPaginas, paginaContactosDetalle + 1))}
+                                  disabled={paginaContactosDetalle === calcularPaginacionContactosDetalle().totalPaginas}
+                                >
+                                  Siguiente
+                                </Button>
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ) : (
                         <div className="text-center py-8">
@@ -2303,6 +3076,82 @@ export default function ClientesPage() {
                       )}
                     </div>
                   )}
+
+                  {/* 🎯 Pestaña Representantes en Modal Detalles - OCULTADA por funcionalidad duplicada 
+                  {activeTab === "representantes" && (
+                    <div className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h3 className="text-lg font-semibold">Representantes del Cliente</h3>
+                          <p className="text-sm text-gray-600">
+                            Representantes legales y comerciales con autoridad
+                          </p>
+                        </div>
+                      </div>
+
+                      {selectedClientContacts.filter(c => c.tipo_contacto === 'representante').length > 0 ? (
+                        <div className="space-y-4">
+                          <div className="border rounded-lg overflow-x-auto">
+                            <table className="min-w-full text-sm">
+                              <thead>
+                                <tr className="bg-purple-50">
+                                  <th className="px-3 py-2 text-left font-semibold text-purple-700">Representante</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-purple-700">Puesto</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-purple-700">Teléfono</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-purple-700">Email</th>
+                                  <th className="px-3 py-2 text-left font-semibold text-purple-700">Notas</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {selectedClientContacts.filter(c => c.tipo_contacto === 'representante').map((representante) => (
+                                  <tr key={representante.id} className="border-t align-top hover:bg-purple-50">
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-2">
+                                        <Building className="h-4 w-4 text-purple-600" />
+                                        <div>
+                                          <span className="font-medium text-purple-900">
+                                            {representante.nombre || "Sin nombre"}
+                                          </span>
+                                        </div>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <span className="text-gray-700 font-medium">{representante.puesto || "-"}</span>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-1">
+                                        <Phone className="h-3 w-3 text-gray-500" />
+                                        <span className="text-gray-700">{representante.telefono || "-"}</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2">
+                                      <div className="flex items-center gap-1">
+                                        <Mail className="h-3 w-3 text-gray-500" />
+                                        <span className="text-gray-700 break-all">{representante.email || "-"}</span>
+                                      </div>
+                                    </td>
+                                    <td className="px-3 py-2 max-w-xs">
+                                      <div className="whitespace-pre-wrap break-words text-gray-600 text-xs">
+                                        {representante.notas ? (representante.notas.length > 100 ? representante.notas.substring(0, 100) + "..." : representante.notas) : "-"}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="text-center py-8">
+                          <Building className="h-12 w-12 mx-auto mb-4 text-purple-400" />
+                          <p className="text-gray-500">No hay representantes registrados</p>
+                          <p className="text-sm text-gray-400 mt-1">
+                            Los representantes se pueden agregar al editar el cliente
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  */}
 
                   {/* Pestaña Facturación y Pagos */}
                   {activeTab === "facturacion" && (
@@ -2356,59 +3205,12 @@ export default function ClientesPage() {
                     </div>
                   )}
 
-                  {/* Pestaña Sistema */}
-                  {activeTab === "sistema" && (
-                    <div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
-                        <div>
-                          <span className="block text-xs text-gray-500 mb-1">ID del Cliente</span>
-                          <span className="text-sm font-mono">{selectedClient.id}</span>
-                        </div>
-                        {selectedClient.updated_at && (
-                          <div>
-                            <span className="block text-xs text-gray-500 mb-1">Última Actualización</span>
-                            <span className="text-sm">
-                              {new Date(selectedClient.updated_at).toLocaleDateString("es-ES", {
-                                year: "numeric",
-                                month: "long",
-                                day: "numeric",
-                                hour: "2-digit",
-                                minute: "2-digit",
-                              })}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                      {/* Información completa del campo empresa para debug */}
-                      {selectedClient.empresa && (
-                        <div className="mb-4">
-                          <span className="block text-xs text-gray-500 mb-1">Datos Completos (Campo Empresa)</span>
-                          <span className="text-xs font-mono break-all block max-h-32 overflow-y-auto">{selectedClient.empresa}</span>
-                        </div>
-                      )}
-                      <div className="bg-yellow-50 p-4 rounded mb-2">
-                        <span className="block text-xs font-medium text-yellow-800 mb-2">Información para Desarrolladores</span>
-                        <span className="text-xs text-yellow-700">
-                          Para debug en consola del navegador, ejecuta: <code>debugCliente('{selectedClient.id}')</code>
-                        </span>
-                      </div>
-                    </div>
-                  )}
+
                 </div>
 
                 {/* Botones de Acción */}
                 <div className="flex justify-between items-center pt-6 border-t">
-                  <Button
-                    variant="outline"
-                    onClick={() => setShowDetailModal(false)}
-                  >
-                    Cerrar
-                  </Button>
                   <div className="flex space-x-2 items-center">
-                    <Button size="sm" variant="outline" onClick={() => descargarDetalleClienteExcel(selectedClient?.id)}>
-                      <Download className="h-4 w-4 mr-2" />
-                      Descargar Excel
-                    </Button>
                     <Button
                       variant="outline"
                       onClick={() => {
@@ -2418,6 +3220,10 @@ export default function ClientesPage() {
                     >
                       <Edit className="h-4 w-4 mr-2" />
                       Modificar Información
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => descargarDetalleClienteExcel(selectedClient?.id)}>
+                      <Download className="h-4 w-4 mr-2" />
+                      Descargar
                     </Button>
                     <Button
                       variant={
@@ -2445,6 +3251,12 @@ export default function ClientesPage() {
                         : "Activar Cliente"}
                     </Button>
                   </div>
+                  <Button
+                    variant="outline"
+                    onClick={() => setShowDetailModal(false)}
+                  >
+                    Cerrar
+                  </Button>
                 </div>
               </div>
             )}

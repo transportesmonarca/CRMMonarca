@@ -11,6 +11,7 @@ import { Camera, Upload, X, Check, User, Truck, Package, FileText } from "lucide
 import { supabase } from "@/lib/supabase"
 import { subirFotoEmbarque } from "@/lib/blob"
 import { agregarAuditLog } from "@/lib/audit"
+import { formatDateMatamoros, normalizeDate, cleanDateString } from "@/lib/date-utils"
 
 export default function SubirFotosPage() {
   const searchParams = useSearchParams()
@@ -18,6 +19,8 @@ export default function SubirFotosPage() {
   const [operador, setOperador] = useState("")
   const [tractor, setTractor] = useState("")
   const [contenedor, setContenedor] = useState("")
+  const [fechaRecolecta, setFechaRecolecta] = useState("")
+  const [fechaEntrega, setFechaEntrega] = useState("")
   type LocalFoto = { id: number; file: File; preview: string | ArrayBuffer | null; nombre: string; tamaño: string }
   const [fotos, setFotos] = useState<LocalFoto[]>([])
   const [subiendo, setSubiendo] = useState(false)
@@ -45,7 +48,11 @@ export default function SubirFotosPage() {
 
   const buscarEmbarque = async (folioEmbarque: string) => {
     try {
-      const { data, error } = await supabase.from("embarques").select("id").eq("folio", folioEmbarque).single()
+      const { data, error } = await supabase
+        .from("embarques")
+        .select("id, fecha_recolecta, fecha_entrega")
+        .eq("folio", folioEmbarque)
+        .single()
 
       if (error) {
         console.error("Error al buscar embarque:", error)
@@ -54,6 +61,8 @@ export default function SubirFotosPage() {
 
       if (data) {
         setEmbarqueId(data.id)
+        setFechaRecolecta(data.fecha_recolecta || "")
+        setFechaEntrega(data.fecha_entrega || "")
       }
     } catch (error) {
       console.error("Error:", error)
@@ -259,6 +268,18 @@ export default function SubirFotosPage() {
               </span>
               <span className="font-medium">{contenedor}</span>
             </div>
+            {fechaRecolecta && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Fecha de Recolecta:</span>
+                <span className="font-medium text-green-600">{cleanDateString(fechaRecolecta)}</span>
+              </div>
+            )}
+            {fechaEntrega && (
+              <div className="flex items-center justify-between">
+                <span className="text-sm text-gray-600">Fecha de Entrega:</span>
+                <span className="font-medium text-blue-600">{cleanDateString(fechaEntrega)}</span>
+              </div>
+            )}
           </CardContent>
         </Card>
 

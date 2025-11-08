@@ -281,9 +281,8 @@ export default function LoginPage() {
 
       <footer className="bg-gray-50 border-t border-gray-200 py-4 px-8">
         <div className="text-center text-sm text-gray-500">
-          Made by: <span className="font-medium text-gray-700">Kleos Digital 2025</span> for{" "}
-          <span className="font-medium text-gray-700">Transportes Internacionales Monarca</span>{" "}
-          <span className="text-gray-400">v1.1</span>
+          Made by: <span className="font-medium text-gray-700">Bravo Digital 2025</span>{" "}
+          <span className="text-gray-400">v.1.1.2</span>
         </div>
       </footer>
 

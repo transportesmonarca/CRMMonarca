@@ -67,6 +67,7 @@ import {
   actualizarFleteFalsoEmbarque,
 } from "@/lib/supabase";
 import { agregarAuditLog } from "@/lib/audit";
+import { listarDocumentosEmbarque } from "@/lib/blob";
 import { formatDateMatamoros, normalizeDate } from '@/lib/date-utils';
 import {
   Select,
@@ -165,6 +166,68 @@ interface EmbarqueAsignado {
   updated_at?: string;
   fecha_creacion?: string;
 }
+
+// Interfaz para documentos de embarque
+interface DocumentoEmbarque {
+  id: string;
+  nombre: string;
+  url: string;
+  tamano: number;
+  tipo: string;
+  fechaSubida: string;
+}
+
+// Funciones auxiliares para direcciones múltiples
+const tieneMultiplesDirecciones = (recolectas: any[], entregas: any[]) => {
+  return (recolectas && recolectas.length > 0) || (entregas && entregas.length > 0);
+};
+
+const extraerDireccionesMultiples = (observaciones: string | null) => {
+  const recolectas: any[] = [];
+  const entregas: any[] = [];
+  
+  if (!observaciones) return { recolectas, entregas };
+  
+  // Lógica para extraer direcciones múltiples de observaciones
+  // Esto es una implementación básica, puedes mejorarla según el formato específico
+  const lineas = observaciones.split('\n');
+  let enSeccionRecolectas = false;
+  let enSeccionEntregas = false;
+  
+  for (const linea of lineas) {
+    const lineaLower = linea.toLowerCase().trim();
+    
+    if (lineaLower.includes('recolecta')) {
+      enSeccionRecolectas = true;
+      enSeccionEntregas = false;
+      continue;
+    }
+    
+    if (lineaLower.includes('entrega')) {
+      enSeccionRecolectas = false;
+      enSeccionEntregas = true;
+      continue;
+    }
+    
+    if (enSeccionRecolectas && linea.trim()) {
+      recolectas.push({ direccion: linea.trim() });
+    }
+    
+    if (enSeccionEntregas && linea.trim()) {
+      entregas.push({ direccion: linea.trim() });
+    }
+  }
+  
+  return { recolectas, entregas };
+};
+
+// Función utilitaria para verificar si el embarque es flete falso
+const esFleteFalso = (embarque: any) => {
+  // Mostrar "Flete F." cuando:
+  // 1. El estado contiene "_contingencia_FF" (estado modificado por contingencia)
+  // 2. O cuando el campo flete_falso es true (marcado explícitamente como flete falso)
+  return embarque?.estado?.includes('_contingencia_FF') || embarque?.flete_falso === true;
+};
 
 const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
   if (!tipo) return false;
@@ -2453,6 +2516,8 @@ export default function FacturacionCobranzaPage() {
   // Fotos (Detalle)
   const [fotosDetalle, setFotosDetalle] = useState<FotoEmbarque[]>([]);
   const [loadingFotosDetalle, setLoadingFotosDetalle] = useState(false);
+  const [documentosDetalle, setDocumentosDetalle] = useState<DocumentoEmbarque[]>([]);
+  const [loadingDocumentosDetalle, setLoadingDocumentosDetalle] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
 
   const cargarFotosDetalle = useCallback(async (embarqueId: string) => {
@@ -2466,6 +2531,20 @@ export default function FacturacionCobranzaPage() {
       if (mounted.current) setFotosDetalle([]);
     } finally {
       if (mounted.current) setLoadingFotosDetalle(false);
+    }
+  }, []);
+
+  const cargarDocumentosDetalle = useCallback(async (embarqueId: string) => {
+    if (!embarqueId) return;
+    setLoadingDocumentosDetalle(true);
+    try {
+      const documentos = await listarDocumentosEmbarque(embarqueId) as DocumentoEmbarque[];
+      if (mounted.current) setDocumentosDetalle(documentos || []);
+    } catch (e) {
+      console.error("Error cargando documentos (detalle):", e);
+      if (mounted.current) setDocumentosDetalle([]);
+    } finally {
+      if (mounted.current) setLoadingDocumentosDetalle(false);
     }
   }, []);
 
@@ -2544,14 +2623,6 @@ export default function FacturacionCobranzaPage() {
     }
 
     return { recolectas, entregas, observacionesLimpias };
-  }, []);
-
-  // Helper: verificar si el embarque es flete falso
-  const esFleteFalso = useCallback((embarque: any) => {
-    // Mostrar "Flete F." cuando:
-    // 1. El estado contiene "_contingencia_FF" (estado modificado por contingencia)
-    // 2. O cuando el campo flete_falso es true (marcado explícitamente como flete falso)
-    return embarque?.estado?.includes('_contingencia_FF') || embarque?.flete_falso === true;
   }, []);
 
   // Helper: verificar si un embarque tiene múltiples direcciones (lógica idéntica a asignar-operadores)
@@ -4529,6 +4600,8 @@ export default function FacturacionCobranzaPage() {
     });
   // Cargar fotos del embarque para la pestaña Fotos
   if (embarque?.id) cargarFotosDetalle(embarque.id);
+  // Cargar documentos del embarque para la pestaña Adjuntos
+  if (embarque?.id) cargarDocumentosDetalle(embarque.id);
     setShowDetailModal(true);
   };
 
@@ -8118,6 +8191,7 @@ export default function FacturacionCobranzaPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              className="hidden"
                               onClick={() => {
                                 // Abrir prompt de justificación primero
                                 setSelectedEmbarqueForUpdate(embarque);
@@ -9184,7 +9258,7 @@ export default function FacturacionCobranzaPage() {
                   <Button
                     variant="outline"
                     onClick={() => setShowConfigurarFleteModal(true)}
-                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                    className="bg-orange-600 hover:bg-orange-700 text-white hidden"
                   >
                     Flete en Falso
                   </Button>
@@ -9785,7 +9859,7 @@ export default function FacturacionCobranzaPage() {
         </Dialog>
 
         <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-  <DialogContent className={`max-w-7xl w-full ${activeDetailTab === "modificaciones" ? "h-[70vh]" : activeDetailTab === "transportacion" ? "h-[45vh]" : activeDetailTab === "facturacion" ? "h-[65vh]" : "h-[50vh]"} overflow-hidden flex flex-col`}>
+  <DialogContent className={`max-w-7xl w-full ${activeDetailTab === "modificaciones" ? "h-[75vh]" : activeDetailTab === "transportacion" ? "h-[50vh]" : activeDetailTab === "facturacion" ? "h-[70vh]" : activeDetailTab === "fotos" ? "h-[70vh]" : activeDetailTab === "adjuntos" ? "h-[70vh]" : activeDetailTab === "entrega" ? "h-[60vh]" : "h-[55vh]"} overflow-hidden flex flex-col`}>
             <DialogHeader>
               <DialogTitle>
                 Detalles del Embarque - {embarqueDetalle?.folio}
@@ -9865,6 +9939,16 @@ export default function FacturacionCobranzaPage() {
                       onClick={() => setActiveDetailTab("fotos")}
                     >
                       Fotos ({fotosDetalle.length})
+                    </button>
+                    <button
+                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                        activeDetailTab === "adjuntos"
+                          ? "border-blue-500 text-blue-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700"
+                      }`}
+                      onClick={() => setActiveDetailTab("adjuntos")}
+                    >
+                      Adjuntos ({documentosDetalle.length})
                     </button>
                   </nav>
                   {/* Botón Exportar oculto por solicitud */}
@@ -10207,48 +10291,128 @@ export default function FacturacionCobranzaPage() {
                   )}
 
                   {activeDetailTab === "entrega" && (
-                    <div className="space-y-6">
-                      <div className="bg-white border rounded-lg p-6">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">Direcciones de Recolecta y Entrega</h3>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium text-gray-700">Dirección de Recolecta</label>
-                            <div className="bg-gray-50 border rounded-lg p-4">
-                              <p className="text-sm text-gray-900 leading-relaxed">
-                                {(embarqueDetalle as any).direccion_recolecta || (embarqueDetalle as any).direccionRecolecta || "No especificada"}
-                              </p>
+                    <div className="space-y-4">
+                      {(() => {
+                        // Extraer direcciones múltiples
+                        let recolectas: any[] = [];
+                        let entregas: any[] = [];
+                        
+                        try {
+                          // Intentar JSON primero
+                          if ((embarqueDetalle as any).recolectas_json) {
+                            recolectas = JSON.parse((embarqueDetalle as any).recolectas_json);
+                          }
+                          if ((embarqueDetalle as any).entregas_json) {
+                            entregas = JSON.parse((embarqueDetalle as any).entregas_json);
+                          }
+                        } catch (e) {
+                          // Si falla JSON, extraer de observaciones
+                          const extracted = extraerDireccionesMultiples((embarqueDetalle as any).observaciones || "");
+                          recolectas = extracted.recolectas;
+                          entregas = extracted.entregas;
+                        }
+                        
+                        const hayMultiplesDirecciones = tieneMultiplesDirecciones(recolectas, entregas);
+                        
+                        if (hayMultiplesDirecciones) {
+                          return (
+                            <div className="grid gap-4">
+                              {/* Direcciones Múltiples de Recolecta */}
+                              {recolectas.length > 0 && (
+                                <div className="space-y-3">
+                                  <h4 className="text-md font-semibold text-gray-800">Direcciones de Recolecta</h4>
+                                  {recolectas.map((recolecta, index) => (
+                                    <div key={`recolecta-${index}`} className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                                          🔵 Recolecta #{index + 1}
+                                        </span>
+                                        <div className="flex gap-3 text-xs text-gray-600">
+                                          <span>📅 {recolecta.fecha ? formatDateMatamoros(normalizeDate(recolecta.fecha) || recolecta.fecha) : "Sin fecha"}</span>
+                                          <span>🕐 {recolecta.hora || "Sin hora"}</span>
+                                        </div>
+                                      </div>
+                                      <p className="text-sm text-gray-800 leading-relaxed">
+                                        {recolecta.direccion || recolecta.ubicacion || "Dirección no especificada"}
+                                      </p>
+                                      {recolecta.contacto && (
+                                        <p className="text-xs text-gray-600 mt-1">👤 {recolecta.contacto}</p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                              
+                              {/* Direcciones Múltiples de Entrega */}
+                              {entregas.length > 0 && (
+                                <div className="space-y-3">
+                                  <h4 className="text-md font-semibold text-gray-800">Direcciones de Entrega</h4>
+                                  {entregas.map((entrega, index) => (
+                                    <div key={`entrega-${index}`} className="bg-green-50 border border-green-200 rounded-lg p-3">
+                                      <div className="flex items-center justify-between mb-2">
+                                        <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
+                                          🟢 Entrega #{index + 1}
+                                        </span>
+                                        <div className="flex gap-3 text-xs text-gray-600">
+                                          <span>📅 {entrega.fecha ? formatDateMatamoros(normalizeDate(entrega.fecha) || entrega.fecha) : "Sin fecha"}</span>
+                                          <span>🕐 {entrega.hora || "Sin hora"}</span>
+                                        </div>
+                                      </div>
+                                      <p className="text-sm text-gray-800 leading-relaxed">
+                                        {entrega.direccion || entrega.ubicacion || "Dirección no especificada"}
+                                      </p>
+                                      {entrega.contacto && (
+                                        <p className="text-xs text-gray-600 mt-1">👤 {entrega.contacto}</p>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_recolecta ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : "Sin fecha"}</p>
+                          );
+                        } else {
+                          // Direcciones simples (formato anterior) - también con labels
+                          return (
+                            <div className="grid gap-4">
+                              <div className="space-y-3">
+                                <h4 className="text-md font-semibold text-gray-800">Dirección de Recolecta</h4>
+                                <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-semibold text-blue-700 uppercase tracking-wide">
+                                      🔵 Recolecta
+                                    </span>
+                                    <div className="flex gap-3 text-xs text-gray-600">
+                                      <span>📅 {(embarqueDetalle as any).fecha_recolecta ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : "Sin fecha"}</span>
+                                      <span>🕐 {(embarqueDetalle as any).hora_recolecta || "Sin hora"}</span>
+                                    </div>
+                                  </div>
+                                  <p className="text-sm text-gray-800 leading-relaxed">
+                                    {(embarqueDetalle as any).direccion_recolecta || (embarqueDetalle as any).direccionRecolecta || "No especificada"}
+                                  </p>
+                                </div>
                               </div>
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Hora</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).hora_recolecta || "Sin hora"}</p>
+                              
+                              <div className="space-y-3">
+                                <h4 className="text-md font-semibold text-gray-800">Dirección de Entrega</h4>
+                                <div className="bg-green-50 border border-green-200 rounded-lg p-3">
+                                  <div className="flex items-center justify-between mb-2">
+                                    <span className="text-xs font-semibold text-green-700 uppercase tracking-wide">
+                                      🟢 Entrega
+                                    </span>
+                                    <div className="flex gap-3 text-xs text-gray-600">
+                                      <span>📅 {(embarqueDetalle as any).fecha_entrega ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : ((embarqueDetalle as any).fechaEntrega || "Sin fecha")}</span>
+                                      <span>🕐 {(embarqueDetalle as any).hora_entrega || "Sin hora"}</span>
+                                    </div>
+                                  </div>
+                                  <p className="text-sm text-gray-800 leading-relaxed">
+                                    {(embarqueDetalle as any).direccion_entrega || (embarqueDetalle as any).direccionEnganche || "No especificada"}
+                                  </p>
+                                </div>
                               </div>
                             </div>
-                          </div>
-                          <div className="space-y-3">
-                            <label className="text-sm font-medium text-gray-700">Dirección de Entrega</label>
-                            <div className="bg-gray-50 border rounded-lg p-4">
-                              <p className="text-sm text-gray-900 leading-relaxed">
-                                {(embarqueDetalle as any).direccion_entrega || (embarqueDetalle as any).direccionEnganche || "No especificada"}
-                              </p>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_entrega ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : ((embarqueDetalle as any).fechaEntrega || "Sin fecha")}</p>
-                              </div>
-                              <div className="space-y-1">
-                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Hora</label>
-                                <p className="text-sm text-gray-700">{(embarqueDetalle as any).hora_entrega || "Sin hora"}</p>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
+                          );
+                        }
+                      })()}
                     </div>
                   )}
 
@@ -10261,7 +10425,7 @@ export default function FacturacionCobranzaPage() {
                           <span className="ml-2 text-sm text-gray-600">Cargando fotos...</span>
                         </div>
                       ) : fotosDetalle.length > 0 ? (
-                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 gap-2">
                           {fotosDetalle.map((foto) => (
                             <div key={foto.id} className="border rounded-lg overflow-hidden bg-white">
                               <button
@@ -10307,6 +10471,128 @@ export default function FacturacionCobranzaPage() {
                       ) : (
                         <div className="text-center py-10 text-gray-600">
                           No hay fotos de evidencia para este embarque.
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {activeDetailTab === "adjuntos" && (
+                    <div className="space-y-4">
+                      <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Archivos Adjuntos del Embarque</h3>
+                      {loadingDocumentosDetalle ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-600"></div>
+                          <span className="ml-2 text-sm text-gray-600">Cargando documentos adjuntos...</span>
+                        </div>
+                      ) : documentosDetalle.length > 0 ? (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                          {documentosDetalle.map((documento) => {
+                            // Intentar múltiples nombres de campos para compatibilidad
+                            const nombre = documento.nombre || (documento as any).nombre_archivo || (documento as any).name || 'Archivo';
+                            const url = documento.url || (documento as any).url_blob || (documento as any).file_url || '#';
+                            const tipo = documento.tipo || (documento as any).type || (documento as any).content_type || '';
+                            const tamano = documento.tamano || (documento as any).tamano_bytes || (documento as any).size || 0;
+                            const fecha = documento.fechaSubida || (documento as any).fecha_subida || (documento as any).created_at;
+                            
+                            const esImagen = tipo?.startsWith('image/') || tipo?.includes('image') || /\.(jpg|jpeg|png|gif|webp)$/i.test(nombre);
+                            const esPDF = tipo === 'application/pdf' || tipo?.includes('pdf') || /\.pdf$/i.test(nombre);
+                            
+                            return (
+                              <div key={documento.id || Math.random()} className="border rounded-lg overflow-hidden bg-white">
+                                <button
+                                  type="button"
+                                  className="block w-full aspect-square bg-gray-50 hover:bg-gray-100 transition-colors"
+                                  onClick={() => {
+                                    if (esImagen && url !== '#') {
+                                      setSelectedImage(url);
+                                    } else if (url !== '#') {
+                                      window.open(url, '_blank');
+                                    } else {
+                                      console.warn('No se puede abrir el archivo, URL inválida:', documento);
+                                    }
+                                  }}
+                                  title={nombre}
+                                >
+                                  {esImagen && url !== '#' ? (
+                                    <img
+                                      src={url}
+                                      alt={nombre}
+                                      className="w-full h-full object-cover"
+                                      loading="lazy"
+                                      onError={(e) => {
+                                        console.log('Error cargando imagen:', url);
+                                        e.currentTarget.style.display = 'none';
+                                        e.currentTarget.parentElement?.setAttribute('data-error', 'true');
+                                      }}
+                                    />
+                                  ) : esPDF ? (
+                                    <div className="w-full h-full bg-red-50 flex items-center justify-center">
+                                      <div className="text-center">
+                                        <div className="inline-flex items-center justify-center w-12 h-12 bg-red-100 rounded-lg mb-1">
+                                          <svg className="w-6 h-6 text-red-600" fill="currentColor" viewBox="0 0 20 20">
+                                            <path fillRule="evenodd" d="M4 4a2 2 0 012-2h4.586A2 2 0 0112 2.586L15.414 6A2 2 0 0116 7.414V16a2 2 0 01-2 2H6a2 2 0 01-2-2V4zm2 6a1 1 0 011-1h6a1 1 0 110 2H7a1 1 0 01-1-1zm1 3a1 1 0 100 2h6a1 1 0 100-2H7z" clipRule="evenodd" />
+                                          </svg>
+                                        </div>
+                                        <p className="text-xs font-medium text-red-600">PDF</p>
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="w-full h-full bg-gray-100 flex items-center justify-center">
+                                      <div className="text-center">
+                                        <div className="inline-flex items-center justify-center w-12 h-12 bg-gray-200 rounded-lg mb-1">
+                                          <FileText className="w-6 h-6 text-gray-600" />
+                                        </div>
+                                        <p className="text-xs font-medium text-gray-600">ARCHIVO</p>
+                                      </div>
+                                    </div>
+                                  )}
+                                </button>
+                                <div className="p-2 text-xs text-gray-600">
+                                  <div className="truncate" title={nombre}>{nombre}</div>
+                                  <div className="flex justify-between mt-1">
+                                    <span>{fecha ? new Date(fecha).toLocaleDateString() : ""}</span>
+                                    {tamano && (
+                                      <span>
+                                        {tamano < 1024 * 1024 
+                                          ? `${Math.max(1, Math.round(tamano / 1024))} KB`
+                                          : `${(tamano / (1024 * 1024)).toFixed(1)} MB`
+                                        }
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="flex justify-end gap-2 mt-2">
+                                    {url !== '#' ? (
+                                      <>
+                                        <a
+                                          href={url}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-blue-600 hover:underline text-xs"
+                                        >
+                                          Ver
+                                        </a>
+                                        <a
+                                          href={url}
+                                          download
+                                          className="text-gray-600 hover:underline text-xs ml-2"
+                                        >
+                                          Descargar
+                                        </a>
+                                      </>
+                                    ) : (
+                                      <span className="text-red-500 text-xs">URL no disponible</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : (
+                        <div className="text-center py-8 text-gray-500">
+                          <FileText className="w-12 h-12 text-gray-300 mx-auto mb-2" />
+                          <p>No hay documentos adjuntos para este embarque</p>
+                          <p className="text-xs text-gray-400 mt-1">Los documentos subidos durante la creación aparecerán aquí</p>
                         </div>
                       )}
                     </div>

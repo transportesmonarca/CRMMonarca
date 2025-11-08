@@ -9,7 +9,9 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import * as XLSX from "xlsx";
+import { useToast } from "@/hooks/use-toast";
+// import * as XLSX from "xlsx"; // Removido por vulnerabilidades de seguridad
+// Ahora usando ExcelJS como alternativa segura
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -63,6 +65,7 @@ import {
 import { agregarAuditLog } from "@/lib/audit";
 
 export default function RecordatoriosPage() {
+  const { toast } = useToast();
   const [showForm, setShowForm] = useState(false);
   const [editingRecordatorio, setEditingRecordatorio] =
     useState<Recordatorio | null>(null);
@@ -466,40 +469,98 @@ export default function RecordatoriosPage() {
 
   // (definición movida arriba)
 
-  const descargarExcel = () => {
+  const descargarExcel = async () => {
     if (recordatorios.length === 0) {
       alert("No hay recordatorios para descargar");
       return;
     }
 
-    // Preparar datos enriquecidos
-    const rows = recordatorios.map((r) => ({
-      Titulo: r.titulo,
-      Descripcion: r.descripcion || "",
-      Fecha_Vencimiento: r.fecha_vencimiento,
-      Tipo: r.tipo || "",
-      Prioridad: r.prioridad,
-      Estado: r.estado,
-      Operador: r.operador ? `${r.operador.nombre} ${r.operador.apellidos}` : "",
-      Camion: r.camion?.numero_economico || "",
-      Fecha_Creacion: r.fecha_creacion,
-      Actualizado: r.updated_at,
-    }));
-
-    const worksheet = XLSX.utils.json_to_sheet(rows);
-    // Ajustar ancho de columnas automáticamente básico
-    const colWidths = Object.keys(rows[0] || { dummy: '' }).map((key) => ({ wch: Math.min(40, Math.max(key.length + 2, ...rows.map(r => String((r as any)[key]).length + 2))) }));
-    (worksheet["!cols"] as any) = colWidths;
-    const workbook = XLSX.utils.book_new();
-    XLSX.utils.book_append_sheet(workbook, worksheet, "Recordatorios");
-    XLSX.writeFile(workbook, `recordatorios_${new Date().toISOString().split('T')[0]}.xlsx`);
     try {
-      agregarAuditLog(
-        "EXPORTAR",
-        "Recordatorios",
-        `Exportó ${recordatorios.length} recordatorios a Excel`
-      );
-    } catch {}
+      toast({ title: "🔄 Exportando...", description: "Generando archivo Excel de recordatorios" });
+
+      const ExcelJS = await import('exceljs');
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet('Recordatorios');
+
+      // Definir columnas
+      worksheet.columns = [
+        { header: 'Título', key: 'titulo', width: 30 },
+        { header: 'Descripción', key: 'descripcion', width: 40 },
+        { header: 'Fecha Vencimiento', key: 'fecha_vencimiento', width: 18 },
+        { header: 'Tipo', key: 'tipo', width: 15 },
+        { header: 'Prioridad', key: 'prioridad', width: 12 },
+        { header: 'Estado', key: 'estado', width: 15 },
+        { header: 'Operador', key: 'operador', width: 25 },
+        { header: 'Camión', key: 'camion', width: 15 },
+        { header: 'Fecha Creación', key: 'fecha_creacion', width: 18 },
+        { header: 'Actualizado', key: 'updated_at', width: 18 },
+      ];
+
+      // Agregar datos
+      recordatorios.forEach((r) => {
+        worksheet.addRow({
+          titulo: r.titulo,
+          descripcion: r.descripcion || "",
+          fecha_vencimiento: r.fecha_vencimiento,
+          tipo: r.tipo || "",
+          prioridad: r.prioridad,
+          estado: r.estado,
+          operador: r.operador ? `${r.operador.nombre} ${r.operador.apellidos}` : "",
+          camion: r.camion?.numero_economico || "",
+          fecha_creacion: r.fecha_creacion,
+          updated_at: r.updated_at,
+        });
+      });
+
+      // Estilo para el header
+      worksheet.getRow(1).eachCell((cell) => {
+        cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+        cell.fill = {
+          type: 'pattern',
+          pattern: 'solid',
+          fgColor: { argb: 'FF4F81BD' }
+        };
+        cell.border = {
+          top: { style: 'thin' },
+          left: { style: 'thin' },
+          bottom: { style: 'thin' },
+          right: { style: 'thin' }
+        };
+      });
+
+      // Generar el archivo y descargarlo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { 
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' 
+      });
+      
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `recordatorios_${new Date().toISOString().split('T')[0]}.xlsx`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+
+      toast({ 
+        title: "✅ Exportado", 
+        description: `${recordatorios.length} recordatorios exportados exitosamente` 
+      });
+
+      try {
+        agregarAuditLog(
+          "EXPORTAR",
+          "Recordatorios",
+          `Exportó ${recordatorios.length} recordatorios a Excel (ExcelJS)`
+        );
+      } catch {}
+    } catch (error) {
+      console.error("Error generando Excel:", error);
+      toast({ 
+        title: "Error exportando", 
+        description: "No se pudo generar el archivo Excel", 
+        variant: "destructive"
+      });
+    }
   };
 
   if (loading) {
