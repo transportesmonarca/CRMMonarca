@@ -51,7 +51,7 @@ import {
 } from "lucide-react";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useRouter } from 'next/navigation';
-import * as XLSX from "xlsx";
+import * as ExcelJS from "exceljs";
 import {
   supabase,
   obtenerEmbarquesModificadosIds,
@@ -3975,7 +3975,7 @@ export default function FacturacionCobranzaPage() {
     setTipoPending(null);
   };
 
-  const exportarTiposServicioExcel = () => {
+  const exportarTiposServicioExcel = async () => {
     try {
       // Fecha y hora actuales
       const now = new Date();
@@ -4020,28 +4020,43 @@ export default function FacturacionCobranzaPage() {
       });
 
       const data = [...headerInfo, [], ...headers, ...rows];
-      const ws = XLSX.utils.aoa_to_sheet(data);
-      // Ajustar ancho de columnas básico
-      ws["!cols"] = [
-        { wch: 36 },
-        { wch: 50 },
-        { wch: 22 },
-        { wch: 22 },
-        { wch: 18 },
-        { wch: 14 },
-        { wch: 18 },
+      
+      // Usar ExcelJS en lugar de XLSX
+      const workbook = new ExcelJS.Workbook();
+      const worksheet = workbook.addWorksheet("TiposServicio");
+      
+      // Agregar todas las filas
+      data.forEach(row => {
+        worksheet.addRow(row);
+      });
+      
+      // Ajustar ancho de columnas
+      worksheet.columns = [
+        { width: 36 },
+        { width: 50 },
+        { width: 22 },
+        { width: 22 },
+        { width: 18 },
+        { width: 14 },
+        { width: 18 },
       ];
-
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, "TiposServicio");
+      
       const fileName = `tipos_servicio_${now
         .toISOString()
         .replace(/[:.]/g, "-")}.xlsx`;
-      XLSX.writeFile(wb, fileName);
+      
+      // Descargar archivo
+      const buffer = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = fileName;
+      a.click();
+      window.URL.revokeObjectURL(url);
     } catch (e) {
       console.error("Error exportando tipos de servicio:", e);
       toast({ title: 'No se pudo exportar el archivo Excel', description: String((e as any)?.message || ''), variant: 'destructive' });
-  toast({ title: 'No se pudo exportar el archivo Excel', description: String((e as any)?.message || ''), variant: 'default' });
     }
   };
 

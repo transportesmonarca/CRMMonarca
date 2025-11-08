@@ -2126,9 +2126,9 @@ export default function OperadoresPage() {
   };
 
   // Exportar un solo operador (mismo orden que el reporte general)
-  const exportOperadorToExcel = (operador: Operador) => {
+  const exportOperadorToExcel = async (operador: Operador) => {
     if (!operador) return;
-    exportOperadorDetalleToExcel(operador);
+    await exportOperadorDetalleToExcel(operador);
   };
 
   const getEstadoBadge = (estado: string) => {
@@ -2221,9 +2221,9 @@ export default function OperadoresPage() {
             <Button
               type="button"
               variant="outline"
-              onClick={() => {
+              onClick={async () => {
                 try {
-                  exportOperadoresToExcel(operadores);
+                  await exportOperadoresToExcel(operadores);
                 } finally {
                   try {
                     agregarAuditLog(
@@ -3608,7 +3608,7 @@ export default function OperadoresPage() {
                   <Button
                     type="button"
                     variant="outline"
-                    onClick={() => exportOperadoresToExcel(operadores)}
+                    onClick={async () => await exportOperadoresToExcel(operadores)}
                     className="flex items-center"
                   >
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
