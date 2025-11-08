@@ -261,63 +261,6 @@ export default function OperadoresPage() {
     }
   };
 
-  // Función para rellenar datos de prueba
-  const rellenarDatosPrueba = () => {
-    const nombres = ['Juan Carlos', 'María Elena', 'Pedro Antonio', 'Ana Sofía', 'Luis Miguel'];
-    const apellidos = ['García López', 'Rodríguez Martín', 'Hernández Cruz', 'González Sánchez', 'López Pérez'];
-    const alias = ['El Rápido', 'La Estrella', 'El Profesional', 'La Confiable', 'El Experto'];
-    
-    const nombreAleatorio = nombres[Math.floor(Math.random() * nombres.length)];
-    const apellidoAleatorio = apellidos[Math.floor(Math.random() * apellidos.length)];
-    const aliasAleatorio = alias[Math.floor(Math.random() * alias.length)];
-    
-    setFormData(prev => ({
-      ...prev,
-      nombre: nombreAleatorio,
-      apellidos: apellidoAleatorio,
-      alias: aliasAleatorio,
-      telefono: `+52 ${Math.floor(Math.random() * 9 + 1)}${Math.floor(Math.random() * 900000000 + 100000000)}`,
-      email: `${nombreAleatorio.toLowerCase().replace(' ', '.')}@correo.com`,
-      licencia: `LIC${Math.floor(Math.random() * 900000 + 100000)}`,
-      numero_apto_medico: `APT${Math.floor(Math.random() * 90000 + 10000)}`,
-      fecha_vencimiento_licencia: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      fecha_vencimiento_apto_medico: new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      tipo_sangre: ['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'][Math.floor(Math.random() * 8)],
-      direccion: `Calle ${Math.floor(Math.random() * 100 + 1)} #${Math.floor(Math.random() * 999 + 1)}, Col. Centro`,
-      fecha_nacimiento: new Date(Date.now() - (25 + Math.floor(Math.random() * 20)) * 365 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-      curp: `${nombreAleatorio.substring(0,2).toUpperCase()}${apellidoAleatorio.substring(0,2).toUpperCase()}${Math.floor(Math.random() * 90) + 10}${Math.floor(Math.random() * 12) + 1}${Math.floor(Math.random() * 28) + 1}`,
-      rfc: `${nombreAleatorio.substring(0,2).toUpperCase()}${apellidoAleatorio.substring(0,2).toUpperCase()}${Math.floor(Math.random() * 900000 + 100000)}`,
-      nss: `${Math.floor(Math.random() * 90000000000 + 10000000000)}`,
-      telefono_emergencia: `+52 ${Math.floor(Math.random() * 9 + 1)}${Math.floor(Math.random() * 900000000 + 100000000)}`,
-    }));
-
-    // También rellenar algunos contactos de emergencia
-    const contactosPrueba = [
-      {
-        nombre: 'María González',
-        relacion: 'Esposa',
-        direccion: 'Av. Principal #123, Col. Centro',
-        telefono: '+52 5551234567',
-        correo: 'maria.gonzalez@email.com'
-      },
-      {
-        nombre: 'Roberto López',
-        relacion: 'Hermano',
-        direccion: 'Calle Secundaria #456, Col. Norte',
-        telefono: '+52 5557654321',
-        correo: 'roberto.lopez@email.com'
-      }
-    ];
-    
-    setContactosEmergencia(contactosPrueba);
-    
-    toast({ 
-      title: 'Datos de prueba cargados', 
-      description: 'Se han rellenado todos los campos con datos de ejemplo',
-      variant: 'success' 
-    });
-  };
-
   const [contactosEmergencia, setContactosEmergencia] = useState<Array<{nombre:string;relacion:string;direccion:string;telefono:string;correo:string}>>([]);
   const [nuevoContacto, setNuevoContacto] = useState({ nombre: "", relacion: "", direccion: "", telefono: "", correo: "" });
   const [editingContactoIndex, setEditingContactoIndex] = useState<number | null>(null);
@@ -2997,17 +2940,6 @@ export default function OperadoresPage() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {!editingId && (
-                  <Button
-                    onClick={rellenarDatosPrueba}
-                    variant="outline"
-                    size="sm"
-                    className="bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
-                  >
-                    <Zap className="h-4 w-4 mr-2" />
-                    Datos Prueba
-                  </Button>
-                )}
                 <Button
                   onClick={() => setShowModal(false)}
                   variant="outline"

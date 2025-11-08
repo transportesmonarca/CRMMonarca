@@ -213,64 +213,6 @@ export default function RemolquesPage() {
   });
 
   // Función para generar datos aleatorios de remolque
-  const generarDatosAleatorios = () => {
-    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-    const randInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-    const randDigits = (len: number) => Array.from({ length: len }, () => String(randInt(0, 9))).join("");
-    const randLetters = (len: number) => Array.from({ length: len }, () => String.fromCharCode(randInt(65, 90))).join("");
-    const randDateFuture = (daysMin = 30, daysMax = 365) => {
-      const base = new Date();
-      const d = randInt(daysMin, daysMax);
-      const dt = new Date(base.getTime() + d * 24 * 3600 * 1000);
-      return new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate())).toISOString().slice(0, 10);
-    };
-    const randDatePast = (daysMin = 30, daysMax = 180) => {
-      const base = new Date();
-      const d = randInt(daysMin, daysMax);
-      const dt = new Date(base.getTime() - d * 24 * 3600 * 1000);
-      return new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate())).toISOString().slice(0, 10);
-    };
-
-    const tipos = ["Caja Seca", "Refrigerado", "Plataforma", "Tolva", "Tanque", "Lowboy"];
-    const marcasMX = ["Great Dane", "Utility", "Wabash", "Hyundai", "Stoughton", "Fruehauf", "Dorsey"];
-    const modelos = ["Modelo A", "Modelo B", "Serie X", "Serie Pro", "Standard", "Heavy Duty"];
-    const estados = ["disponible", "en_uso", "mantenimiento"];
-    const comentarios = [
-      "Remolque en excelente estado",
-      "Requiere inspección rutinaria",
-      "Última revisión completa", 
-      "Apto para cargas pesadas",
-      "Sin observaciones",
-    ];
-
-    const numeroEconomico = `R-${randDigits(4)}`;
-    const placasMX = `${randDigits(3)}-${randLetters(3)}-${randDigits(1)}`;
-    const numeroSerie = `${randLetters(3)}${randDigits(8)}`;
-    const polizaSeguro = `POL-${randDigits(10)}`;
-
-    setFormData({
-      numeroEconomico,
-      tipo: pick(tipos),
-      marca: pick(marcasMX),
-      modelo: pick(modelos),
-      año: String(randInt(2015, 2024)),
-      numeroSerie,
-      capacidad: String(randInt(20, 53)) + " ton",
-      placas: placasMX,
-      fechaUltimaInspeccion: randDatePast(30, 90),
-      proximaInspeccion: randDateFuture(60, 180),
-      polizaSeguro,
-      vigenciaSeguro: randDateFuture(90, 365),
-      estado: pick(estados),
-      comentarios: pick(comentarios),
-    });
-
-    toast({
-      title: "Datos generados",
-      description: `Remolque ${numeroEconomico} creado con datos aleatorios`,
-    });
-  };
-
   // Cargar datos desde Supabase
   const cargarDatos = async () => {
     try {
@@ -1758,20 +1700,6 @@ export default function RemolquesPage() {
                         Completa la información del remolque
                       </DialogDescription>
                     </div>
-                    {!editingRemolque && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={generarDatosAleatorios}
-                        className="flex items-center gap-2 text-green-600 border-green-200 hover:bg-green-50"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        Auto-completar
-                      </Button>
-                    )}
                   </div>
                 </DialogHeader>
                 

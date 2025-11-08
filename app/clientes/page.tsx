@@ -398,67 +398,6 @@ export default function ClientesPage() {
   };
 
   // Función para generar datos aleatorios de contactos
-  const generarContactosAleatorios = (cantidad: number = 10) => {
-    const nombres = [
-      "Juan", "María", "Carlos", "Ana", "Luis", "Carmen", "José", "Laura", "Pedro", "Sofia",
-      "Miguel", "Isabel", "Roberto", "Patricia", "Fernando", "Gabriela", "Ricardo", "Alejandra",
-      "Daniel", "Valentina", "Jorge", "Natalia", "Francisco", "Andrea", "Manuel", "Carolina"
-    ];
-    const apellidos = [
-      "García", "Rodríguez", "Martínez", "López", "González", "Hernández", "Pérez", "Sánchez",
-      "Ramírez", "Torres", "Flores", "Rivera", "Gómez", "Díaz", "Cruz", "Morales", "Jiménez",
-      "Ruiz", "Álvarez", "Mendoza", "Castillo", "Ortiz", "Silva", "Vargas", "Romero"
-    ];
-    const puestos = [
-      "Gerente de Compras", "Coordinador de Logística", "Director de Operaciones",
-      "Jefe de Almacén", "Supervisor de Transporte", "Analista de Inventarios",
-      "Gerente de Ventas", "Coordinador de Importaciones", "Jefe de Tráfico",
-      "Gerente General", "Director Comercial", "Coordinador de Exportaciones"
-    ];
-    const dominios = ["empresa.com", "logistics.mx", "transport.com.mx", "grupo.mx", "corporativo.com"];
-
-    const nuevosContactos: ContactoCliente[] = [];
-    
-    for (let i = 0; i < cantidad; i++) {
-      const nombre = nombres[Math.floor(Math.random() * nombres.length)];
-      const apellido1 = apellidos[Math.floor(Math.random() * apellidos.length)];
-      const apellido2 = apellidos[Math.floor(Math.random() * apellidos.length)];
-      const nombreCompleto = `${nombre} ${apellido1} ${apellido2}`;
-      const puesto = puestos[Math.floor(Math.random() * puestos.length)];
-      const dominio = dominios[Math.floor(Math.random() * dominios.length)];
-      const email = `${nombre.toLowerCase()}.${apellido1.toLowerCase()}@${dominio}`;
-      const telefono = `55-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-      
-      const existePrincipal = contactos.some(c => c.es_principal) || i > 0;
-      
-      nuevosContactos.push({
-        id: `temp-${Date.now()}-${i}`,
-        cliente_id: "",
-        nombre: nombreCompleto,
-        telefono: telefono,
-        email: email,
-        puesto: puesto,
-        notas: `Contacto generado automáticamente`,
-        es_principal: !existePrincipal && i === 0,
-        activo: true,
-        fecha_creacion: "",
-        updated_at: "",
-      });
-    }
-    
-    setContactos([...contactos, ...nuevosContactos]);
-    
-    // Ir a la última página
-    const todosContactos = [...contactos, ...nuevosContactos];
-    const totalPaginas = Math.ceil(todosContactos.length / contactosPorPagina);
-    setPaginaContactos(totalPaginas);
-    
-    toast({
-      title: "Contactos generados",
-      description: `Se agregaron ${cantidad} contactos aleatorios`,
-    });
-  };
-
   // Funciones para manejar contactos
   const agregarContacto = () => {
     // Validar que haya algún dato mínimo (nombre o teléfono o email)
@@ -599,101 +538,6 @@ export default function ClientesPage() {
 
   const eliminarFormaFacturacion = (id: string) => {
     setFormasFacturacion(formasFacturacion.filter((forma) => forma.id !== id));
-  };
-
-  // Función para rellenar el formulario con datos de ejemplo
-  const rellenarDatosEjemplo = () => {
-    const empresasEjemplo = [
-      "Transportes del Norte S.A. de C.V.",
-      "Logística Industrial ACME",
-      "Distribuidora Continental",
-      "Carga Express México",
-      "Comercializadora Internacional"
-    ];
-    
-    const rfcsEjemplo = [
-      "TDN850614G73",
-      "LIA920315K42",
-      "DCO801203M56",
-      "CEX750928P81",
-      "CIM860517N29"
-    ];
-    
-    const direccionesEjemplo = [
-      "Av. Industria 1234, Col. Parque Industrial, 64000 Monterrey, N.L.",
-      "Blvd. Logística 567, Col. Zona Comercial, 45000 Guadalajara, Jal.",
-      "Calle Comercio 890, Col. Centro, 06000 Ciudad de México, CDMX",
-      "Av. Maquiladora 123, Col. Industrial, 32000 Cd. Juárez, Chih.",
-      "Carretera Federal 456, Col. Exportadora, 88000 Nuevo Laredo, Tamps."
-    ];
-    
-    const correos = [
-      "contacto@transportesdelnorte.com.mx",
-      "ventas@logisticaacme.com",
-      "administracion@distribuidoracontinental.mx",
-      "servicios@cargaexpress.com.mx",
-      "internacional@comercializadoracim.com"
-    ];
-    
-    const telefonos = [
-      "+52 81 8000-1234",
-      "+52 33 3500-5678",
-      "+52 55 5200-9876",
-      "+52 656 700-2345",
-      "+52 867 800-6789"
-    ];
-    
-    // Seleccionar datos aleatorios
-    const indice = Math.floor(Math.random() * empresasEjemplo.length);
-    
-    setFormData({
-      nombre_comercial: empresasEjemplo[indice],
-      rfc: rfcsEjemplo[indice],
-      direccion: direccionesEjemplo[indice],
-      correo_contacto: correos[indice],
-      telefono: telefonos[indice],
-      forma_facturacion: formasFacturacion.length > 0 ? formasFacturacion[0].id : "",
-      divisa_pago: "MXN",
-      empresa_facturadora: empresasEjemplo[indice]
-    });
-
-    // Agregar contactos de ejemplo
-    const contactosEjemplo: ContactoCliente[] = [
-      {
-        id: `temp-${Date.now()-1}`,
-        cliente_id: "",
-        nombre: "María González Hernández",
-        puesto: "Gerente de Logística",
-        telefono: "+52 81 8000-1235",
-        email: "maria.gonzalez@transportesdelnorte.com.mx",
-        es_principal: true,
-        activo: true,
-        fecha_creacion: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        notas: "Contacto principal para coordinación de embarques"
-      },
-      {
-        id: `temp-${Date.now()}`,
-        cliente_id: "",
-        nombre: "Carlos Rodríguez López",
-        puesto: "Coordinador de Operaciones",
-        telefono: "+52 81 8000-1236",
-        email: "carlos.rodriguez@transportesdelnorte.com.mx",
-        es_principal: false,
-        activo: true,
-        fecha_creacion: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-        notas: "Responsable de seguimiento y estatus de entregas"
-      }
-    ];
-    
-    setContactos(contactosEjemplo);
-
-    toast({ 
-      title: "Datos de ejemplo cargados", 
-      description: "El formulario se ha rellenado con datos de ejemplo. Puedes modificar cualquier campo antes de guardar.",
-      duration: 3000
-    });
   };
 
   const guardarCliente = async () => {
@@ -1657,17 +1501,7 @@ export default function ClientesPage() {
                             Completa la información del cliente
                           </DialogDescription>
                         </div>
-                        {!editingClient && (
-                          <Button 
-                            variant="outline" 
-                            size="sm"
-                            onClick={rellenarDatosEjemplo}
-                            className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
-                          >
-                            <FileText className="h-4 w-4" />
-                            Rellenar datos de ejemplo
-                          </Button>
-                        )}
+
                       </div>
                   </DialogHeader>
 
@@ -1827,16 +1661,6 @@ export default function ClientesPage() {
                             <p className="text-sm text-gray-600">Total de contactos: <span className="font-semibold text-blue-600">{contactos.length}</span></p>
                           </div>
                           <div className="flex gap-2 items-center">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => generarContactosAleatorios(10)}
-                              className="h-9 bg-blue-50 hover:bg-blue-100 border-blue-300"
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Agregar 10 Contactos
-                            </Button>
                             <Button
                               type="button"
                               disabled={!nuevoContacto.nombre.trim()}

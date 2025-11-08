@@ -755,61 +755,6 @@ export default function EmbarquesPage() {
     }
   };
 
-  // Función para rellenar el formulario con datos de ejemplo
-  const rellenarDatosEjemplo = () => {
-    const fechaHoy = new Date().toISOString().split('T')[0];
-    const horaActual = new Date().toTimeString().slice(0, 5);
-    
-    // Obtener el primer cliente, camión, remolque y tipo de servicio disponibles
-    const primerCliente = clientes.length > 0 ? clientes[0].id : '';
-    const primerCamion = camiones.length > 0 ? camiones[0].id : '';
-    const primerRemolque = remolques.length > 0 ? remolques[0].id : '';
-    const primerTipoServicio = tiposServicio.length > 0 ? tiposServicio[0].id : '';
-    
-    setFormData({
-      folio: `TIM-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`,
-      cliente_id: primerCliente,
-      camion_id: primerCamion,
-      remolque_id: primerRemolque,
-      contenido: "Carga general - mercancía diversa",
-      peso: "25000",
-      observaciones: "Embarque de ejemplo generado automáticamente para pruebas",
-      recolectas: [
-        { 
-          direccion: "Parque Industrial Norte, Av. Industria 1234, Nuevo León, México", 
-          fecha: fechaHoy, 
-          hora: horaActual 
-        },
-      ],
-      entregas: [
-        { 
-          direccion: "Puerto de Laredo, 1000 World Trade Bridge, Laredo, TX 78045, USA", 
-          fecha: fechaHoy, 
-          hora: "14:00" 
-        }
-      ],
-      load_number: `LD-${Math.floor(Math.random() * 99999)}`,
-      patente_agente_aduanal: "3456",
-      aduana_cruce: "Nuevo Laredo - Laredo",
-      dueno_mercancia: "ACME Manufacturing Corp",
-      representante_cliente: "Juan Pérez - Gerente de Logística",
-      carta_porte: `CP-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9999) + 1000)}`,
-      tipo_servicio_id: primerTipoServicio,
-      camion_manual: false,
-      camion_numero_economico: "",
-      camion_placa: "",
-      remolque_manual: false,
-      remolque_numero_economico: "",
-      remolque_placa: "",
-    });
-
-    toast({ 
-      title: "Datos de ejemplo cargados", 
-      description: "El formulario se ha rellenado con datos de ejemplo. Puedes modificar cualquier campo antes de guardar.",
-      duration: 3000
-    });
-  };
-
   const generarFolioEspecifico = async () => {
     try {
       const now = new Date();
@@ -5912,17 +5857,6 @@ export default function EmbarquesPage() {
                     Completa la información del embarque
                   </DialogDescription>
                 </div>
-                {!embarqueEditando && (
-                  <Button 
-                    variant="outline" 
-                    size="sm"
-                    onClick={rellenarDatosEjemplo}
-                    className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
-                  >
-                    <Wand2 className="h-4 w-4" />
-                    Rellenar datos de ejemplo
-                  </Button>
-                )}
               </div>
             </DialogHeader>
 
