@@ -3726,6 +3726,7 @@ export default function AsignarOperadoresPage() {
                         </Button>
                       )}
                       {(embarque.estado?.startsWith("asignado") ||
+                        embarque.estado === "finalizado" || // 🔧 NUEVO: Mostrar en embarques finalizados
                         embarque.modificado) && (
                         <Button
                           variant="outline"
@@ -3743,7 +3744,7 @@ export default function AsignarOperadoresPage() {
                         </Button>
                       )}
                       {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
-                      {(embarque.estado?.startsWith("asignado") || embarque.modificado || embarque.estado?.startsWith("listo-para-asignar")) && (
+                      {(embarque.estado?.startsWith("asignado") || embarque.modificado || embarque.estado?.startsWith("listo-para-asignar") || embarque.estado === "finalizado") && (
                         <Button
                           variant="outline"
                           size="sm"
@@ -6347,7 +6348,7 @@ export default function AsignarOperadoresPage() {
       {/* Modal de Registros Completados */}
       {showCompletedModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-7xl w-full max-h-[92vh] overflow-hidden">
+          <div className="bg-white rounded-lg shadow-xl max-w-8xl w-full max-h-[92vh] overflow-hidden">
             <div className="flex justify-between items-center p-6 border-b">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">Registros Completados</h2>
@@ -6511,10 +6512,11 @@ export default function AsignarOperadoresPage() {
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-40 md:w-48 cursor-pointer select-none" onClick={() => handleSortCompletados("folio")}>Folio{sortIndicatorCompletados("folio")}</th>
                           <th className="px-3 py-2 text-left font-semibold w-48 md:w-64 cursor-pointer select-none" onClick={() => handleSortCompletados("cliente")}>Cliente{sortIndicatorCompletados("cliente")}</th>
                           <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-14 md:w-16 cursor-pointer select-none" onClick={() => handleSortCompletados("load")}>Load{sortIndicatorCompletados("load")}</th>
-                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-[100px] cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
+                          <th className="px-2 py-2 text-left font-semibold whitespace-nowrap w-[90px] cursor-pointer select-none" onClick={() => handleSortCompletados("tipo")}>Tipo de Servicio{sortIndicatorCompletados("tipo")}</th>
                           <th className="px-3 py-2 text-right font-semibold whitespace-nowrap w-40">Monto Facturado</th>
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-28">Resultado</th>
                           <th className="px-3 py-2 text-left font-semibold w-32 cursor-pointer select-none" onClick={() => handleSortCompletados("fecha")}>Fecha Finalización{sortIndicatorCompletados("fecha")}</th>
+                          <th className="px-3 py-2 text-center font-semibold w-16">Ficha</th>
                           <th className="px-3 py-2 text-center font-semibold">Detalles</th>
                           <th className="px-3 py-2 text-center font-semibold">Eliminar</th>
                           <th className="px-3 py-2 text-center font-semibold" style={{ display: 'none' }}>Restaurar</th>
@@ -6556,7 +6558,7 @@ export default function AsignarOperadoresPage() {
                             </td>
                             <td className="px-3 py-2 w-48 md:w-64 truncate">{embarque.cliente?.nombre || ""}</td>
                             <td className="px-2 py-2 whitespace-nowrap w-14 md:w-16 truncate">{embarque.load_number || ""}</td>
-                            <td className="px-2 py-2 whitespace-nowrap w-[100px] truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
+                            <td className="px-2 py-2 whitespace-nowrap w-[90px] truncate">{getServiceDisplayName(embarque.tipo_servicio_id || "")}</td>
                             <td className="px-3 py-2 text-right whitespace-nowrap">
                               {(() => {
                                 const monto =
@@ -6593,6 +6595,30 @@ export default function AsignarOperadoresPage() {
                                     ? new Date(embarque.updated_at).toLocaleDateString("es-MX")
                                     : ""))
                             }</td>
+                            <td className="px-3 py-2 text-center">
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  // Abrir modal de ficha completa del embarque (igual que Ver Detalles)
+                                  const normalized = {
+                                    ...embarque,
+                                    fecha_recolecta: normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta,
+                                    fecha_entrega: normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega,
+                                  } as typeof embarque;
+                                  setEmbarqueDetalle(normalized);
+                                  setActiveTab("general");
+                                  setSelectedImage(null);
+                                  setShowDetailsModal(true);
+                                  cargarFotosEmbarque(embarque.id);
+                                }}
+                                aria-label="Ver ficha completa"
+                                title="Ver ficha completa del embarque"
+                                className="text-purple-600 border-purple-200 hover:bg-purple-50"
+                              >
+                                <Eye className="h-4 w-4" aria-hidden="true" />
+                              </Button>
+                            </td>
                             <td className="px-3 py-2 text-center">
                               <Button
                                 variant="outline"
