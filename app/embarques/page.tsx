@@ -6482,29 +6482,64 @@ export default function EmbarquesPage() {
                               <Label className="text-sm font-medium text-gray-700">
                                 Fecha de Recolecta
                               </Label>
-                              {(() => {
-                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
-                                const fecha = reco?.fecha || (embarqueDetalle as any).fecha_recolecta;
-                                return (
-                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                    {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                  </p>
-                                );
-                              })()}
+                              {(((embarqueDetalle as any)?.recolectas && (embarqueDetalle as any).recolectas.length > 1) ? (
+                                <div className="space-y-2 mt-1">
+                                  {((embarqueDetalle as any).recolectas || []).map((r: any, i: number) => (
+                                    <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                      <div className="font-medium text-xs text-gray-700">
+                                        {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                      </div>
+                                      <div className="mt-1">
+                                        {r.fecha ? formatDateMatamoros(normalizeDate(r.fecha) || r.fecha) : 
+                                         (i === 0 && (embarqueDetalle as any).fecha_recolecta) ? 
+                                         formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : 
+                                         "Sin especificar"}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                (() => {
+                                  const reco = ((embarqueDetalle as any)?.recolectas || [])[0];
+                                  const fecha = reco?.fecha || (embarqueDetalle as any).fecha_recolecta;
+                                  return (
+                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                      {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                    </p>
+                                  );
+                                })()
+                              ))}
                             </div>
                             <div className="w-40 shrink-0">
                               <Label className="text-sm font-medium text-gray-700">
                                 Hora de Recolecta
                               </Label>
-                              {(() => {
-                                const reco = ((embarqueDetalle as any)?.recolectas || []).find((r: any) => (r.direccion || "").trim() !== "") || ((embarqueDetalle as any)?.recolectas || [])[0];
-                                const hora = reco?.hora || (embarqueDetalle as any).hora_recolecta;
-                                return (
-                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                    {hora || "Sin especificar"}
-                                  </p>
-                                );
-                              })()}
+                              {(((embarqueDetalle as any)?.recolectas && (embarqueDetalle as any).recolectas.length > 1) ? (
+                                <div className="space-y-2 mt-1">
+                                  {((embarqueDetalle as any).recolectas || []).map((r: any, i: number) => (
+                                    <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                      <div className="font-medium text-xs text-gray-700">
+                                        {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                      </div>
+                                      <div className="mt-1">
+                                        {r.hora || 
+                                         (i === 0 && (embarqueDetalle as any).hora_recolecta) || 
+                                         "Sin especificar"}
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              ) : (
+                                (() => {
+                                  const reco = ((embarqueDetalle as any)?.recolectas || [])[0];
+                                  const hora = reco?.hora || (embarqueDetalle as any).hora_recolecta;
+                                  return (
+                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                      {hora || "Sin especificar"}
+                                    </p>
+                                  );
+                                })()
+                              ))}
                             </div>
                           </div>
                         </div>
@@ -6542,31 +6577,66 @@ export default function EmbarquesPage() {
                                 <Label className="text-sm font-medium text-gray-700">
                                   Fecha de Entrega
                                 </Label>
-                                {(() => {
-                                  const ents = (embarqueDetalle as any)?.entregas || [];
-                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                  const fecha = lastEnt?.fecha || (embarqueDetalle as any).fecha_entrega;
-                                  return (
-                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                      {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                    </p>
-                                  );
-                                })()}
+                                {(((embarqueDetalle as any)?.entregas && (embarqueDetalle as any).entregas.length > 1) ? (
+                                  <div className="space-y-2 mt-1">
+                                    {((embarqueDetalle as any).entregas || []).map((e: any, i: number) => (
+                                      <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        <div className="font-medium text-xs text-gray-700">
+                                          {i === (((embarqueDetalle as any).entregas || []).length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                        </div>
+                                        <div className="mt-1">
+                                          {e.fecha ? formatDateMatamoros(normalizeDate(e.fecha) || e.fecha) : 
+                                           (i === (((embarqueDetalle as any).entregas || []).length - 1) && (embarqueDetalle as any).fecha_entrega) ? 
+                                           formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : 
+                                           "Sin especificar"}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const ents = (embarqueDetalle as any)?.entregas || [];
+                                    const lastEnt = ents[ents.length - 1];
+                                    const fecha = lastEnt?.fecha || (embarqueDetalle as any).fecha_entrega;
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                        {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                      </p>
+                                    );
+                                  })()
+                                ))}
                               </div>
                               <div className="w-40 shrink-0">
                                 <Label className="text-sm font-medium text-gray-700">
                                   Hora de Entrega
                                 </Label>
-                                {(() => {
-                                  const ents = (embarqueDetalle as any)?.entregas || [];
-                                  const lastEnt = ents.slice().reverse().find((r: any) => (r.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                  const hora = lastEnt?.hora || (embarqueDetalle as any).hora_entrega;
-                                  return (
-                                    <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                      {hora || "Sin especificar"}
-                                    </p>
-                                  );
-                                })()}
+                                {(((embarqueDetalle as any)?.entregas && (embarqueDetalle as any).entregas.length > 1) ? (
+                                  <div className="space-y-2 mt-1">
+                                    {((embarqueDetalle as any).entregas || []).map((e: any, i: number) => (
+                                      <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                        <div className="font-medium text-xs text-gray-700">
+                                          {i === (((embarqueDetalle as any).entregas || []).length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                        </div>
+                                        <div className="mt-1">
+                                          {e.hora || 
+                                           (i === (((embarqueDetalle as any).entregas || []).length - 1) && (embarqueDetalle as any).hora_entrega) || 
+                                           "Sin especificar"}
+                                        </div>
+                                      </div>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  (() => {
+                                    const ents = (embarqueDetalle as any)?.entregas || [];
+                                    const lastEnt = ents[ents.length - 1];
+                                    const hora = lastEnt?.hora || (embarqueDetalle as any).hora_entrega;
+                                    return (
+                                      <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                        {hora || "Sin especificar"}
+                                      </p>
+                                    );
+                                  })()
+                                ))}
                               </div>
                             </div>
                           </div>
@@ -6797,69 +6867,76 @@ export default function EmbarquesPage() {
                       }
                       
                       return contactoSeleccionado ? (
-                        <div className="space-y-6">
+                        <div className="space-y-4">
                           {/* Información principal del contacto */}
-                          <div className="bg-white border border-gray-200 rounded-lg p-4">
-                            <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
-                              <User className="h-5 w-5 mr-2 text-blue-600" />
-                              Datos del Contacto Seleccionado
+                          <div className="bg-white border border-gray-200 rounded-lg p-3">
+                            <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                              <User className="h-4 w-4 mr-2 text-blue-600" />
+                              Datos del Contacto
                             </h4>
                             
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                               <div>
-                                <Label className="text-sm font-medium text-gray-700">
+                                <Label className="text-xs font-medium text-gray-700">
                                   Nombre Completo
                                 </Label>
                                 <div className="mt-1">
-                                  <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border">
+                                  <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded border">
                                     {`${contactoSeleccionado.nombre || ""} ${(contactoSeleccionado as any).apellidos || ""}`.trim() || "No especificado"}
                                   </p>
                                   {(contactoSeleccionado as any).es_principal && (
-                                    <div className="mt-2">
-                                      <Badge className="bg-green-100 text-green-800 text-xs">
-                                        <Star className="h-3 w-3 mr-1" />
-                                        Contacto Principal
-                                      </Badge>
-                                    </div>
+                                    <Badge className="bg-green-100 text-green-800 text-xs mt-1">
+                                      <Star className="h-3 w-3 mr-1" />
+                                      Principal
+                                    </Badge>
                                   )}
                                 </div>
                               </div>
                               
                               <div>
-                                <Label className="text-sm font-medium text-gray-700">
+                                <Label className="text-xs font-medium text-gray-700">
                                   Puesto / Cargo
                                 </Label>
-                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1">
+                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded border mt-1">
                                   {(contactoSeleccionado as any).puesto || "No especificado"}
+                                </p>
+                              </div>
+
+                              <div>
+                                <Label className="text-xs font-medium text-gray-700">
+                                  ID Contacto
+                                </Label>
+                                <p className="text-xs text-gray-600 font-mono bg-gray-50 p-2 rounded border mt-1">
+                                  {contactoSeleccionado.id}
                                 </p>
                               </div>
                             </div>
                           </div>
 
                           {/* Información de contacto */}
-                          <div className="bg-white border border-gray-200 rounded-lg p-4">
-                            <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
-                              <Phone className="h-5 w-5 mr-2 text-green-600" />
+                          <div className="bg-white border border-gray-200 rounded-lg p-3">
+                            <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                              <Phone className="h-4 w-4 mr-2 text-green-600" />
                               Información de Contacto
                             </h4>
                             
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                               <div>
-                                <Label className="text-sm font-medium text-gray-700 flex items-center">
-                                  <Phone className="h-4 w-4 mr-1 text-gray-500" />
+                                <Label className="text-xs font-medium text-gray-700 flex items-center">
+                                  <Phone className="h-3 w-3 mr-1 text-gray-500" />
                                   Teléfono
                                 </Label>
-                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1">
+                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded border mt-1">
                                   {(contactoSeleccionado as any).telefono || "No proporcionado"}
                                 </p>
                               </div>
                               
                               <div>
-                                <Label className="text-sm font-medium text-gray-700 flex items-center">
-                                  <Mail className="h-4 w-4 mr-1 text-gray-500" />
+                                <Label className="text-xs font-medium text-gray-700 flex items-center">
+                                  <Mail className="h-3 w-3 mr-1 text-gray-500" />
                                   Email
                                 </Label>
-                                <p className="text-sm text-gray-900 bg-gray-50 p-3 rounded border mt-1 break-all">
+                                <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded border mt-1 break-all">
                                   {(contactoSeleccionado as any).email || "No proporcionado"}
                                 </p>
                               </div>
@@ -6868,40 +6945,18 @@ export default function EmbarquesPage() {
 
                           {/* Notas adicionales */}
                           {(contactoSeleccionado as any).notas && (
-                            <div className="bg-white border border-gray-200 rounded-lg p-4">
-                              <h4 className="text-md font-semibold text-gray-900 mb-4 flex items-center">
-                                <FileText className="h-5 w-5 mr-2 text-purple-600" />
+                            <div className="bg-white border border-gray-200 rounded-lg p-3">
+                              <h4 className="text-sm font-semibold text-gray-900 mb-3 flex items-center">
+                                <FileText className="h-4 w-4 mr-2 text-purple-600" />
                                 Notas Adicionales
                               </h4>
-                              <div className="bg-gray-50 border rounded p-3">
+                              <div className="bg-gray-50 border rounded p-2">
                                 <p className="text-sm text-gray-700 whitespace-pre-wrap">
                                   {(contactoSeleccionado as any).notas}
                                 </p>
                               </div>
                             </div>
                           )}
-
-                          {/* Información técnica */}
-                          <div className="bg-gray-50 border border-gray-200 rounded-lg p-4">
-                            <h4 className="text-sm font-medium text-gray-700 mb-2">
-                              Información de Selección
-                            </h4>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs text-gray-500">
-                              <div>
-                                <span className="font-medium">ID del Contacto:</span>
-                                <p className="mt-1 font-mono bg-white p-2 rounded border">
-                                  {contactoSeleccionado.id}
-                                </p>
-                              </div>
-                              <div>
-                                <span className="font-medium">Seleccionado como:</span>
-                                <p className="mt-1 bg-white p-2 rounded border">
-                                  {`${contactoSeleccionado.nombre || ""} ${(contactoSeleccionado as any).apellidos || ""}`.trim()}
-                                  {(contactoSeleccionado as any).telefono && ` - ${(contactoSeleccionado as any).telefono}`}
-                                </p>
-                              </div>
-                            </div>
-                          </div>
                         </div>
                       ) : (
                         <div className="text-center py-12">

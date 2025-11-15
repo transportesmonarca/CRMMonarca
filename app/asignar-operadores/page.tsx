@@ -5355,20 +5355,13 @@ export default function AsignarOperadoresPage() {
                         {typeof (embarqueDetalle as any)?.km_agregado_ultimo === 'number' && (embarqueDetalle as any)?.km_agregado_ultimo > 0 && (
                           <div className="mt-4 bg-white border rounded-lg">
                             <div className="px-4 py-2 border-b bg-gray-50 rounded-t-lg">
-                              <h4 className="text-sm font-semibold text-gray-800">Kilometraje</h4>
+                              <h4 className="text-sm font-semibold text-gray-800">Historial del Kilometraje del Tractocamión</h4>
                             </div>
                             <div className="p-4 text-sm text-gray-800 space-y-2">
-                              {/* Acciones de edición/eliminación del último registro */}
-                              {ultimoKmRegistro && (
-                                <div className="flex gap-2 mb-2">
-                                  <Button size="sm" variant="outline" onClick={iniciarEdicionKilometraje}>
-                                    Editar
-                                  </Button>
-                                  <Button size="sm" variant="destructive" onClick={()=>setShowDeleteKmDialog(true)}>
-                                    Eliminar
-                                  </Button>
-                                </div>
-                              )}
+                              {/* Nota informativa sobre modificaciones */}
+                              <div className="mb-3 p-2 bg-yellow-50 border border-yellow-200 rounded text-xs text-yellow-800">
+                                <strong>Nota:</strong> Para modificar o eliminar registros de kilometraje, accede directamente al registro del tractocamión y su historial de kilometraje.
+                              </div>
                               <div className="text-blue-700">
                                 Kilómetros sumados en este viaje: <span className="font-semibold">+{Number((embarqueDetalle as any).km_agregado_ultimo).toLocaleString('es-MX')}</span> km
                                 {typeof (embarqueDetalle as any)?.km_total_nuevo === 'number' && (
@@ -5377,8 +5370,8 @@ export default function AsignarOperadoresPage() {
                                   </>
                                 )}
                               </div>
-                              {((embarqueDetalle as any)?.km_tramo_ultimo || (embarqueDetalle as any)?.km_fecha_viaje_ultimo || (embarqueDetalle as any)?.km_comentarios_ultimo) && (
-                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
+                              {((embarqueDetalle as any)?.km_tramo_ultimo || (embarqueDetalle as any)?.km_fecha_viaje_ultimo || (embarqueDetalle as any)?.km_comentarios_ultimo || ultimoKmRegistro?.fecha_registro) && (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3 text-sm">
                                   {(embarqueDetalle as any)?.km_tramo_ultimo && (
                                     <div>
                                       <span className="block text-xs text-gray-500 uppercase tracking-wide">Tramo (Origen → Destino)</span>
@@ -5391,8 +5384,14 @@ export default function AsignarOperadoresPage() {
                                       <span className="block text-gray-900">{formatDateMatamoros(normalizeDate((embarqueDetalle as any).km_fecha_viaje_ultimo) || (embarqueDetalle as any).km_fecha_viaje_ultimo)}</span>
                                     </div>
                                   )}
+                                  {ultimoKmRegistro?.fecha_registro && (
+                                    <div>
+                                      <span className="block text-xs text-gray-500 uppercase tracking-wide">Fecha de registro</span>
+                                      <span className="block text-gray-900">{formatDateMatamoros(normalizeDate(ultimoKmRegistro.fecha_registro) || ultimoKmRegistro.fecha_registro)}</span>
+                                    </div>
+                                  )}
                                   {(embarqueDetalle as any)?.km_comentarios_ultimo && (
-                                    <div className="md:col-span-3">
+                                    <div className="lg:col-span-4">
                                       <span className="block text-xs text-gray-500 uppercase tracking-wide">Comentarios</span>
                                       <span className="block text-gray-900 whitespace-pre-wrap">{(embarqueDetalle as any).km_comentarios_ultimo}</span>
                                     </div>
