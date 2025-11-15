@@ -5108,29 +5108,64 @@ export default function AsignarOperadoresPage() {
                                       <Label className="text-sm font-medium text-gray-700">
                                         Fecha de Recolecta
                                       </Label>
-                                      {(() => {
-                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
-                                        const fecha = reco?.fecha || embarqueDetalle.fecha_recolecta;
-                                        return (
-                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                            {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                          </p>
-                                        );
-                                      })()}
+                                      {recolectasFinales.length > 1 ? (
+                                        <div className="space-y-2 mt-1">
+                                          {recolectasFinales.map((r, i) => (
+                                            <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                              <div className="font-medium text-xs text-gray-700">
+                                                {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                              </div>
+                                              <div className="mt-1">
+                                                {r.fecha ? formatDateMatamoros(normalizeDate(r.fecha) || r.fecha) : 
+                                                 (i === 0 && embarqueDetalle.fecha_recolecta) ? 
+                                                 formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_recolecta) || embarqueDetalle.fecha_recolecta) : 
+                                                 "Sin especificar"}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        (() => {
+                                          const reco = recolectasFinales[0];
+                                          const fecha = reco?.fecha || embarqueDetalle.fecha_recolecta;
+                                          return (
+                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                              {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                            </p>
+                                          );
+                                        })()
+                                      )}
                                     </div>
                                     <div className="w-40 shrink-0">
                                       <Label className="text-sm font-medium text-gray-700">
                                         Hora de Recolecta
                                       </Label>
-                                      {(() => {
-                                        const reco = recolectasFinales.find((r: any) => (r.direccion || "").trim() !== "") || recolectasFinales[0];
-                                        const hora = reco?.hora || embarqueDetalle.hora_recolecta;
-                                        return (
-                                          <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                            {hora || "Sin especificar"}
-                                          </p>
-                                        );
-                                      })()}
+                                      {recolectasFinales.length > 1 ? (
+                                        <div className="space-y-2 mt-1">
+                                          {recolectasFinales.map((r, i) => (
+                                            <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                              <div className="font-medium text-xs text-gray-700">
+                                                {i === 0 ? "Original" : `Recolecta ${i + 1}`}
+                                              </div>
+                                              <div className="mt-1">
+                                                {r.hora || 
+                                                 (i === 0 && embarqueDetalle.hora_recolecta) || 
+                                                 "Sin especificar"}
+                                              </div>
+                                            </div>
+                                          ))}
+                                        </div>
+                                      ) : (
+                                        (() => {
+                                          const reco = recolectasFinales[0];
+                                          const hora = reco?.hora || embarqueDetalle.hora_recolecta;
+                                          return (
+                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                              {hora || "Sin especificar"}
+                                            </p>
+                                          );
+                                        })()
+                                      )}
                                     </div>
                                   </div>
                                 </div>
@@ -5169,31 +5204,66 @@ export default function AsignarOperadoresPage() {
                                         <Label className="text-sm font-medium text-gray-700">
                                           Fecha de Entrega
                                         </Label>
-                                        {(() => {
-                                          const ents = entregasFinales || [];
-                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                          const fecha = lastEnt?.fecha || embarqueDetalle.fecha_entrega;
-                                          return (
-                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                              {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
-                                            </p>
-                                          );
-                                        })()}
+                                        {entregasFinales.length > 1 ? (
+                                          <div className="space-y-2 mt-1">
+                                            {entregasFinales.map((e, i) => (
+                                              <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                                <div className="font-medium text-xs text-gray-700">
+                                                  {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                                </div>
+                                                <div className="mt-1">
+                                                  {e.fecha ? formatDateMatamoros(normalizeDate(e.fecha) || e.fecha) : 
+                                                   (i === (entregasFinales.length - 1) && embarqueDetalle.fecha_entrega) ? 
+                                                   formatDateMatamoros(normalizeDate(embarqueDetalle.fecha_entrega) || embarqueDetalle.fecha_entrega) : 
+                                                   "Sin especificar"}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          (() => {
+                                            const ents = entregasFinales || [];
+                                            const lastEnt = ents[ents.length - 1];
+                                            const fecha = lastEnt?.fecha || embarqueDetalle.fecha_entrega;
+                                            return (
+                                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                                {fecha ? formatDateMatamoros(normalizeDate(fecha) || fecha) : "Sin especificar"}
+                                              </p>
+                                            );
+                                          })()
+                                        )}
                                       </div>
                                       <div className="w-40 shrink-0">
                                         <Label className="text-sm font-medium text-gray-700">
                                           Hora de Entrega
                                         </Label>
-                                        {(() => {
-                                          const ents = entregasFinales || [];
-                                          const lastEnt = ents.slice().reverse().find((e: any) => (e.direccion || "").trim() !== "") || ents[ents.length - 1];
-                                          const hora = lastEnt?.hora || embarqueDetalle.hora_entrega;
-                                          return (
-                                            <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
-                                              {hora || "Sin especificar"}
-                                            </p>
-                                          );
-                                        })()}
+                                        {entregasFinales.length > 1 ? (
+                                          <div className="space-y-2 mt-1">
+                                            {entregasFinales.map((e, i) => (
+                                              <div key={i} className="text-sm text-gray-900 bg-gray-50 p-2 rounded">
+                                                <div className="font-medium text-xs text-gray-700">
+                                                  {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
+                                                </div>
+                                                <div className="mt-1">
+                                                  {e.hora || 
+                                                   (i === (entregasFinales.length - 1) && embarqueDetalle.hora_entrega) || 
+                                                   "Sin especificar"}
+                                                </div>
+                                              </div>
+                                            ))}
+                                          </div>
+                                        ) : (
+                                          (() => {
+                                            const ents = entregasFinales || [];
+                                            const lastEnt = ents[ents.length - 1];
+                                            const hora = lastEnt?.hora || embarqueDetalle.hora_entrega;
+                                            return (
+                                              <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                                                {hora || "Sin especificar"}
+                                              </p>
+                                            );
+                                          })()
+                                        )}
                                       </div>
                                     </div>
                                   </div>
