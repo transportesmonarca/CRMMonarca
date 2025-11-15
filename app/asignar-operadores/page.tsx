@@ -898,6 +898,7 @@ export default function AsignarOperadoresPage() {
           "listo-para-asignar", "listo-para-asignar_contingencia", "listo-para-asignar_contingencia_FF",
           "asignado", "asignado_contingencia", "asignado_contingencia_FF", 
           "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF",
+          "finalizado", // 🔧 NUEVO: Incluir embarques finalizados en sección principal
           "cancelado", "archivado"
         ])
         .order("fecha_creacion", { ascending: false });
@@ -1117,13 +1118,16 @@ export default function AsignarOperadoresPage() {
         })
       );
 
-      // Mostrar todos los FINALIZADOS.
-      // Mostrar CANCELADOS solo si fueron archivados desde Asignación (tag en observaciones).
-      // Mostrar ARCHIVADOS si:
-      //   - Fueron previamente FINALIZADOS (tienen fecha_finalizacion), o
-      //   - Fueron archivados desde Asignación (tienen el tag en observaciones).
+      // 🔧 NUEVO COMPORTAMIENTO: 
+      // - FINALIZADOS: Solo mostrar si fueron explícitamente ARCHIVADOS (con tag [ARCHIVADO-ASIGNACION])
+      // - CANCELADOS: Solo si fueron archivados desde Asignación (tag en observaciones)
+      // - ARCHIVADOS: Si fueron previamente finalizados O archivados desde Asignación
       const withArchFilter = embarquesFinalizadosConModificaciones.filter((e: any) => {
-        if (e.estado === "finalizado") return true;
+        if (e.estado === "finalizado") {
+          // Solo mostrar embarques finalizados que fueron explícitamente archivados
+          const obs = (e.observaciones || "").toUpperCase();
+          return obs.includes("[ARCHIVADO-ASIGNACION]");
+        }
         if (e.estado === "cancelado") {
           const obs = (e.observaciones || "").toUpperCase();
           return obs.includes("[ARCHIVADO-ASIGNACION]");
@@ -2250,11 +2254,9 @@ export default function AsignarOperadoresPage() {
         JSON.stringify(embarquesAsignadosActualizados)
       );
 
-      toast({ title: `Embarque ${embarque.folio} finalizado`, description: "Ahora está disponible en Facturación y Cobranza", variant: "success" });
-      await Promise.all([
-        cargarDatos(),
-        cargarEmbarquesFinalizados(),
-      ]);
+      toast({ title: `Embarque ${embarque.folio} finalizado`, description: "Listo para facturar. Haz clic en 'Archivar' cuando termines.", variant: "success" });
+      // 🔧 NUEVO: Solo recargar datos principales, NO los finalizados (para que se mantenga visible)
+      await cargarDatos();
     } catch (err) {
       console.error("Error finalizando embarque:", err);
       toast({ title: "Error al finalizar embarque", description: (err as any)?.message || "Error inesperado", variant: "destructive" });
