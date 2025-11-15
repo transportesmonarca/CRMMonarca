@@ -455,6 +455,11 @@ export default function EmbarquesPage() {
               return 'archivado';
             }
             if (estado.fecha_finalizacion) {
+              // ⚠️ VALIDACIÓN: No permitir que embarques cancelados se muestren como finalizados
+              if (estado.motivo_cancelacion || estado.cancelado_por) {
+                console.log(`🔧 [MAPEO] ${folio}: Embarque tiene fecha_finalizacion pero está cancelado, devolviendo 'cancelado'`);
+                return 'cancelado';
+              }
               console.log(`🔧 [MAPEO] ${folio}: Derivado 'finalizado' por fecha_finalizacion`);
               return 'finalizado';
             }
@@ -4963,30 +4968,17 @@ export default function EmbarquesPage() {
                               </span>
                             )}
                             
-                            {/* Solo mostrar botón Archivar para embarques cancelados, otros botones para embarques normales */}
-                            {esCancelado ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            )}
+                            {/* Botón Archivar para embarques cancelados */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEmbarqueAArchivar(embarque);
+                                setShowArchivarDialog(true);
+                              }}
+                            >
+                              Archivar
+                            </Button>
                           </div>
                         );
                       })()}
@@ -5028,30 +5020,17 @@ export default function EmbarquesPage() {
                               </span>
                             )}
                             
-                            {/* Solo mostrar botón Archivar para embarques cancelados */}
-                            {esCancelado ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            )}
+                            {/* Botón Archivar para embarques asignados cancelados */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                setEmbarqueAArchivar(embarque);
+                                setShowArchivarDialog(true);
+                              }}
+                            >
+                              Archivar
+                            </Button>
                           </div>
                         );
                       })()}
