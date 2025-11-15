@@ -2458,7 +2458,8 @@ export default function AsignarOperadoresPage() {
         ? [
             "listo-para-asignar", "listo-para-asignar_contingencia", "listo-para-asignar_contingencia_FF",
             "asignado", "asignado_contingencia", "asignado_contingencia_FF", 
-            "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF"
+            "en-transito", "en-transito_contingencia", "en-transito_contingencia_FF",
+            "finalizado" // 🔧 NUEVO: Incluir embarques finalizados en filtro "todos"
           ].includes(embarque.estado)
         : filtroEstado === "finalizados"
         ? embarque.estado.startsWith("finalizado")
