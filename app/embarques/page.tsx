@@ -481,6 +481,11 @@ export default function EmbarquesPage() {
               return 'archivado';
             }
             if (estado.fecha_finalizacion) {
+              // ⚠️ VALIDACIÓN: No permitir que embarques cancelados se muestren como finalizados
+              if (estado.motivo_cancelacion || estado.cancelado_por) {
+                console.log(`🔧 [MAPEO] ${folio}: Embarque tiene fecha_finalizacion pero está cancelado, devolviendo 'cancelado'`);
+                return 'cancelado';
+              }
               console.log(`🔧 [MAPEO] ${folio}: Derivado 'finalizado' por fecha_finalizacion`);
               return 'finalizado';
             }
@@ -1460,44 +1465,95 @@ export default function EmbarquesPage() {
     const formatTime = (h: number, m: number) =>
       `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 
-    const sampleClienteId = clientes[0]?.id || "none";
-    const sampleTipoServicioId = tiposServicio[0]?.id || "";
-    const sampleRemolqueId = remolques[0]?.id || "";
-    const useManualRemolque = remolques.length === 0;
+    // Seleccionar aleatoriamente de los datos disponibles
+    const randomCliente = clientes.length > 0 
+      ? clientes[Math.floor(Math.random() * clientes.length)] 
+      : null;
+    const randomCamion = camiones.length > 0 
+      ? camiones[Math.floor(Math.random() * camiones.length)] 
+      : null;
+    const randomRemolque = remolques.length > 0 
+      ? remolques[Math.floor(Math.random() * remolques.length)] 
+      : null;
+    const randomTipoServicio = tiposServicio.length > 0 
+      ? tiposServicio[Math.floor(Math.random() * tiposServicio.length)] 
+      : null;
 
-    // Prellenar campos principales
+    const sampleClienteId = randomCliente?.id || "none";
+    const sampleTipoServicioId = randomTipoServicio?.id || "";
+    const sampleCamionId = randomCamion?.id || "";
+    const sampleRemolqueId = randomRemolque?.id || "";
+    const useManualRemolque = remolques.length === 0;
+    const useManualCamion = camiones.length === 0;
+
+    // Direcciones de prueba variadas
+    const direccionesRecolecta = [
+      "Parque Industrial Norte #100, Col. Centro, Monterrey, NL",
+      "Av. Revolución 500, Col. Industrial, Guadalajara, JAL",
+      "Blvd. Reforma 1234, Col. Juárez, Ciudad de México, CDMX",
+      "Calle Industria 789, Col. Moderna, Querétaro, QRO",
+      "Av. Tecnológico 456, Col. Progreso, Tijuana, BC"
+    ];
+
+    const direccionesEntrega = [
+      "Av. Insurgentes Sur 1234, Col. Del Valle, CDMX, MX",
+      "Blvd. Díaz Ordaz 890, Col. Centro, Nuevo Laredo, TAMPS",
+      "Calle Comercio 321, Col. Centro, León, GTO",
+      "Av. Hidalgo 567, Col. Centro, Puebla, PUE",
+      "Carretera Nacional Km 45, Col. Industrial, San Luis Potosí, SLP"
+    ];
+
+    const contenidos = [
+      "Tarimas con mercancía general",
+      "Electrónicos empaquetados",
+      "Piezas automotrices",
+      "Alimentos no perecederos",
+      "Materiales de construcción"
+    ];
+
+    const randomDirRecolecta = direccionesRecolecta[Math.floor(Math.random() * direccionesRecolecta.length)];
+    const randomDirEntrega = direccionesEntrega[Math.floor(Math.random() * direccionesEntrega.length)];
+    const randomContenido = contenidos[Math.floor(Math.random() * contenidos.length)];
+    const randomPeso = Math.floor(500 + Math.random() * 2000).toString();
+    const randomHoraRecolecta = Math.floor(7 + Math.random() * 4); // 7-10 AM
+    const randomHoraEntrega = Math.floor(15 + Math.random() * 3); // 3-5 PM
+
+    // Prellenar campos principales con datos aleatorios
     setFormData((prev) => ({
       ...prev,
       cliente_id: sampleClienteId,
       tipo_servicio_id: sampleTipoServicioId,
       representante_cliente: "",
+      camion_id: sampleCamionId,
+      camion_manual: useManualCamion,
+      camion_numero_economico: useManualCamion ? `TRA-${Math.floor(100 + Math.random() * 900)}` : "",
+      camion_placa: useManualCamion ? `ABC-${Math.floor(100 + Math.random() * 900)}-${Math.floor(1 + Math.random() * 9)}` : "",
       recolectas: [
         {
-          direccion: "Parque Industrial Norte #100, Col. Centro, Monterrey, NL",
+          direccion: randomDirRecolecta,
           fecha: formatDate(now),
-          hora: formatTime(9, 0),
+          hora: formatTime(randomHoraRecolecta, 0),
         },
       ],
       entregas: [
         {
-          direccion: "Av. Insurgentes Sur 1234, Col. Del Valle, CDMX, MX",
-          fecha: formatDate(addDays(now, 1)),
-          hora: formatTime(17, 0),
+          direccion: randomDirEntrega,
+          fecha: formatDate(addDays(now, Math.floor(1 + Math.random() * 3))),
+          hora: formatTime(randomHoraEntrega, 0),
         },
       ],
-      contenido: "Tarimas con mercancía general",
-      peso: "1250",
-      observaciones:
-        "Entregar antes de las 17:00 horas. Requiere sello en recibo.",
-      load_number: `LD-${year}${month}-001`,
-      patente_agente_aduanal: "1234",
+      contenido: randomContenido,
+      peso: randomPeso,
+      observaciones: "Autocompletado con datos aleatorios para pruebas",
+      load_number: `LD-${year}${month}-${Math.floor(100 + Math.random() * 900)}`,
+      patente_agente_aduanal: `${Math.floor(1000 + Math.random() * 9000)}`,
       aduana_cruce: "Nuevo Laredo, TAMPS",
-      dueno_mercancia: "Cliente Demo SA de CV",
-      carta_porte: `CP-${year}${month}-0001`,
+      dueno_mercancia: randomCliente?.nombre || "Cliente Demo SA de CV",
+      carta_porte: `CP-${year}${month}-${String(Math.floor(1 + Math.random() * 9999)).padStart(4, '0')}`,
       remolque_manual: useManualRemolque,
       remolque_id: useManualRemolque ? "" : sampleRemolqueId,
-      remolque_numero_economico: useManualRemolque ? "RM-001" : "",
-  remolque_placa: useManualRemolque ? "XYZ-123-45" : "",
+      remolque_numero_economico: useManualRemolque ? `RM-${Math.floor(100 + Math.random() * 900)}` : "",
+      remolque_placa: useManualRemolque ? `XYZ-${Math.floor(100 + Math.random() * 900)}-${Math.floor(1 + Math.random() * 9)}` : "",
     }));
 
     // Si hay cliente, intenta preseleccionar el primer contacto disponible
@@ -1514,6 +1570,12 @@ export default function EmbarquesPage() {
         // Ignorar errores silenciosamente para no bloquear el autofill
       }
     }
+
+    // Mostrar notificación de éxito
+    toast({
+      title: "Formulario autocompletado",
+      description: "Se han llenado todos los campos con datos aleatorios",
+    });
   };
 
   // Función helper para detectar si un embarque tiene múltiples direcciones
@@ -1706,7 +1768,8 @@ export default function EmbarquesPage() {
       if (embarqueEditando) {
         const { url, pathname } = await subirDocumentoEmbarque(
           embarqueEditando.id,
-          file
+          file,
+          'documento_general' // Tipo de documento por defecto
         );
 
         // Guardar en la base de datos
@@ -2555,7 +2618,7 @@ export default function EmbarquesPage() {
                 const file = doc._tempFile;
                 console.log(`⬆️ Subiendo: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`);
                 
-                const { url, pathname } = await subirDocumentoEmbarque(nuevoEmbarqueIdCreado, file);
+                const { url, pathname } = await subirDocumentoEmbarque(nuevoEmbarqueIdCreado, file, 'documento_general');
                 console.log(`✅ Archivo subido a Vercel Blob: ${url}`);
                 
                 const { data, error } = await supabase.from('documentos_embarques').insert({
@@ -5485,30 +5548,7 @@ export default function EmbarquesPage() {
                               </span>
                             )}
                             
-                            {/* Solo mostrar botón Archivar para embarques cancelados */}
-                            {esCancelado ? (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            ) : (
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  setEmbarqueAArchivar(embarque);
-                                  setShowArchivarDialog(true);
-                                }}
-                              >
-                                Archivar
-                              </Button>
-                            )}
+                            {/* No mostrar botón Archivar aquí, solo se muestra en la sección de finalizados/cancelados */}
                           </div>
                         );
                       })()}
@@ -5857,6 +5897,18 @@ export default function EmbarquesPage() {
                     Completa la información del embarque
                   </DialogDescription>
                 </div>
+                {!embarqueEditando && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={handleFillAllFields}
+                    className="ml-4"
+                  >
+                    <Wand2 className="h-4 w-4 mr-2" />
+                    Autocompletar
+                  </Button>
+                )}
               </div>
             </DialogHeader>
 
@@ -6642,22 +6694,31 @@ export default function EmbarquesPage() {
                         {/* Input para subir archivos */}
                         <div>
                           <Label htmlFor="documento-embarque">
-                            Agregar Documento/Imagen {documentosEmbarque.length < 10 && `(${documentosEmbarque.length}/10)`}
+                            Agregar Documentos/Imágenes (múltiples) {documentosEmbarque.length < 10 && `(${documentosEmbarque.length}/10)`}
                           </Label>
                           <Input
                             id="documento-embarque"
                             type="file"
                             accept="image/*,application/pdf"
+                            multiple
                             onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                handleUploadDocumentoEmbarque(file);
+                              const files = e.target.files;
+                              if (files && files.length > 0) {
+                                // Procesar múltiples archivos
+                                Array.from(files).forEach((file) => {
+                                  if (documentosEmbarque.length < 10) {
+                                    handleUploadDocumentoEmbarque(file);
+                                  }
+                                });
                                 e.target.value = "";
                               }
                             }}
                             disabled={uploadingDocumento || documentosEmbarque.length >= 10}
                             className="mt-2"
                           />
+                          <p className="text-xs text-gray-500 mt-1">
+                            💡 Puedes seleccionar múltiples archivos manteniendo presionado Ctrl (Windows) o Cmd (Mac)
+                          </p>
                           {documentosEmbarque.length >= 10 && (
                             <p className="text-sm text-orange-600 mt-1">
                               ⚠️ Has alcanzado el límite de 10 documentos
@@ -7622,7 +7683,7 @@ export default function EmbarquesPage() {
                                                   }
                                                   
                                                   console.log('🗑️ Eliminando documento:', documento.id);
-                                                  await eliminarDocumentoEmbarqueCompleto(documento.id);
+                                                  await eliminarDocumentoEmbarqueCompleto(embarqueDetalle.id, documento.id);
                                                   
                                                   // Recargar documentos
                                                   if (embarqueDetalle?.id) {
