@@ -6516,8 +6516,7 @@ export default function AsignarOperadoresPage() {
                           <th className="px-3 py-2 text-right font-semibold whitespace-nowrap w-40">Monto Facturado</th>
                           <th className="px-3 py-2 text-left font-semibold whitespace-nowrap w-28">Resultado</th>
                           <th className="px-3 py-2 text-left font-semibold w-32 cursor-pointer select-none" onClick={() => handleSortCompletados("fecha")}>Fecha Finalización{sortIndicatorCompletados("fecha")}</th>
-                          <th className="px-3 py-2 text-center font-semibold w-16">Detalles</th>
-                          <th className="px-3 py-2 text-center font-semibold">Eliminar</th>
+                          <th className="px-3 py-2 text-center font-semibold w-24">Acciones</th>
                           <th className="px-3 py-2 text-center font-semibold" style={{ display: 'none' }}>Restaurar</th>
                         </tr>
                       </thead>
@@ -6595,41 +6594,41 @@ export default function AsignarOperadoresPage() {
                                     : ""))
                             }</td>
                             <td className="px-3 py-2 text-center">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => {
-                                  // Abrir el modal de detalles manteniendo abierto el de registros completados
-                                  const normalized = {
-                                    ...embarque,
-                                    fecha_recolecta: normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta,
-                                    fecha_entrega: normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega,
-                                  } as typeof embarque;
-                                  setEmbarqueDetalle(normalized);
-                                  setActiveTab("general");
-                                  setSelectedImage(null);
-                                  setShowDetailsModal(true);
-                                  cargarFotosEmbarque(embarque.id);
-                                }}
-                                aria-label="Ver detalles"
-                                title="Ver detalles del embarque"
-                                className="text-blue-600 border-blue-200 hover:bg-blue-50"
-                              >
-                                <Eye className="h-4 w-4" aria-hidden="true" />
-                              </Button>
-                            </td>
-                            <td className="px-3 py-2 text-center">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => eliminarCompletado(embarque)}
-                                disabled={!puedeEliminarCompletado(embarque) || saving}
-                                className={`border-gray-300${!puedeEliminarCompletado(embarque) || saving ? " opacity-50 cursor-not-allowed" : ""}`}
-                                aria-label="Eliminar"
-                                title="Eliminar definitivamente"
-                              >
-                                <Trash2 className="h-4 w-4" />
-                              </Button>
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => {
+                                    // Abrir el modal de detalles manteniendo abierto el de registros completados
+                                    const normalized = {
+                                      ...embarque,
+                                      fecha_recolecta: normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta,
+                                      fecha_entrega: normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega,
+                                    } as typeof embarque;
+                                    setEmbarqueDetalle(normalized);
+                                    setActiveTab("general");
+                                    setSelectedImage(null);
+                                    setShowDetailsModal(true);
+                                    cargarFotosEmbarque(embarque.id);
+                                  }}
+                                  aria-label="Ver detalles"
+                                  title="Ver detalles del embarque"
+                                  className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                                >
+                                  <Eye className="h-4 w-4" aria-hidden="true" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => eliminarCompletado(embarque)}
+                                  disabled={!puedeEliminarCompletado(embarque) || saving}
+                                  className={`border-gray-300${!puedeEliminarCompletado(embarque) || saving ? " opacity-50 cursor-not-allowed" : ""}`}
+                                  aria-label="Eliminar"
+                                  title="Eliminar definitivamente"
+                                >
+                                  <Trash2 className="h-4 w-4" />
+                                </Button>
+                              </div>
                             </td>
                             <td className="px-3 py-2 text-center" style={{ display: 'none' }}>
                               <Button
