@@ -137,8 +137,41 @@ export default function SubirFotosEmbarquePage() {
   const [requerirUbicacion, setRequerirUbicacion] = useState<boolean>(true)
   const [toggleUbicacionMode, setToggleUbicacionMode] = useState<null | "disable" | "enable">(null)
 
+  // Estado para modal de ubicación requerida
+  const [showUbicacionModal, setShowUbicacionModal] = useState(false)
+  
+  // Contador de intentos fallidos de ubicación
+  const [intentosFallidosUbicacion, setIntentosFallidosUbicacion] = useState(0)
+
+  // Detectar si es iOS
+  const [esIOS, setEsIOS] = useState(false)
+  const [mostrarMensajeIOS, setMostrarMensajeIOS] = useState(false)
+  const [showModalIOS, setShowModalIOS] = useState(false)
+
+  // Modal de almacenamiento lleno
+  const [showQuotaModal, setShowQuotaModal] = useState(false)
+  const [quotaMessage, setQuotaMessage] = useState("")
+
+  // Modal de límite de archivos
+  const [showLimitModal, setShowLimitModal] = useState(false)
+  const [limitMessage, setLimitMessage] = useState("")
+
   // Límite de archivos por embarque
   const MAX_FILES = 10
+
+  // Detectar iOS al cargar el componente
+  useEffect(() => {
+    if (typeof navigator !== 'undefined') {
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent)
+      setEsIOS(isIOS)
+      
+      // Si es iOS, desactivar automáticamente el requisito de ubicación y mostrar modal
+      if (isIOS) {
+        setRequerirUbicacion(false)
+        setShowModalIOS(true) // Mostrar modal en lugar de Alert
+      }
+    }
+  }, [])
 
   useEffect(() => {
     const cargarFotos = async () => {
@@ -189,6 +222,16 @@ export default function SubirFotosEmbarquePage() {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [showHelpPopup])
+
+  // Cerrar modal de ubicación cuando se obtenga exitosamente
+  useEffect(() => {
+    if (geoStatus === "ok" && showUbicacionModal) {
+      // Esperar un momento para que el usuario vea el éxito, luego cerrar
+      setTimeout(() => {
+        setShowUbicacionModal(false)
+      }, 1500)
+    }
+  }, [geoStatus, showUbicacionModal])
 
   const cargarDatos = async () => {
     try {
@@ -263,12 +306,16 @@ export default function SubirFotosEmbarquePage() {
     }
 
     setGeoStatus("solicitando")
+    // Mostrar feedback inmediato al usuario
+    if (mostrarErrores) {
+      setError("📍 Solicitando ubicación... Si no funciona, puedes desactivar el requisito.")
+    }
 
-    // Configuración optimizada para móviles
+    // Configuración optimizada para móviles con timeout más corto para evitar esperas largas
     const opciones: PositionOptions = {
-      enableHighAccuracy: false, // Cambiar a false para mejor compatibilidad en iOS
-      timeout: 15000, // Aumentar timeout para conexiones lentas
-      maximumAge: 300000 // Permitir ubicación de hasta 5 minutos (300 segundos)
+      enableHighAccuracy: false, // Cambiar a false para mejor compatibilidad
+      timeout: 8000, // Timeout más corto para no hacer esperar mucho
+      maximumAge: 600000 // 10 minutos de cache para ubicaciones anteriores
     }
 
     navigator.geolocation.getCurrentPosition(
@@ -277,28 +324,67 @@ export default function SubirFotosEmbarquePage() {
         setLatitud(pos.coords.latitude)
         setLongitud(pos.coords.longitude)
         setGeoStatus("ok")
+        // Resetear contador de intentos fallidos cuando sea exitoso
+        setIntentosFallidosUbicacion(0)
         if (mostrarErrores) {
           setError("") // Limpiar errores previos
+          // Mostrar confirmación de éxito
+          setSuccess("✅ Ubicación activada correctamente. Ya puedes subir archivos.")
+          setTimeout(() => setSuccess(""), 3000)
         }
       },
       (err) => {
-        console.error("Error de geolocalización:", err)
+        // Usar console.warn en lugar de console.error para evitar interceptación de Next.js
+        try {
+          const errorCode = err?.code || 0
+          const errorMessage = err?.message || 'Sin mensaje'
+          const timestamp = new Date().toISOString()
+          
+          console.warn(`⚠️ Geolocalización falló - Code: ${errorCode}, Message: ${errorMessage}, Time: ${timestamp}`)
+        } catch (logError) {
+          console.warn('⚠️ Error de geolocalización (logging failed)')
+        }
+        
         let mensajeError = ""
         
-        switch (err.code) {
-          case err.PERMISSION_DENIED:
+        // Usar constantes para evitar errores si err es null
+        const errorCode = err?.code || 0
+        
+        switch (errorCode) {
+          case 1: // PERMISSION_DENIED
             mensajeError = /iPad|iPhone|iPod/.test(navigator.userAgent)
               ? "📍 Permiso denegado. Ve a Ajustes > Privacidad y Seguridad > Servicios de Ubicación y actívalos para Safari."
               : "📍 Permiso denegado. Permite el acceso a ubicación en tu navegador."
             break
-          case err.POSITION_UNAVAILABLE:
+          case 2: // POSITION_UNAVAILABLE
             mensajeError = "📍 Ubicación no disponible. Verifica tu GPS o conexión a internet."
             break
-          case err.TIMEOUT:
-            mensajeError = "📍 Tiempo agotado obteniendo ubicación. Intenta de nuevo."
+          case 3: // TIMEOUT
+            mensajeError = "📍 Tiempo agotado obteniendo ubicación."
             break
           default:
-            mensajeError = `📍 Error de ubicación: ${err.message || 'Error desconocido'}`
+            // Manejo robusto para errores desconocidos
+            const errorMsg = err?.message || err?.toString?.() || 'Error desconocido de ubicación'
+            mensajeError = `📍 Error de ubicación: ${errorMsg}`
+            break
+        }
+
+        // Incrementar contador de intentos fallidos
+        setIntentosFallidosUbicacion(prev => prev + 1)
+
+        // Si han fallado 2 o más intentos, sugerir desactivar
+        if (intentosFallidosUbicacion >= 1) {
+          mensajeError += " 💡 ¿Quieres desactivar el requisito de ubicación para continuar?"
+          // Auto-desactivar después de 3 intentos fallidos
+          if (intentosFallidosUbicacion >= 2) {
+            setTimeout(() => {
+              setRequerirUbicacion(false)
+              setError("📍 Requisito de ubicación desactivado automáticamente. Ya puedes subir archivos.")
+              setShowUbicacionModal(false)
+              setTimeout(() => setError(""), 3000)
+            }, 2000)
+            return
+          }
         }
 
         if (mostrarErrores) {
@@ -338,14 +424,16 @@ export default function SubirFotosEmbarquePage() {
     const restante = MAX_FILES - (yaExistentes + yaSeleccionados)
 
     if (restante <= 0) {
-      setError(`No puedes subir más de ${MAX_FILES} archivos. Elimina alguno para continuar.`)
+      setLimitMessage(`No puedes subir más de ${MAX_FILES} archivos. Elimina alguno para continuar.`)
+      setShowLimitModal(true)
       return
     }
 
     const paraAgregar = archivosValidos.slice(0, Math.max(0, restante))
 
     if (paraAgregar.length < archivosValidos.length) {
-      setError(`Solo puedes agregar ${restante} archivo(s) más (máximo ${MAX_FILES}).`)
+      setLimitMessage(`Solo puedes agregar ${restante} archivo(s) más (máximo ${MAX_FILES}).`)
+      setShowLimitModal(true)
     } else {
       setError("")
     }
@@ -378,7 +466,7 @@ export default function SubirFotosEmbarquePage() {
 
     // Requerir ubicación para el operador móvil (solo si está activa la obligación)
     if (requerirUbicacion && (latitud == null || longitud == null)) {
-      setError("Activa tu ubicación para continuar. Toca en 'Activar ubicación' y acepta el permiso, o desactiva el requisito desde el botón superior derecho.")
+      setShowUbicacionModal(true)
       return
     }
 
@@ -482,9 +570,15 @@ export default function SubirFotosEmbarquePage() {
         } catch (error) {
           console.error(`Error subiendo ${file.name}:`, error)
           const msg = error instanceof Error ? error.message : String(error)
-          setError(`Error subiendo ${file.name}: ${msg}`)
+          
+          // Si es error de almacenamiento lleno, mostrar modal en lugar de Alert
           if (/almacenamiento.*lleno|quota|507/i.test(msg)) {
             setQuotaFull(true)
+            setQuotaMessage(msg || 'El almacenamiento de imágenes está lleno. Contacta al administrador.')
+            setShowQuotaModal(true)
+            setError("") // Limpiar el error del Alert para que solo se muestre el modal
+          } else {
+            setError(`Error subiendo ${file.name}: ${msg}`)
           }
         }
       }
@@ -606,44 +700,52 @@ export default function SubirFotosEmbarquePage() {
     <div>
       <div className="space-y-6">
         {/* Header */}
-        <div className="flex items-center justify-between">
-          <div>
+        <div className="flex flex-col items-center justify-center mb-6">
+          {/* Logo centrado para móvil y desktop */}
+          <div className="flex justify-center mb-4">
+            <img 
+              src="/monarca-logo.png" 
+              alt="Monarca" 
+              className="h-16 w-auto"
+            />
+          </div>
+          <div className="text-center">
             <h1 className="text-3xl font-bold text-gray-900">Subir Fotos del Embarque</h1>
             <p className="text-gray-600 mt-1">
               Folio: <span className="font-semibold">{embarque.folio}</span>
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            {/* Botón superior derecho: activar ubicación o desactivar requisito */}
-            <button
-              type="button"
-              onClick={() => setToggleUbicacionMode(requerirUbicacion ? "disable" : "enable")}
-              aria-label={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
-              title={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
-              className={`p-2 rounded-md hover:bg-gray-100 ${requerirUbicacion ? '' : 'ring-1 ring-yellow-500/60 bg-yellow-50'}`}
-            >
-              {/* Icono antena; resaltar cuando el requisito está desactivado */}
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={requerirUbicacion ? "text-gray-600" : "text-yellow-700"}>
-                <path d="M12 20v-6" />
-                <path d="M5 9a7 7 0 0 1 14 0" />
-                <path d="M8 12a4 4 0 0 1 8 0" />
-              </svg>
-            </button>
-            {/* Indicador de estado del requisito */}
-            <Badge variant={requerirUbicacion ? "outline" : "secondary"} className={requerirUbicacion ? "text-gray-700" : "bg-yellow-100 text-yellow-800 border-yellow-300"}>
-              {requerirUbicacion ? "Ubicación requerida" : "Ubicación no requerida"}
-            </Badge>
-          </div>
+        </div>
+
+        {/* Controles de ubicación */}
+        <div className="flex items-center justify-end gap-2 mb-4">
+          {/* Botón superior derecho: activar ubicación o desactivar requisito */}
+          <button
+            type="button"
+            onClick={() => setToggleUbicacionMode(requerirUbicacion ? "disable" : "enable")}
+            aria-label={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
+            title={requerirUbicacion ? "Desactivar requisito de ubicación" : "Requerir ubicación"}
+            className={`p-2 rounded-md hover:bg-gray-100 ${requerirUbicacion ? '' : 'ring-1 ring-yellow-500/60 bg-yellow-50'}`}
+          >
+            {/* Icono antena; resaltar cuando el requisito está desactivado */}
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={requerirUbicacion ? "text-gray-600" : "text-yellow-700"}>
+              <path d="M12 20v-6" />
+              <path d="M5 9a7 7 0 0 1 14 0" />
+              <path d="M8 12a4 4 0 0 1 8 0" />
+            </svg>
+          </button>
+          {/* Indicador de estado del requisito */}
+          <Badge variant={requerirUbicacion ? "outline" : "secondary"} className={requerirUbicacion ? "text-gray-700" : "bg-yellow-100 text-yellow-800 border-yellow-300"}>
+            {requerirUbicacion ? "Ubicación requerida" : "Ubicación no requerida"}
+          </Badge>
         </div>
 
         {/* Información del embarque */}
         <Card>
           <CardHeader>
-            <CardTitle>
-              <span className="inline-flex items-center gap-2 flex-nowrap">
-                <Camera className="h-5 w-5 shrink-0" />
-                <span className="leading-none">Información del Embarque</span>
-              </span>
+            <CardTitle className="flex items-center space-x-2">
+              <Camera className="h-5 w-5" />
+              <span>Información del Embarque</span>
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -674,6 +776,31 @@ export default function SubirFotosEmbarquePage() {
             {/* Direcciones - Adaptativo móvil/escritorio */}
             <div className="space-y-4">
               {(() => {
+                // Función para formatear fechas para display
+                const formatearFecha = (fecha: string) => {
+                  if (!fecha) return '';
+                  
+                  // Si la fecha viene con formato YYYY-MM-DD HH:mm:ss, extraer solo la fecha
+                  const fechaSola = fecha.split(' ')[0]; // Obtener solo la parte de fecha
+                  
+                  try {
+                    const date = new Date(fechaSola);
+                    if (isNaN(date.getTime())) {
+                      return fecha; // Si no se puede parsear, devolver original
+                    }
+                    
+                    // Formatear como DD/MM/YYYY
+                    const dia = date.getDate().toString().padStart(2, '0');
+                    const mes = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const año = date.getFullYear();
+                    
+                    return `${dia}/${mes}/${año}`;
+                  } catch (error) {
+                    console.warn('Error formateando fecha:', error);
+                    return fecha; // Devolver original en caso de error
+                  }
+                };
+
                 // Usar la misma lógica que en asignar-operadores para extraer direcciones múltiples
                 let recolectasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
                 let entregasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
@@ -741,10 +868,10 @@ export default function SubirFotosEmbarquePage() {
                                   {i === 0 ? "Original" : `Recolecta ${i + 1}`}
                                 </div>
                               )}
-                              <p className="text-sm text-gray-900 break-words">{r.direccion}</p>
+                              <div className="text-sm text-gray-900 break-words">{r.direccion}</div>
                               {(r.fecha || r.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {r.fecha && <span>📅 {r.fecha}</span>}
+                                  {r.fecha && <span>📅 {formatearFecha(r.fecha)}</span>}
                                   {r.hora && <span>🕐 {r.hora}</span>}
                                 </div>
                               )}
@@ -752,7 +879,7 @@ export default function SubirFotosEmbarquePage() {
                           </div>
                         )) : (
                           <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
-                            <p className="text-sm text-gray-500">Sin dirección de recolecta</p>
+                            <div className="text-sm text-gray-500">Sin dirección de recolecta</div>
                           </div>
                         )}
                       </div>
@@ -773,10 +900,10 @@ export default function SubirFotosEmbarquePage() {
                                   {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
                                 </div>
                               )}
-                              <p className="text-sm text-gray-900 break-words">{e.direccion}</p>
+                              <div className="text-sm text-gray-900 break-words">{e.direccion}</div>
                               {(e.fecha || e.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {e.fecha && <span>📅 {e.fecha}</span>}
+                                  {e.fecha && <span>📅 {formatearFecha(e.fecha)}</span>}
                                   {e.hora && <span>🕐 {e.hora}</span>}
                                 </div>
                               )}
@@ -784,7 +911,7 @@ export default function SubirFotosEmbarquePage() {
                           </div>
                         )) : (
                           <div className="border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
-                            <p className="text-sm text-gray-500">Sin dirección de entrega</p>
+                            <div className="text-sm text-gray-500">Sin dirección de entrega</div>
                           </div>
                         )}
                       </div>
@@ -797,11 +924,37 @@ export default function SubirFotosEmbarquePage() {
         </Card>
 
         {/* Alertas */}
+        {/* Mensaje especial para iOS - Ahora es un popup */}
+        {/* {mostrarMensajeIOS && (
+          <Alert className="bg-blue-50 border-blue-200">
+            <div className="flex items-start space-x-3">
+              <svg className="h-5 w-5 text-blue-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <div className="flex-1">
+                <AlertTitle className="text-blue-900 font-semibold">iOS detectado</AlertTitle>
+                <AlertDescription className="text-blue-800 text-sm mt-1">
+                  La ubicación GPS está <strong>desactivada automáticamente</strong> en dispositivos iOS por limitaciones del sistema. 
+                  Puedes subir fotos sin problemas sin compartir tu ubicación.
+                </AlertDescription>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setMostrarMensajeIOS(false)}
+                className="text-blue-600 hover:text-blue-800 hover:bg-blue-100"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          </Alert>
+        )} */}
+
         {error && (
           <Alert variant="destructive">
             <AlertTriangle className="h-4 w-4" />
             <div>
-              {quotaFull && <AlertTitle>Almacenamiento lleno</AlertTitle>}
+              {/* {quotaFull && <AlertTitle>Almacenamiento lleno</AlertTitle>} */}
               <AlertDescription>{error}</AlertDescription>
             </div>
           </Alert>
@@ -822,8 +975,8 @@ export default function SubirFotosEmbarquePage() {
           totalFiles={compressionProgress.total}
         />
 
-        {/* Resumen de compresión */}
-        {showCompressionSummary && compressionResults.length > 0 && (
+        {/* Resumen de compresión - Ocultado por solicitud del usuario */}
+        {/* {showCompressionSummary && compressionResults.length > 0 && (
           <CompressionResultSummary
             results={compressionResults.map(result => ({
               fileName: result.compressedFile.name,
@@ -833,7 +986,7 @@ export default function SubirFotosEmbarquePage() {
               success: result.compressionPercentage > 0
             }))}
           />
-        )}
+        )} */}
 
         {/* Formulario de subida */}
         <Card>
@@ -903,7 +1056,7 @@ export default function SubirFotosEmbarquePage() {
                 value={operadorNombre}
                 onChange={(e) => setOperadorNombre(e.target.value)}
                 placeholder="Operador Captura Aquí tu Nombre"
-                className="placeholder:italic placeholder:text-gray-500"
+                className={`placeholder:italic placeholder:text-gray-500 ${!operadorNombre.trim() ? 'bg-yellow-50 border-yellow-200 focus:bg-white focus:border-yellow-400' : ''}`}
                 disabled={confirmacionGuardada}
               />
               {confirmacionGuardada && (
@@ -1274,6 +1427,97 @@ export default function SubirFotosEmbarquePage() {
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* Modal para requerir ubicación */}
+      <AlertDialog open={showUbicacionModal} onOpenChange={setShowUbicacionModal}>
+        <AlertDialogContent className="bg-white text-gray-900 rounded-lg shadow-xl max-w-xs sm:max-w-sm md:max-w-md mx-6 w-full">
+          <AlertDialogHeader>
+            <div className="flex items-center space-x-2 mb-3">
+              <div className="bg-blue-100 p-1.5 rounded-full">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-blue-600">
+                  <path d="M12 20v-6" />
+                  <path d="M5 9a7 7 0 0 1 14 0" />
+                  <path d="M8 12a4 4 0 0 1 8 0" />
+                </svg>
+              </div>
+              <AlertDialogTitle className="text-base sm:text-lg font-medium">
+                📍 Ubicación Requerida
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="text-gray-600 text-sm sm:text-base">
+              Necesitas activar tu ubicación para subir archivos.
+            </AlertDialogDescription>
+            
+            {/* Detección de iOS y mostrar información específica */}
+            {typeof navigator !== 'undefined' && /iPad|iPhone|iPod/.test(navigator.userAgent) && (
+              <div className="mt-3 p-2 bg-amber-50 border border-amber-200 rounded-md">
+                <div className="flex items-start space-x-2">
+                  <svg className="h-4 w-4 text-amber-600 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                  <div className="text-xs">
+                    <div className="font-medium text-amber-800">iOS detectado</div>
+                    <div className="text-amber-700 mt-1">
+                      Si aparece "iOS requiere HTTPS", contacta al administrador para configurar conexión segura.
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Información general para otros dispositivos */}
+            {typeof navigator !== 'undefined' && !/iPad|iPhone|iPod/.test(navigator.userAgent) && (
+              <div className="mt-3 text-xs text-gray-500">
+                💡 Tu ubicación ayuda a verificar que las fotos se tomaron en el lugar correcto.
+              </div>
+            )}
+          </AlertDialogHeader>
+          <AlertDialogFooter className="flex-col space-y-2 pt-3">
+            <Button
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white text-sm sm:text-base py-2.5"
+              onClick={() => {
+                // No cerrar el modal inmediatamente en móvil
+                const esMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent)
+                
+                if (esMobile) {
+                  // En móvil, solicitar ubicación pero mantener modal abierto hasta obtener respuesta
+                  solicitarUbicacion(true)
+                } else {
+                  // En desktop, comportamiento normal
+                  setShowUbicacionModal(false)
+                  solicitarUbicacion(true)
+                }
+              }}
+              disabled={geoStatus === "solicitando"}
+            >
+              {geoStatus === "solicitando" ? (
+                <>
+                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                  Solicitando...
+                </>
+              ) : (
+                "📍 Activar Ubicación"
+              )}
+            </Button>
+            <div className="flex space-x-2 w-full">
+              <Button
+                variant="outline"
+                size="sm"
+                className="flex-1 text-xs sm:text-sm py-2"
+                onClick={() => {
+                  setShowUbicacionModal(false)
+                  setToggleUbicacionMode("disable")
+                }}
+              >
+                Desactivar
+              </Button>
+              <AlertDialogCancel className="flex-1 m-0 text-xs sm:text-sm py-2">
+                Cancelar
+              </AlertDialogCancel>
+            </div>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       {/* Popup para confirmar cambio de requisito de ubicación */}
       <AlertDialog open={!!toggleUbicacionMode} onOpenChange={(open) => setToggleUbicacionMode(open ? (toggleUbicacionMode ?? null) : null)}>
         <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
@@ -1303,6 +1547,138 @@ export default function SubirFotosEmbarquePage() {
               }}
             >
               {toggleUbicacionMode === "disable" ? "Sí, desactivar" : "Sí, requerir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal de almacenamiento lleno */}
+      <AlertDialog open={showQuotaModal} onOpenChange={(open) => {
+        setShowQuotaModal(open)
+        if (!open) {
+          setQuotaMessage("")
+          setQuotaFull(false)
+        }
+      }}>
+        <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2 text-red-600">
+              <AlertTriangle className="h-6 w-6" />
+              <span>Almacenamiento Lleno</span>
+            </AlertDialogTitle>
+            <AlertDialogDescription className="text-gray-700 pt-2">
+              <div className="space-y-3">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-3">
+                  <p className="text-sm font-medium text-red-800">
+                    {quotaMessage || 'El almacenamiento de imágenes está lleno.'}
+                  </p>
+                </div>
+                <p className="text-sm">
+                  Por favor, contacta al administrador del sistema para:
+                </p>
+                <ul className="list-disc list-inside text-sm space-y-1 text-gray-600">
+                  <li>Liberar espacio eliminando archivos antiguos</li>
+                  <li>Ampliar el plan de almacenamiento</li>
+                </ul>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogAction
+              onClick={() => {
+                setShowQuotaModal(false)
+                setQuotaMessage("")
+                setQuotaFull(false)
+              }}
+              className="w-full bg-red-600 hover:bg-red-700 text-white"
+            >
+              Entendido
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal informativo para iOS */}
+      <AlertDialog open={showModalIOS} onOpenChange={setShowModalIOS}>
+        <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2 text-blue-600">
+              <svg className="h-6 w-6" fill="currentColor" viewBox="0 0 20 20">
+                <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+              </svg>
+              <span>Dispositivo iOS Detectado</span>
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          
+          <div className="px-6 pb-2 space-y-3">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+              <div className="text-sm font-medium text-blue-800">
+                La ubicación GPS ha sido <strong>desactivada automáticamente</strong> en tu dispositivo iOS.
+              </div>
+            </div>
+            <div className="text-sm space-y-2 text-gray-700">
+              <div>
+                <strong>¿Por qué?</strong>
+              </div>
+              <div className="text-gray-600">
+                iOS requiere conexión HTTPS segura para acceder a la ubicación GPS. Para simplificar el proceso, hemos desactivado este requisito automáticamente.
+              </div>
+              <div className="mt-3">
+                <strong>¿Qué significa esto?</strong>
+              </div>
+              <ul className="list-disc list-inside space-y-1 text-gray-600">
+                <li>Puedes subir fotos sin compartir tu ubicación</li>
+                <li>No necesitas activar el GPS</li>
+                <li>El proceso de carga será más rápido y sencillo</li>
+              </ul>
+            </div>
+          </div>
+          
+          <AlertDialogFooter>
+            <AlertDialogAction
+              onClick={() => setShowModalIOS(false)}
+              className="w-full bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              Entendido
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Modal de límite de archivos */}
+      <AlertDialog open={showLimitModal} onOpenChange={(open) => {
+        setShowLimitModal(open)
+        if (!open) {
+          setLimitMessage("")
+        }
+      }}>
+        <AlertDialogContent className="bg-white text-gray-900 rounded-2xl shadow-xl max-w-md">
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center space-x-2 text-orange-600">
+              <AlertTriangle className="h-6 w-6" />
+              <span>Límite de Archivos Alcanzado</span>
+            </AlertDialogTitle>
+          </AlertDialogHeader>
+          
+          <div className="px-6 pb-2 space-y-3">
+            <div className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+              <div className="text-sm text-gray-700 space-y-2">
+                <div className="font-medium text-orange-900">
+                  Solo puedes subir un máximo de {MAX_FILES} archivos por embarque.
+                </div>
+                <div className="text-gray-600">
+                  Si deseas agregar más imágenes, primero elimina alguna de las que ya subiste.
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <AlertDialogFooter>
+            <AlertDialogAction
+              onClick={() => setShowLimitModal(false)}
+              className="w-full bg-orange-600 hover:bg-orange-700 text-white"
+            >
+              Entendido
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

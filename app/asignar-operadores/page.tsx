@@ -45,6 +45,7 @@ import {
   MapPin,
   FileText,
   FileSpreadsheet,
+  FolderOpen,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo } from "react";
@@ -65,6 +66,7 @@ import {
   type ContactoCliente,
   type TipoServicio,
 } from "@/lib/supabase";
+import { listarDocumentosEmbarque } from "@/lib/blob";
 import { normalizeDate, formatDateMatamoros } from "@/lib/date-utils";
 import { getAlertThresholds, calcularNivelAlerta } from "@/lib/alert-thresholds";
 import { agregarAuditLog } from "@/lib/audit";
@@ -644,6 +646,19 @@ export default function AsignarOperadoresPage() {
     return map;
   }, [embarques]);
 
+  // Mapa con conteo de embarques actualmente asignados por tractocamión (no finalizados/archivados/cancelados)
+  const asignadosPorCamion = useMemo(() => {
+    const map: { [camionId: string]: number } = {};
+    (embarques || []).forEach((e: any) => {
+      const id = e.camion_id;
+      if (!id) return;
+      // Excluir estados que ya terminaron o no cuentan como asignación activa
+      if (["finalizado", "cancelado", "archivado"].includes(e.estado)) return;
+      map[id] = (map[id] || 0) + 1;
+    });
+    return map;
+  }, [embarques]);
+
   // Estados para asignación y quickpaid
   const [asignaciones, setAsignaciones] = useState<{
     [key: string]: {
@@ -712,6 +727,23 @@ export default function AsignarOperadoresPage() {
   const [showFinalizarDialog, setShowFinalizarDialog] = useState(false);
   const [embarqueAFinalizar, setEmbarqueAFinalizar] = useState<Embarque | null>(null);
   const { toast } = useToast();
+
+  // Interface para documentos del embarque (adjuntos subidos al crear el embarque)
+  interface DocumentoEmbarque {
+    id?: string;
+    embarque_id?: string;
+    nombre_archivo: string;
+    url_blob: string;
+    pathname: string;
+    tipo_archivo?: string;
+    tamano_bytes?: number;
+    uploaded_at?: string;
+    created_at?: string;
+  }
+
+  // Estados para documentos del embarque
+  const [documentosEmbarque, setDocumentosEmbarque] = useState<DocumentoEmbarque[]>([]);
+  const [loadingDocumentos, setLoadingDocumentos] = useState(false);
 
   // Kilometraje (reutiliza lógica de Camiones en forma simplificada)
   const [registrosKilometrajeTableExists, setRegistrosKilometrajeTableExists] = useState<boolean>(false);
@@ -1221,6 +1253,21 @@ export default function AsignarOperadoresPage() {
     }
   };
 
+  // Función para cargar documentos/adjuntos del embarque (subidos al crear el embarque)
+  const cargarDocumentosEmbarque = async (embarqueId: string) => {
+    if (!embarqueId) return;
+    setLoadingDocumentos(true);
+    try {
+      const documentos = await listarDocumentosEmbarque(embarqueId);
+      setDocumentosEmbarque(documentos);
+    } catch (error) {
+      console.error("Error cargando documentos del embarque:", error);
+      setDocumentosEmbarque([]);
+    } finally {
+      setLoadingDocumentos(false);
+    }
+  };
+
   const contarFotosEmbarque = async (embarqueId: string) => {
     if (!embarqueId) return;
     setLoadingFotosCount(prev => new Set(prev).add(embarqueId));
@@ -1681,6 +1728,31 @@ export default function AsignarOperadoresPage() {
     if (!embarqueAModificar) {
       toast({ title: "Error: No se encontró el embarque a modificar", variant: "destructive" });
       return;
+    }
+
+    // Validar que no se seleccione un operador inactivo
+    if (modificacionData.cambiar_operador && modificacionData.nuevo_operador_id !== "no-change") {
+      const operadorSeleccionado = operadores.find(op => op.id === modificacionData.nuevo_operador_id);
+      
+      // Validar que no sea el mismo operador actual
+      if (modificacionData.nuevo_operador_id === embarqueAModificar.operador_id) {
+        toast({ 
+          title: "Operador no cambiado", 
+          description: "El nuevo operador es el mismo que el operador actual. Por favor selecciona un operador diferente.",
+          variant: "destructive" 
+        });
+        return;
+      }
+      
+      // Validar que no esté inactivo
+      if (operadorSeleccionado && operadorSeleccionado.estado === "inactivo") {
+        toast({ 
+          title: "Operador inactivo", 
+          description: "No puedes asignar un operador inactivo. Por favor selecciona un operador activo.",
+          variant: "destructive" 
+        });
+        return;
+      }
     }
 
     // Verificar si hay algún cambio válido
@@ -2501,7 +2573,7 @@ export default function AsignarOperadoresPage() {
       (c) => c.cliente_id === embarqueDetalle.cliente?.id
     );
     const contactoNombre = contactoCliente
-      ? `${contactoCliente.nombre} ${contactoCliente.apellidos || ""}`
+      ? `${contactoCliente.nombre} ${(contactoCliente as any).apellidos || ""}`
       : "No especificado";
 
     const printContent = `
@@ -3704,6 +3776,7 @@ export default function AsignarOperadoresPage() {
                           setSelectedImage(null);
                           setShowDetailsModal(true);
                           cargarFotosEmbarque(embarque.id);
+                          cargarDocumentosEmbarque(embarque.id);
                           contarFotosEmbarque(embarque.id);
                         }}
                       >
@@ -3740,7 +3813,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <Camera className="h-4 w-4 mr-1" />
-                          Reporte del Operador
+                          Reporte Operador
                         </Button>
                       )}
                       {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
@@ -3754,7 +3827,7 @@ export default function AsignarOperadoresPage() {
                           }}
                         >
                           <FileText className="h-4 w-4 mr-1" />
-                          Reporte para Clientes
+                          Reporte Clientes
                         </Button>
                       )}
                       {/* Kilometraje - abrir modal para el tractocamión asignado */}
@@ -4566,7 +4639,12 @@ export default function AsignarOperadoresPage() {
                                             {camion.numero_economico} -{" "}
                                             {camion.marca || "Sin marca"}
                                           </span>
-                                          <div className="ml-2">
+                                          <div className="flex items-center gap-2 ml-2">
+                                            {asignadosPorCamion[camion.id] > 0 && (
+                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-300 text-blue-800 text-xs font-semibold">
+                                                {asignadosPorCamion[camion.id]}
+                                              </span>
+                                            )}
                                             {getVehicleStatusBadge(camion.estado)}
                                           </div>
                                         </div>
@@ -4868,6 +4946,16 @@ export default function AsignarOperadoresPage() {
                       onClick={() => setActiveTab("contacto-cliente")}
                     >
                       Contacto del Cliente
+                    </button>
+                    <button
+                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
+                        activeTab === "adjuntos"
+                          ? "border-blue-500 text-blue-600"
+                          : "border-transparent text-gray-500 hover:text-gray-700"
+                      }`}
+                      onClick={() => setActiveTab("adjuntos")}
+                    >
+                      Adjuntos ({documentosEmbarque.length})
                     </button>
                     {embarqueDetalle?.modificado && (
                       <button
@@ -5586,7 +5674,7 @@ export default function AsignarOperadoresPage() {
                                   Nombre
                                 </label>
                                 <p className="text-sm font-medium text-gray-900">
-                                  {contacto.nombre} {contacto.apellidos || ""}
+                                  {`${contacto.nombre ?? ""}${(contacto as any).apellidos ? ` ${(contacto as any).apellidos}` : ""}`.trim() || "Sin nombre"}
                                 </p>
                               </div>
 
@@ -5632,6 +5720,120 @@ export default function AsignarOperadoresPage() {
                             </div>
                           );
                         })()}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Adjuntos Tab - Documentos/imágenes subidos al crear el embarque */}
+                  {activeTab === "adjuntos" && (
+                    <div className="space-y-6">
+                      <div className="bg-white border rounded-lg p-6">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2 flex items-center gap-2">
+                          <FolderOpen className="h-5 w-5" />
+                          Documentos e Imágenes del Embarque ({documentosEmbarque.length})
+                        </h3>
+                        
+                        {loadingDocumentos ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-blue-600"></div>
+                            <span className="ml-2 text-sm text-gray-600">Cargando documentos...</span>
+                          </div>
+                        ) : documentosEmbarque.length === 0 ? (
+                          <div className="text-center py-8 text-gray-500">
+                            <FolderOpen className="h-16 w-16 mx-auto mb-4 text-gray-300" />
+                            <p className="text-lg font-medium">No hay archivos en este embarque</p>
+                            <p className="text-sm mt-1">Los documentos e imágenes cargados al crear el embarque aparecerán aquí</p>
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                            {/* Ordenar: imágenes primero, luego otros archivos */}
+                            {documentosEmbarque
+                              .sort((a, b) => {
+                                const aImg = a.tipo_archivo?.startsWith('image/');
+                                const bImg = b.tipo_archivo?.startsWith('image/');
+                                if (aImg === bImg) return 0;
+                                return aImg ? -1 : 1;
+                              })
+                              .map((documento) => {
+                                const esImagen = documento.tipo_archivo?.startsWith('image/');
+                                const esPDF = documento.tipo_archivo === 'application/pdf';
+                                const formatFileSize = (bytes: number) => {
+                                  if (!bytes) return '';
+                                  if (bytes === 0) return '0 Bytes';
+                                  const k = 1024;
+                                  const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+                                  const i = Math.floor(Math.log(bytes) / Math.log(k));
+                                  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+                                };
+
+                                return (
+                                  <div
+                                    key={documento.id}
+                                    className="border rounded-lg p-3 space-y-2 bg-white hover:shadow-md transition-shadow"
+                                  >
+                                    <div className="aspect-square max-w-[180px] w-full mx-auto bg-gray-100 rounded-lg overflow-hidden relative group flex items-center justify-center">
+                                      {esImagen ? (
+                                        <img
+                                          src={documento.url_blob || '/placeholder.svg'}
+                                          alt={documento.nombre_archivo}
+                                          className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity"
+                                          onClick={() => {
+                                            setSelectedImage(documento.url_blob);
+                                          }}
+                                          onError={(e) => { e.currentTarget.src = '/placeholder.svg?height=200&width=300&text=Error+cargando+imagen'; }}
+                                        />
+                                      ) : (
+                                        <div className="flex flex-col items-center justify-center w-full h-full text-gray-400">
+                                          <FileText className="h-8 w-8 mb-2" />
+                                          <span className="text-[10px] text-center px-2">{documento.nombre_archivo}</span>
+                                        </div>
+                                      )}
+
+                                      <div className="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                                        <div className="text-white text-center">
+                                          <Eye className="h-5 w-5 mx-auto mb-1" />
+                                          <span className="text-[10px]">Click para ver</span>
+                                        </div>
+                                      </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                      <div className="flex items-center justify-between">
+                                        <Badge className={esImagen ? 'bg-blue-100 text-blue-800 text-[10px]' : esPDF ? 'bg-red-100 text-red-800 text-[10px]' : 'bg-gray-100 text-gray-800 text-[10px]'}>
+                                          {esImagen ? 'IMAGEN' : esPDF ? 'PDF' : 'ARCHIVO'}
+                                        </Badge>
+                                        <span className="text-[10px] text-gray-500">{documento.tamano_bytes && formatFileSize(documento.tamano_bytes)}</span>
+                                      </div>
+                                      <p className="text-xs font-medium truncate">{documento.nombre_archivo}</p>
+                                      <p className="text-[10px] text-gray-400">
+                                        {documento.created_at && new Date(documento.created_at).toLocaleDateString('es-MX', {
+                                          year: 'numeric',
+                                          month: 'short',
+                                          day: 'numeric',
+                                          hour: '2-digit',
+                                          minute: '2-digit'
+                                        })}
+                                      </p>
+                                      
+                                      <div className="flex space-x-2 pt-2">
+                                        <Button 
+                                          aria-label="Ver documento" 
+                                          title="Ver" 
+                                          variant="outline" 
+                                          size="sm" 
+                                          className="flex-1 bg-transparent" 
+                                          onClick={() => window.open(documento.url_blob, '_blank')}
+                                        >
+                                          <Eye className="h-3 w-3 mr-1" />
+                                          Ver
+                                        </Button>
+                                      </div>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                          </div>
+                        )}
                       </div>
                     </div>
                   )}
@@ -5923,23 +6125,15 @@ export default function AsignarOperadoresPage() {
                                       key={operador.id}
                                       value={operador.id}
                                     >
-                                      <div className="flex items-center justify-between w-full">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-medium">
-                                            {(operador as any).operator_number && (
-                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold mr-2">
-                                                {(operador as any).operator_number}
-                                              </span>
-                                            )}
-                                            {operador.nombre} {operador.apellidos}
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-medium">
+                                          {operador.nombre} {operador.apellidos}
+                                        </span>
+                                        {operador.estado === "inactivo" && (
+                                          <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-red-100 text-red-800 text-xs font-semibold">
+                                            Inactivo
                                           </span>
-                                          {asignadosPorOperador[operador.id] > 0 && (
-                                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
-                                              {asignadosPorOperador[operador.id]}
-                                            </span>
-                                          )}
-                                        </div>
-                                        {/* Phone hidden in select list */}
+                                        )}
                                       </div>
                                     </SelectItem>
                                   ))}
@@ -6027,13 +6221,20 @@ export default function AsignarOperadoresPage() {
                                 </SelectItem>
                                 {camiones.map((camion) => (
                                   <SelectItem key={camion.id} value={camion.id}>
-                                    <div className="flex flex-col">
-                                      <span className="font-mono font-medium">
-                                        {camion.numero_economico}
-                                      </span>
-                                      <span className="text-xs text-gray-500">
-                                        {camion.marca} {camion.modelo}
-                                      </span>
+                                    <div className="flex items-center justify-between w-full">
+                                      <div className="flex flex-col">
+                                        <span className="font-mono font-medium">
+                                          {camion.numero_economico}
+                                        </span>
+                                        <span className="text-xs text-gray-500">
+                                          {camion.marca} {camion.modelo}
+                                        </span>
+                                      </div>
+                                      {asignadosPorCamion[camion.id] > 0 && (
+                                        <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-300 text-blue-800 text-xs font-semibold ml-2">
+                                          {asignadosPorCamion[camion.id]}
+                                        </span>
+                                      )}
                                     </div>
                                   </SelectItem>
                                 ))}
@@ -6679,6 +6880,7 @@ export default function AsignarOperadoresPage() {
                                     setSelectedImage(null);
                                     setShowDetailsModal(true);
                                     cargarFotosEmbarque(embarque.id);
+                                    cargarDocumentosEmbarque(embarque.id);
                                   }}
                                   aria-label="Ver detalles"
                                   title="Ver detalles del embarque"

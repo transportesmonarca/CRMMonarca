@@ -272,6 +272,31 @@ export default function EmbarqueReporteClientePage() {
             {/* Direcciones - Adaptativo móvil/escritorio */}
             <div className="bg-gray-50 border rounded p-4 mb-6">
               {(() => {
+                // Función para formatear fechas para display
+                const formatearFecha = (fecha: string) => {
+                  if (!fecha) return '';
+                  
+                  // Si la fecha viene con formato YYYY-MM-DD HH:mm:ss, extraer solo la fecha
+                  const fechaSola = fecha.split(' ')[0]; // Obtener solo la parte de fecha
+                  
+                  try {
+                    const date = new Date(fechaSola);
+                    if (isNaN(date.getTime())) {
+                      return fecha; // Si no se puede parsear, devolver original
+                    }
+                    
+                    // Formatear como DD/MM/YYYY
+                    const dia = date.getDate().toString().padStart(2, '0');
+                    const mes = (date.getMonth() + 1).toString().padStart(2, '0');
+                    const año = date.getFullYear();
+                    
+                    return `${dia}/${mes}/${año}`;
+                  } catch (error) {
+                    console.warn('Error formateando fecha:', error);
+                    return fecha; // Devolver original en caso de error
+                  }
+                };
+
                 // Usar la misma lógica que en subir-fotos-embarque para extraer direcciones múltiples
                 let recolectasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
                 let entregasFinales: Array<{direccion: string, fecha: string, hora: string}> = [];
@@ -339,10 +364,10 @@ export default function EmbarqueReporteClientePage() {
                                   {i === 0 ? "Original" : `Recolecta ${i + 1}`}
                                 </div>
                               )}
-                              <p className="text-sm text-gray-900 break-words">{r.direccion}</p>
+                              <div className="text-sm text-gray-900 break-words">{r.direccion}</div>
                               {(r.fecha || r.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {r.fecha && <span>📅 {r.fecha}</span>}
+                                  {r.fecha && <span>📅 {formatearFecha(r.fecha)}</span>}
                                   {r.hora && <span>🕐 {r.hora}</span>}
                                 </div>
                               )}
@@ -350,7 +375,7 @@ export default function EmbarqueReporteClientePage() {
                           </div>
                         )) : (
                           <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
-                            <p className="text-sm text-gray-500">Sin dirección de recolecta</p>
+                            <div className="text-sm text-gray-500">Sin dirección de recolecta</div>
                           </div>
                         )}
                       </div>
@@ -371,10 +396,10 @@ export default function EmbarqueReporteClientePage() {
                                   {i === (entregasFinales.length - 1) ? "Final" : `Entrega ${i + 1}`}
                                 </div>
                               )}
-                              <p className="text-sm text-gray-900 break-words">{e.direccion}</p>
+                              <div className="text-sm text-gray-900 break-words">{e.direccion}</div>
                               {(e.fecha || e.hora) && (
                                 <div className="flex flex-wrap gap-4 text-xs text-gray-600 mt-2">
-                                  {e.fecha && <span>📅 {e.fecha}</span>}
+                                  {e.fecha && <span>📅 {formatearFecha(e.fecha)}</span>}
                                   {e.hora && <span>🕐 {e.hora}</span>}
                                 </div>
                               )}
@@ -382,7 +407,7 @@ export default function EmbarqueReporteClientePage() {
                           </div>
                         )) : (
                           <div className="bg-gray-50 border-2 border-dashed border-gray-200 rounded-lg p-3 text-center">
-                            <p className="text-sm text-gray-500">Sin dirección de entrega</p>
+                            <div className="text-sm text-gray-500">Sin dirección de entrega</div>
                           </div>
                         )}
                       </div>

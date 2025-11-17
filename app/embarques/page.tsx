@@ -6130,10 +6130,29 @@ export default function EmbarquesPage() {
                             id="documento-embarque"
                             type="file"
                             accept="image/*,application/pdf"
+                            multiple
                             onChange={(e) => {
-                              const file = e.target.files?.[0];
-                              if (file) {
-                                handleUploadDocumentoEmbarque(file);
+                              const files = Array.from(e.target.files || []);
+                              if (files.length > 0) {
+                                // Verificar que no se exceda el límite de 10 archivos
+                                const archivosRestantes = 10 - documentosEmbarque.length;
+                                const archivosASubir = files.slice(0, archivosRestantes);
+                                
+                                if (archivosASubir.length < files.length) {
+                                  toast({
+                                    title: "Límite de archivos",
+                                    description: `Solo se pueden subir ${archivosRestantes} archivos más. Se seleccionaron los primeros ${archivosASubir.length} archivos.`,
+                                    variant: "default",
+                                  });
+                                }
+
+                                // Subir archivos uno por uno
+                                archivosASubir.forEach((file, index) => {
+                                  setTimeout(() => {
+                                    handleUploadDocumentoEmbarque(file);
+                                  }, index * 100); // Delay de 100ms entre cada archivo para evitar sobrecarga
+                                });
+                                
                                 e.target.value = "";
                               }
                             }}
@@ -6145,6 +6164,9 @@ export default function EmbarquesPage() {
                               ⚠️ Has alcanzado el límite de 10 documentos
                             </p>
                           )}
+                          <p className="text-xs text-gray-500 mt-1">
+                            Puedes seleccionar múltiples archivos a la vez. Se aceptan imágenes y archivos PDF.
+                          </p>
                         </div>
 
                         {/* Preview y lista de documentos */}

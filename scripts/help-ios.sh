@@ -1,0 +1,47 @@
+#!/bin/bash
+
+echo "🔧 SOLUCIÓN RÁPIDA PARA ERRORES DE GEOLOCALIZACIÓN EN iOS"
+echo "============================================================="
+
+echo ""
+echo "❌ PROBLEMA:"
+echo "   iOS Safari requiere HTTPS para geolocalización"
+echo "   Error: 'iOS requiere HTTPS para geolocalización'"
+
+echo ""
+echo "✅ SOLUCIÓN:"
+echo "   1. Instalar ngrok (ya instalado ✓)"
+echo "   2. Ejecutar servidor local"  
+echo "   3. Crear túnel HTTPS"
+
+echo ""
+echo "📋 INSTRUCCIONES PASO A PASO:"
+echo ""
+echo "1️⃣  En terminal 1, ejecuta:"
+echo "   npm run dev:host"
+echo ""
+echo "2️⃣  En terminal 2, ejecuta:"
+echo "   ngrok http 3001"
+echo ""
+echo "3️⃣  Busca la línea que dice:"
+echo "   Forwarding https://xxxx.ngrok.io -> http://localhost:3001"
+echo ""
+echo "4️⃣  Copia esa URL HTTPS (https://xxxx.ngrok.io)"
+echo ""
+echo "5️⃣  Abre Safari en tu iPhone"
+echo ""
+echo "6️⃣  Ve a la URL HTTPS de ngrok"
+echo ""
+echo "7️⃣  Ahora 'Activar Ubicación' funcionará correctamente"
+
+echo ""
+echo "💡 ALTERNATIVA AUTOMÁTICA:"
+echo "   npm run dev:ios    (script automatizado)"
+
+echo ""
+echo "🌐 URLS DISPONIBLES:"
+echo "   • Local (sin GPS iOS): http://localhost:3001"
+echo "   • HTTPS (con GPS iOS): https://xxxx.ngrok.io"
+
+echo ""
+echo "================================================="
