@@ -4750,18 +4750,25 @@ export default function EmbarquesPage() {
                   <div>
                     <div className="flex items-center">
                       <CardTitle className="text-lg">
-                        <span className="inline-flex items-center text-blue-600">
-                          <Package className="h-5 w-5 text-blue-600 mr-1" />
-                          Folio: {embarque.folio}
-                        </span>
-                        {embarque.estado === "contingencia" && (
-                          <span
-                            className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-semibold shadow-lg ml-1"
-                            title="Contingencia"
-                          >
-                            Contingencia
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="inline-flex items-center text-blue-600">
+                            <Package className="h-5 w-5 text-blue-600 mr-1" />
+                            Folio: {embarque.folio}
                           </span>
-                        )}
+                          {embarque.load_number && (
+                            <span className="text-sm font-semibold text-gray-600">
+                              Load: {embarque.load_number}
+                            </span>
+                          )}
+                          {embarque.estado === "contingencia" && (
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-semibold shadow-lg"
+                              title="Contingencia"
+                            >
+                              Contingencia
+                            </span>
+                          )}
+                        </div>
                       </CardTitle>
                     </div>
                     <CardDescription>

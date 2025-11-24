@@ -37,14 +37,11 @@ import {
   UserCheck,
   AlertTriangle,
   Settings,
-  Link,
-  Check,
   Camera,
   Coins,
   Package,
   MapPin,
   FileText,
-  FileSpreadsheet,
   FolderOpen,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
@@ -718,7 +715,6 @@ export default function AsignarOperadoresPage() {
   });
 
   const [activeModifyTab, setActiveModifyTab] = useState("justificacion");
-  const [copiedLink, setCopiedLink] = useState<string | null>(null);
   const [fotosEmbarque, setFotosEmbarque] = useState<FotoEmbarque[]>([]);
   const [loadingFotos, setLoadingFotos] = useState(false);
   const [fotosCount, setFotosCount] = useState<{[embarqueId: string]: number}>({});
@@ -1220,13 +1216,6 @@ export default function AsignarOperadoresPage() {
       setTotalFinalizadosDB(null);
       setTotalCanceladosArchivadosDB(null);
     }
-  };
-
-  const handleCopyLink = (embarqueId: string) => {
-    const link = `${window.location.origin}/subir-fotos-embarque/${embarqueId}`;
-    navigator.clipboard.writeText(link);
-    setCopiedLink(embarqueId);
-    setTimeout(() => setCopiedLink(null), 2000);
   };
 
   const cargarFotosEmbarque = async (embarqueId: string) => {
@@ -2474,7 +2463,7 @@ export default function AsignarOperadoresPage() {
     const estados = {
       "listo-para-asignar": {
         color: "bg-blue-100 text-blue-800",
-        label: "Listo para Asignar",
+        label: "Asignar",
       },
       asignado: { color: "bg-yellow-100 text-yellow-800", label: "Asignado" },
       "en-transito": {
@@ -3219,63 +3208,55 @@ export default function AsignarOperadoresPage() {
   return (
     <>
       <MainLayout>
-      <div className="space-y-4">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">
-              Asignación de Embarques
-            </h1>
-            <p className="text-gray-600 mt-2">
-              Asignar recursos a embarques listos
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black whitespace-nowrap"
-              onClick={exportarEmbarquesVisibles}
-              title="Descargar en Excel (CSV) los registros visibles"
-            >
-              <FileSpreadsheet className="h-4 w-4 mr-1" />
-              Exportar Excel
-            </Button>
-            <Button
-              onClick={() => {
-                setShowCompletedModal(true);
-                cargarEmbarquesFinalizados();
-              }}
-              variant="outline"
-              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-            >
-              <svg
-                className="h-4 w-4 mr-2"
-                fill="none"
-                stroke="currentColor"
-                viewBox="0 0 24 24"
+        <div className="space-y-4">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+            <div>
+              <h1 className="text-3xl font-bold text-gray-900">
+                Asignación de Embarques
+              </h1>
+              <p className="text-gray-600 mt-2">
+                Asignar recursos a embarques listos
+              </p>
+            </div>
+            <div className="flex items-center gap-2 w-full md:w-auto justify-end">
+              <Button
+                onClick={() => {
+                  setShowCompletedModal(true);
+                  cargarEmbarquesFinalizados();
+                }}
+                variant="outline"
+                className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black w-full sm:w-auto"
               >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={2}
-                  d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                />
-              </svg>
-              Registros Completados
-            </Button>
+                <svg
+                  className="h-4 w-4 mr-2"
+                  fill="none"
+                  stroke="currentColor"
+                  viewBox="0 0 24 24"
+                >
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={2}
+                    d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                  />
+                </svg>
+                Registros Completados
+              </Button>
+            </div>
           </div>
-        </div>
 
-        {/* Estadísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        {/* Estadísticas - 2+2+1 columnas en móvil (xx, xx, x), 5 en desktop */}
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-4">
           {/* 1) Embarques Pendientes por Asignar */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Pendientes por Asignar</p>
-                  <p className="text-2xl font-bold text-blue-700">{embarques.filter((e) => e.estado?.startsWith("listo-para-asignar")).length}</p>
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Pendientes</p>
+                  <p className="text-2xl md:text-2xl font-bold text-blue-700">{embarques.filter((e) => e.estado?.startsWith("listo-para-asignar")).length}</p>
                 </div>
-                <svg className="h-8 w-8 text-blue-700" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* Icono solo en desktop */}
+                <svg className="hidden md:block h-8 w-8 text-blue-700 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
@@ -3284,13 +3265,14 @@ export default function AsignarOperadoresPage() {
 
           {/* 2) Embarques por Finalizar */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Embarques por Finalizar</p>
-                  <p className="text-2xl font-bold text-gray-600">{embarques.filter((e:any) => ["asignado","en-transito"].includes(e.estado)).length}</p>
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Finalizar</p>
+                  <p className="text-2xl md:text-2xl font-bold text-gray-600">{embarques.filter((e:any) => ["asignado","en-transito"].includes(e.estado)).length}</p>
                 </div>
-                <svg className="h-8 w-8 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* Icono solo en desktop */}
+                <svg className="hidden md:block h-8 w-8 text-gray-600 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                 </svg>
               </div>
@@ -3299,44 +3281,47 @@ export default function AsignarOperadoresPage() {
 
           {/* 3) Embarques con Contingencia */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Embarques con Contingencia</p>
-                  <p className="text-2xl font-bold text-red-600">{embarques.filter((e:any) => {
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Contingencia</p>
+                  <p className="text-2xl md:text-2xl font-bold text-red-600">{embarques.filter((e:any) => {
                     const txt = (e.observaciones || "").toLowerCase();
                     return e.estado === "contingencia" || e.modificado === true || txt.includes("contingencia") || txt.includes("emergencia");
                   }).length}</p>
                 </div>
-                <svg className="h-8 w-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                {/* Icono solo en desktop */}
+                <svg className="hidden md:block h-8 w-8 text-red-600 flex-shrink-0 ml-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v4m0 4h.01M12 2a10 10 0 100 20 10 10 0 000-20z" />
                 </svg>
               </div>
             </CardContent>
           </Card>
 
-          {/* 4) Tractocamiones Disponibles (cuenta estado === 'disponible') */}
+          {/* 4) Tractocamiones Disponibles */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Tractocamiones Disponibles</p>
-                  <p className="text-2xl font-bold text-green-600">{camiones.filter((c) => c.estado === "disponible").length}</p>
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Tractocam.</p>
+                  <p className="text-2xl md:text-2xl font-bold text-green-600">{camiones.filter((c) => c.estado === "disponible").length}</p>
                 </div>
-                <Truck className="h-8 w-8 text-green-600" />
+                {/* Icono solo en desktop */}
+                <Truck className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
 
-          {/* 5) Operadores Disponibles (moved to last) */}
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Operadores Disponibles</p>
-                  <p className="text-2xl font-bold text-gray-600">{operadores.filter((op) => op.estado === "activo").length}</p>
+          {/* 5) Operadores Disponibles - Span 2 columnas en móvil */}
+          <Card className="col-span-2 md:col-span-1">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Operadores</p>
+                  <p className="text-2xl md:text-2xl font-bold text-gray-600">{operadores.filter((op) => op.estado === "activo").length}</p>
                 </div>
-                <Users className="h-8 w-8 text-gray-600" />
+                {/* Icono solo en desktop */}
+                <Users className="hidden md:block h-8 w-8 text-gray-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
@@ -3361,7 +3346,8 @@ export default function AsignarOperadoresPage() {
                 </div>
               </div>
               <div className="flex items-center gap-2 ml-auto">
-                <span className="text-sm text-gray-700">
+                {/* Texto "Página X de Y" - Solo desktop */}
+                <span className="hidden md:inline text-sm text-gray-700">
                   Página {listaPage} de {totalListaPages}
                 </span>
                 <div className="flex items-center gap-1">
@@ -3383,7 +3369,8 @@ export default function AsignarOperadoresPage() {
                   </Button>
                 </div>
                 <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                <div className="flex items-center gap-2">
+                {/* Selector "Por página" - Solo desktop */}
+                <div className="hidden md:flex items-center gap-2">
                   <span className="text-sm text-gray-700">Por página:</span>
                   <Select
                     value={String(listaPageSize)}
@@ -3404,8 +3391,9 @@ export default function AsignarOperadoresPage() {
                       <SelectItem value="48">48 por página</SelectItem>
                     </SelectContent>
                   </Select>
-                  <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                  <Select
+                </div>
+                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+                <Select
                     value={filtroEstado}
                     onValueChange={(v) => {
                       setFiltroEstado(v);
@@ -3423,14 +3411,13 @@ export default function AsignarOperadoresPage() {
                       <SelectItem value="finalizados">Embarques Finalizados</SelectItem>
                     </SelectContent>
                   </Select>
-                </div>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Lista de embarques */}
-        <div className="grid grid-cols-1 gap-4">
+        {/* Lista de embarques - Más estrecho en móvil */}
+        <div className="grid grid-cols-1 gap-4 px-1 md:px-0">
           {(() => {
             // Log temporal de embarques modificados
             console.log('🔍 Total embarques paginados:', embarquesPaginados.length);
@@ -3444,15 +3431,19 @@ export default function AsignarOperadoresPage() {
             }
             // Analizar tipo de contingencia para colores diferenciados
             const analisisContingencia = analizarContingencia(embarque.estado || '');
+            const puedeFinalizar = embarque.estado?.startsWith("asignado") || embarque.estado?.startsWith("en-transito");
+            const sinOperadorAsignado = !embarque.operador_id;
+            const alinearBotonesDerecha = sinOperadorAsignado || puedeFinalizar;
             
             return (
-            <Card
+              <Card
               key={`${embarque.folio}-${(embarque as any)._fuente || 'legacy'}`}
               id={`embarque-card-${embarque.id}`}
               className={`
                 ${highlightId === embarque.id ? "ring-2 ring-blue-500" : ""}
                 ${analisisContingencia.esFleteFalso ? "!bg-orange-50 !border-orange-200" : ""}
                 ${analisisContingencia.esContingencia && !analisisContingencia.esFleteFalso ? "!bg-red-50 !border-red-200" : ""}
+                w-full md:w-auto
               `.trim()}
               style={analisisContingencia.esContingencia ? { 
                 backgroundColor: analisisContingencia.esFleteFalso ? '#fff7ed' : '#fef2f2', 
@@ -3460,7 +3451,7 @@ export default function AsignarOperadoresPage() {
                 borderWidth: '1px' 
               } : undefined}
             >
-              <CardHeader>
+              <CardHeader className="pb-3 md:pb-6 px-3 md:px-6">
                 <div className="flex justify-between items-start">
                   <div>
 
@@ -3622,50 +3613,65 @@ export default function AsignarOperadoresPage() {
                     </DialogContent>
                   </Dialog>
                     <CardTitle>
-                      <span className="inline-flex items-center text-blue-600 text-xl">
-                        <Package className="h-5 w-5 text-blue-600 mr-1" />
-                        {embarque.folio}
-                      </span>
-                      
-
-                      
-                      {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
-                      {(() => {
-                        const analisis = analizarContingencia(embarque.estado || '');
-                        if (analisis.esContingencia && !analisis.esFleteFalso) {
-                          return (
-                            <span
-                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold align-middle bg-red-100 text-red-800 border border-red-200"
-                              title="Modificado por contingencia"
-                            >
-                              🔴 CONTINGENCIA
-                            </span>
-                          );
-                        }
-                        return null;
-                      })()}
-                      
-                      {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="inline-flex items-center text-blue-600 text-xl">
+                          <Package className="h-5 w-5 text-blue-600 mr-1" />
+                          {embarque.folio}
+                        </span>
+                        {embarque.load_number && (
+                          <span className="text-sm font-semibold text-gray-600">
+                            Load: {embarque.load_number}
+                          </span>
+                        )}
+                        {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
+                        {(() => {
+                          const analisis = analizarContingencia(embarque.estado || '');
+                          if (analisis.esContingencia && !analisis.esFleteFalso) {
+                            return (
+                              <span
+                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold align-middle bg-red-100 text-red-800 border border-red-200"
+                                title="Modificado por contingencia"
+                              >
+                                🔴 CONTINGENCIA
+                              </span>
+                            );
+                          }
+                          return null;
+                        })()}
+                        {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
+                          <span
+                            className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
+                            title="Este embarque fue asignado con QuickPaid"
+                          >
+                            QuickPaid
+                            <Coins className="h-3.5 w-3.5 text-yellow-700 ml-1" />
+                          </span>
+                        )}
+                      </div>
+                    </CardTitle>
+                    {/* QuickPaid badge debajo de Load en móvil */}
+                    {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
+                      <div className="md:hidden mt-1">
                         <span
-                          className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
+                          className="inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
                           title="Este embarque fue asignado con QuickPaid"
                         >
-                          QuickPaid
-                          <Coins className="h-4 w-4 text-yellow-700 ml-1" />
+                          QP
+                          <Coins className="h-3 w-3 text-yellow-700 ml-1" />
                         </span>
-                      )}
-                    </CardTitle>
-                    <CardDescription>
+                      </div>
+                    )}
+                    {/* CardDescription - Solo visible en desktop */}
+                    <CardDescription className="hidden md:block">
                       {(() => {
                         const cliente = embarque.cliente?.nombre ? `Cliente: ${embarque.cliente.nombre}` : "";
-                        const load = embarque.load_number ? `Load: ${embarque.load_number}` : "";
-                        
-                        const parts = [cliente, load].filter(Boolean);
+                        const parts = [cliente].filter(Boolean);
                         return parts.join(" • ") || "";
                       })()}
                     </CardDescription>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  {/* Badges - Solo desktop */}
+                  <div className="hidden md:flex items-center space-x-2">
                     {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1 items-center">
                       {/* Badge D. Múltiples - Solo mostrar cuando esté asignado o listo para asignar */}
@@ -3707,10 +3713,20 @@ export default function AsignarOperadoresPage() {
                         }
                         return null;
                       })()}
-                      
-                        <Button
+                    </div>
+                  </div>
+                  
+                  {/* Botones de acción - Visible en todas las resoluciones */}
+                  <div
+                    className={`flex flex-wrap gap-1 items-center w-full md:w-auto ${
+                      alinearBotonesDerecha ? "justify-end" : ""
+                    }`}
+                  >
+                      {/* Botón Detalles - order-1 */}
+                      <Button
                         variant="outline"
                         size="sm"
+                        className="order-1"
                         onClick={() => {
                           // Normalize date-only or midnight timestamps to avoid TZ shifts
                           const normalized = {
@@ -3780,8 +3796,9 @@ export default function AsignarOperadoresPage() {
                           contarFotosEmbarque(embarque.id);
                         }}
                       >
-                        <Eye className="h-4 w-4 mr-1" />
-                        Detalles
+                        {/* Solo icono en móvil, icono+texto en desktop */}
+                        <Eye className="h-4 w-4 md:mr-1" />
+                        <span className="hidden md:inline">Detalles</span>
                       </Button>
                       {(embarque.estado?.startsWith("listo-para-asignar") ||
                         embarque.estado?.startsWith("asignado") ||
@@ -3794,54 +3811,90 @@ export default function AsignarOperadoresPage() {
                             setCancelReason("");
                             setShowCancelModal(true);
                           }}
+                          className="md:px-4 px-2 order-3"
+                          title="Cancelar embarque"
                         >
-                          Cancelar
+                          {/* X en móvil, texto en desktop */}
+                          <span className="md:hidden text-base leading-none">✕</span>
+                          <span className="hidden md:inline">Cancelar</span>
                         </Button>
                       )}
-                      {(embarque.estado?.startsWith("asignado") ||
-                        embarque.estado === "finalizado" || // 🔧 NUEVO: Mostrar en embarques finalizados
-                        embarque.modificado) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className={fotosCount[embarque.id] > 0 ? "border-green-500 bg-green-50 text-green-700 hover:bg-green-100" : ""}
-                          onClick={() => {
-                            window.open(
-                              `/subir-fotos-embarque/${embarque.id}`,
-                              "_blank"
-                            );
-                          }}
-                        >
-                          <Camera className="h-4 w-4 mr-1" />
-                          Reporte Operador
-                        </Button>
-                      )}
-                      {/* Reporte Cliente - aparece entre Fotos y Contingencia */}
-                      {(embarque.estado?.startsWith("asignado") || embarque.modificado || embarque.estado?.startsWith("listo-para-asignar") || embarque.estado === "finalizado") && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => {
-                            // Abrir la vista especializada de reporte para cliente (fotos ordenadas + datos del embarque)
-                            window.open(`/embarque-reporte-cliente/${embarque.id}`, '_blank')
-                          }}
-                        >
-                          <FileText className="h-4 w-4 mr-1" />
-                          Reporte Clientes
-                        </Button>
-                      )}
-                      {/* Kilometraje - abrir modal para el tractocamión asignado */}
-                      {embarque.camion && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => abrirModalKilometraje(embarque)}
-                        >
-                          <Truck className="h-4 w-4 mr-1" />
-                          Km
-                        </Button>
-                      )}
-                      {/* Botón Ubicación - nuevo botón para tracking/localización */}
+                      {/* Reporte Operador - order-4 */}
+                      {/* Bloque de acciones secundarias: móvil lo envía a segunda fila solo cuando Finalizar existe */}
+                      <div
+                        className={`flex flex-wrap gap-1 ${
+                          puedeFinalizar
+                            ? "order-5 w-full justify-end md:order-4 md:w-auto md:justify-start"
+                            : "order-4 md:order-auto"
+                        }`}
+                      >
+                        {(embarque.estado?.startsWith("asignado") ||
+                          embarque.estado === "finalizado" ||
+                          embarque.modificado) && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className={
+                              fotosCount[embarque.id] > 0
+                                ? "border-green-500 bg-green-50 text-green-700 hover:bg-green-100"
+                                : ""
+                            }
+                            onClick={() => {
+                              window.open(
+                                `/subir-fotos-embarque/${embarque.id}`,
+                                "_blank"
+                              );
+                            }}
+                            title="Reporte del Operador"
+                          >
+                            <Users className="h-4 w-4 md:hidden" />
+                            <Camera className="h-4 w-4 mr-1 hidden md:inline-block" />
+                            <span className="hidden md:inline">Reporte Operador</span>
+                          </Button>
+                        )}
+                        {(embarque.estado?.startsWith("asignado") ||
+                          embarque.modificado ||
+                          embarque.estado?.startsWith("listo-para-asignar") ||
+                          embarque.estado === "finalizado") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              window.open(`/embarque-reporte-cliente/${embarque.id}`, "_blank");
+                            }}
+                            title="Reporte para Clientes"
+                          >
+                            <Package className="h-4 w-4 md:hidden" />
+                            <FileText className="h-4 w-4 mr-1 hidden md:inline-block" />
+                            <span className="hidden md:inline">Reporte Clientes</span>
+                          </Button>
+                        )}
+                        {embarque.camion && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => abrirModalKilometraje(embarque)}
+                            title="Registrar Kilometraje"
+                          >
+                            <Truck className="h-4 w-4 md:mr-1" />
+                            <span className="hidden md:inline">Km</span>
+                          </Button>
+                        )}
+                        {(embarque.estado === "finalizado" ||
+                          embarque.estado === "cancelado" ||
+                          embarque.estado === "archivado") && (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                            onClick={() => archivarEmbarque(embarque.id)}
+                            disabled={saving}
+                          >
+                            Archivar
+                          </Button>
+                        )}
+                      </div>
+                      {/* Botón Ubicación - Solo visible en desktop */}
                       {(embarque.estado?.startsWith("asignado") || 
                         embarque.estado?.startsWith("en-transito") || 
                         embarque.estado?.startsWith("listo-para-asignar")) && (
@@ -3850,15 +3903,18 @@ export default function AsignarOperadoresPage() {
                           size="sm"
                           onClick={() => handleMostrarUbicacion(embarque)}
                           disabled={loadingUbicacion}
+                          className="hidden md:flex"
                         >
                           <MapPin className="h-4 w-4 mr-1" />
                           {loadingUbicacion ? "Cargando..." : "Ubicación"}
                         </Button>
                       )}
+                      {/* Botón Modificar - order-2 móvil */}
                       {embarque.estado?.startsWith("asignado") && (
                         <Button
                           variant="outline"
                           size="sm"
+                          className="order-2"
                           onClick={() => {
                             setEmbarqueAModificar(embarque);
                             setModificacionData({
@@ -3893,16 +3949,17 @@ export default function AsignarOperadoresPage() {
                             setShowModifyModal(true);
                           }}
                         >
-                          <AlertTriangle className="h-4 w-4 mr-1" />
-                          Modificar
+                          {/* Solo triángulo en móvil, triángulo+texto en desktop */}
+                          <AlertTriangle className="h-4 w-4 md:mr-1" />
+                          <span className="hidden md:inline">Modificar</span>
                         </Button>
                       )}
-                      {(embarque.estado?.startsWith("asignado") ||
-                        embarque.estado?.startsWith("en-transito")) && (
+                      {/* Finalizar - order-4, solo "Finalizar" en móvil */}
+                      {puedeFinalizar && (
                         <Button
                           variant="default"
                           size="sm"
-                          className="bg-green-600 hover:bg-green-700 text-white"
+                          className="bg-green-600 hover:bg-green-700 text-white order-4 md:order-7"
                           onClick={() => { setEmbarqueAFinalizar(embarque); setShowFinalizarDialog(true); }}
                           disabled={saving}
                         >
@@ -3914,7 +3971,7 @@ export default function AsignarOperadoresPage() {
                           ) : (
                             <>
                               <svg
-                                className="h-4 w-4 mr-1"
+                                className="h-4 w-4 md:mr-1"
                                 fill="none"
                                 stroke="currentColor"
                                 viewBox="0 0 24 24"
@@ -3926,27 +3983,73 @@ export default function AsignarOperadoresPage() {
                                   d="M5 13l4 4L19 7"
                                 />
                               </svg>
-                              Finalizar Embarque
+                              {/* "Finalizar" en móvil, "Finalizar Embarque" en desktop */}
+                              <span className="md:hidden">Finalizar</span>
+                              <span className="hidden md:inline">Finalizar Embarque</span>
                             </>
                           )}
                         </Button>
                       )}
-                      {(embarque.estado === "finalizado" || embarque.estado === "cancelado" || embarque.estado === "archivado") && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                          onClick={() => archivarEmbarque(embarque.id)}
-                          disabled={saving}
-                        >
-                          Archivar
-                        </Button>
-                      )}
                     </div>
-                  </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-4">
+              <CardContent className="space-y-2 md:space-y-4 pt-3 md:pt-6 px-3 md:px-6">
+                {/* Badges móvil - Debajo de botones, solo en móvil */}
+                <div className="md:hidden flex flex-wrap gap-2 items-center pb-2 border-b border-gray-200">
+                  {getEstadoBadge(embarque.estado)}
+                  {/* Badge D. Múltiples */}
+                  {(() => {
+                    const estado = embarque.estado || '';
+                    const estadosValidos = ['asignado', 'listo-para-asignar'];
+                    const mostrarBadge = estadosValidos.some(est => estado.includes(est));
+                    
+                    if (mostrarBadge) {
+                      let recolectas: any[] = [];
+                      let entregas: any[] = [];
+                      
+                      try {
+                        if ((embarque as any).recolectas_json) {
+                          recolectas = JSON.parse((embarque as any).recolectas_json);
+                        }
+                        if ((embarque as any).entregas_json) {
+                          entregas = JSON.parse((embarque as any).entregas_json);
+                        }
+                      } catch (e) {
+                        const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
+                        recolectas = extracted.recolectas;
+                        entregas = extracted.entregas;
+                      }
+                      
+                      if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                        return (
+                          <span 
+                            className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                            title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                          >
+                            D. Múltiples
+                          </span>
+                        );
+                      }
+                    }
+                    return null;
+                  })()}
+                  {/* Badge Contingencia */}
+                  {(() => {
+                    const analisis = analizarContingencia(embarque.estado || '');
+                    if (analisis.esContingencia && !analisis.esFleteFalso) {
+                      return (
+                        <span
+                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200"
+                          title="Modificado por contingencia"
+                        >
+                          🔴 CONTINGENCIA
+                        </span>
+                      );
+                    }
+                    return null;
+                  })()}
+                </div>
+
                 {/* Indicador de modificación si aplica */}
                 {embarque.modificado && (
                   <div className="bg-red-50 border border-red-200 rounded-lg p-4">
@@ -4085,32 +4188,32 @@ export default function AsignarOperadoresPage() {
                           </div>
                         </div>
 
-                        {/* Columna central: Recolecta y Entrega */}
-                        <div className="lg:col-span-5 space-y-4">
-                          <div className="border rounded-lg p-3 bg-white/60">
+                        {/* Columna central: Recolecta y Entrega - Doble fila compacta en móvil */}
+                        <div className="lg:col-span-5 space-y-2 md:space-y-4">
+                          <div className="border rounded-lg p-2 md:p-3 bg-white/60">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Recolecta</label>
-                            <p className="text-sm text-gray-900 mt-1">
+                            <p className="text-xs md:text-sm text-gray-900 mt-1 leading-tight">
                               {embarque.direccion_recolecta || embarque.origen || "No especificada"}
                             </p>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
-                              <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
+                            <div className="mt-1.5 md:mt-2 flex flex-wrap gap-1.5 md:gap-2 text-[10px] md:text-xs text-gray-600">
+                              <span className="px-1.5 md:px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.fecha_recolecta ? formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta) : "Sin fecha"}
                               </span>
-                              <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
+                              <span className="px-1.5 md:px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.hora_recolecta || "Sin hora"}
                               </span>
                             </div>
                           </div>
-                          <div className="border rounded-lg p-3 bg-white/60">
+                          <div className="border rounded-lg p-2 md:p-3 bg-white/60">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Entrega</label>
-                            <p className="text-sm text-gray-900 mt-1">
+                            <p className="text-xs md:text-sm text-gray-900 mt-1 leading-tight">
                               {embarque.direccion_entrega || embarque.destino || "No especificada"}
                             </p>
-                            <div className="mt-2 flex flex-wrap gap-2 text-xs text-gray-600">
-                              <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
+                            <div className="mt-1.5 md:mt-2 flex flex-wrap gap-1.5 md:gap-2 text-[10px] md:text-xs text-gray-600">
+                              <span className="px-1.5 md:px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.fecha_entrega ? formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega) : "Sin fecha"}
                               </span>
-                              <span className="px-2 py-0.5 rounded-full bg-gray-100 border">
+                              <span className="px-1.5 md:px-2 py-0.5 rounded-full bg-gray-100 border">
                                 {embarque.hora_entrega || "Sin hora"}
                               </span>
                             </div>
@@ -4212,8 +4315,8 @@ export default function AsignarOperadoresPage() {
                   ) : (
                     <div className="p-4 space-y-4">
                     {/* Información General */}
-                    <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
-                      <div className="space-y-1 ml-6">
+                    <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                      <div className="space-y-1 col-span-1">
                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                           Cliente
                         </label>
@@ -4221,7 +4324,7 @@ export default function AsignarOperadoresPage() {
                           {embarque.cliente?.nombre || "Sin asignar"}
                         </p>
                       </div>
-                      <div className="space-y-1">
+                      <div className="space-y-1 col-span-1">
                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                           Contacto del Cliente
                         </label>
@@ -4245,24 +4348,8 @@ export default function AsignarOperadoresPage() {
                           );
                         })()}
                       </div>
-                      <div className="space-y-1">
-                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-                          Tipo de Servicio
-                        </label>
-                        {(() => {
-                          const desc = getServiceDisplayName(embarque.tipo_servicio_id || "");
-                          const [l1, l2] = desc.split(" - ");
-                          return (
-                            <p className="text-sm text-gray-700 max-w-xs whitespace-normal break-words leading-tight">
-                              <span className="block">{l1}</span>
-                              {l2 && <span className="block">{l2}</span>}
-                            </p>
-                          );
-                        })()}
-                      </div>
                       {/* Carta Porte oculto en esta sección (eliminado el bloque para compactar la fila) */}
-
-                          <div className="space-y-1 md:col-span-2 lg:col-span-3">
+                          <div className="space-y-1 col-span-2 md:col-span-2 lg:col-span-3">
                         <div className="flex items-center gap-6 flex-wrap">
                           {(() => {
                             const precioFleteVal = Number(embarque.precio_flete) || 0;
@@ -4306,6 +4393,33 @@ export default function AsignarOperadoresPage() {
                           })()}
                         </div>
                       </div>
+                      {puedeFinalizar && (
+                        <div className="col-span-2 md:hidden flex items-center text-gray-800">
+                          <Coins className="h-4 w-4 text-gray-600 mr-2" />
+                          <h4 className="text-sm font-semibold">Precio</h4>
+                        </div>
+                      )}
+                      <div className="space-y-1 col-span-2 md:col-span-2">
+                        <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+                          Tipo de Servicio
+                        </label>
+                        {(() => {
+                          const desc = getServiceDisplayName(embarque.tipo_servicio_id || "");
+                          const [l1, l2] = desc.split(" - ");
+                          return (
+                            <p className="text-sm text-gray-700 max-w-xs whitespace-normal break-words leading-tight">
+                              <span className="block">{l1}</span>
+                              {l2 && <span className="block">{l2}</span>}
+                            </p>
+                          );
+                        })()}
+                      </div>
+                    </div>
+
+                    {/* Separador móvil entre resumen financiero y direcciones */}
+                    <div className="md:hidden flex items-center mt-4 ml-1 text-gray-800">
+                      <MapPin className="h-4 w-4 text-gray-600 mr-2" />
+                      <h4 className="text-sm font-semibold">Direcciones</h4>
                     </div>
 
                     {/* Direcciones */}
@@ -4356,11 +4470,11 @@ export default function AsignarOperadoresPage() {
                           </h4>
                         </div>
 
-                        <div className="flex flex-col md:flex-row md:items-start ml-8 w-full">
+                        <div className="flex flex-col md:flex-row md:items-start w-full gap-4">
                           {/* Grupo izquierdo: Operador, Tractocamión, Remolque */}
-                          <div className="flex flex-col md:flex-row md:space-x-8 space-y-2 md:space-y-0 flex-1">
+                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 flex-1">
                             {/* Operador */}
-                            <div className="space-y-1">
+                            <div className="space-y-1 col-span-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                               Operador
                             </label>
@@ -4387,7 +4501,7 @@ export default function AsignarOperadoresPage() {
                             )}
                             </div>
                             {/* Tractocamión */}
-                            <div className="space-y-1 ml-20">
+                            <div className="space-y-1 col-span-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                               Tractocamión
                             </label>
@@ -4402,7 +4516,7 @@ export default function AsignarOperadoresPage() {
                             )}
                             </div>
                             {/* Remolque */}
-                            <div className="space-y-1 ml-12">
+                            <div className="space-y-1 col-span-2 md:col-span-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                               Remolque
                             </label>
@@ -4420,8 +4534,32 @@ export default function AsignarOperadoresPage() {
                             </div>
                             {/* Carta Porte removido de este grupo; se muestra a la derecha junto a Tipo de Servicio */}
                           </div>
-                          {/* Contenedor derecho: Carta Porte, Load y Contenido juntos en la misma fila */}
-                          <div className="mt-2 md:mt-0 w-full md:w-1/2 lg:w-1/2 ml-auto lg:mr-2">
+                          {/* Etiqueta Embarque solo móvil */}
+                          <div className="flex items-center md:hidden ml-1">
+                            <FileText className="h-4 w-4 text-gray-600 mr-2" />
+                            <h4 className="text-sm font-semibold text-gray-800">Embarque</h4>
+                          </div>
+
+                          {/* Contenedor derecho: Carta Porte, Load y Contenido (móvil) */}
+                          <div className="md:hidden w-full">
+                            <div className="grid grid-cols-2 gap-4 text-left w-full pr-2">
+                              <div>
+                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Carta Porte</label>
+                                <p className="text-sm text-gray-700">{embarque.carta_porte || "Sin asignar"}</p>
+                              </div>
+                              <div>
+                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Load</label>
+                                <p className="text-sm text-gray-700">{embarque.load_number || "N/A"}</p>
+                              </div>
+                              <div className="col-span-2">
+                                <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Contenido</label>
+                                <p className="text-sm text-gray-700">{embarque.contenido || "No especificado"}</p>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Contenedor derecho: Carta Porte, Load y Contenido (desktop) */}
+                          <div className="hidden md:block mt-2 md:mt-0 w-full md:w-1/2 lg:w-1/2 ml-auto lg:mr-2">
                             <div className="flex flex-col md:flex-row md:flex-nowrap items-start md:items-end justify-start gap-4 md:text-left w-full pr-2 lg:pr-3">
                               <div>
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Carta Porte</label>
@@ -4475,6 +4613,7 @@ export default function AsignarOperadoresPage() {
                                 }
                               >
                                 <SelectTrigger className="bg-white">
+
                                   <SelectValue placeholder="Seleccionar operador" />
                                 </SelectTrigger>
                                 <SelectContent>
@@ -4701,8 +4840,8 @@ export default function AsignarOperadoresPage() {
                                     !asignaciones[embarque.id]?.quickpaidEnabled
                                   }
                                 >
-                                  <SelectTrigger className="bg-white min-w-[120px]">
-                                    <SelectValue placeholder="% descuento" />
+                                  <SelectTrigger className="bg-white min-w-[80px] md:min-w-[120px]">
+                                    <SelectValue placeholder="%" />
                                   </SelectTrigger>
                                   <SelectContent>
                                     <SelectItem value="0.005">0.5%</SelectItem>
@@ -6514,7 +6653,7 @@ export default function AsignarOperadoresPage() {
                           {/* Nuevo: Dropdown de Tipo de Servicio para contingencias */}
                           <div className="rounded-lg p-4 border border-gray-200">
                             <Label className="text-sm font-medium text-gray-700 mb-2 block">
-                              Tipo de Servicio (prioriza "Flete en Falso")
+                              Tipo de Servicio (prioriza &quot;Flete en Falso&quot;)
                             </Label>
                             <div className="max-w-md">
                               <Select
@@ -6621,7 +6760,10 @@ export default function AsignarOperadoresPage() {
           <div className="bg-white rounded-lg shadow-xl max-w-[85rem] w-full max-h-[92vh] overflow-hidden">
             <div className="flex justify-between items-center p-6 border-b">
               <div>
-                <h2 className="text-xl font-bold text-gray-900">Registros Completados</h2>
+                <h2 className="text-xl font-bold text-gray-900">
+                  <span className="hidden md:inline">Registros Completados</span>
+                  <span className="md:hidden">Archivados</span>
+                </h2>
                 <p className="text-sm text-gray-600">
                   Finalizados y cancelados ({totalCompletadosFiltrados} visibles)
                   {typeof totalFinalizadosDB === 'number' && (
@@ -6697,37 +6839,6 @@ export default function AsignarOperadoresPage() {
                   </Button>
                   {/* Removed quick 3/6 months and this year options — use date range instead */}
 
-                  {/* Fecha Desde / Hasta para rango personalizado */}
-                  <label className="text-xs text-gray-500 ml-2">Desde</label>
-                  <input
-                    type="date"
-                    className="border rounded px-2 py-1 text-sm"
-                    value={completadosFrom || ""}
-                    onChange={(e) => {
-                      const v = e.target.value || null;
-                      setCompletadosFrom(v);
-                      setCompletadosPeriodo("rango");
-                    }}
-                  />
-                  <label className="text-xs text-gray-500">Hasta</label>
-                  <input
-                    type="date"
-                    className="border rounded px-2 py-1 text-sm"
-                    value={completadosTo || ""}
-                    onChange={(e) => {
-                      const v = e.target.value || null;
-                      setCompletadosTo(v);
-                      setCompletadosPeriodo("rango");
-                    }}
-                  />
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => { setCompletadosFrom(null); setCompletadosTo(null); setCompletadosPeriodo("todo"); }}
-                    className="text-xs"
-                  >
-                    Limpiar
-                  </Button>
                 </div>
 
                 {/* Resumen + página */}
@@ -6756,7 +6867,7 @@ export default function AsignarOperadoresPage() {
                     </div>
                     <Button
                       variant="outline"
-                      className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                      className="hidden md:inline-flex border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                       onClick={descargarRegistrosCompletos}
                     >
                       Descargar Excel

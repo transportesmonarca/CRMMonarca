@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { MainLayout } from "@/components/layout/main-layout";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -69,6 +69,14 @@ interface Comentario {
   text: string;
   date: string;
 }
+
+const CREATION_TABS = [
+  { id: "basica", label: "Información Básica", shortLabel: "Básica" },
+  { id: "documentos", label: "Documentos y Verificaciones", shortLabel: "Docs" },
+  { id: "tags", label: "Tags y Números", shortLabel: "Tags" },
+  { id: "adjuntos", label: "Adjuntos", shortLabel: "Adjuntos" },
+  { id: "comentarios", label: "Comentarios", shortLabel: "Notas" },
+];
 
 const initialFormData = {
   numero_economico: "",
@@ -240,6 +248,9 @@ export default function CamionesPage() {
   const [notificationMessage, setNotificationMessage] = useState("");
   const [notificationFolios, setNotificationFolios] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<string>("basica");
+  const creationTabsRef = useRef<HTMLDivElement | null>(null);
+  const [canScrollTabsLeft, setCanScrollTabsLeft] = useState(false);
+  const [canScrollTabsRight, setCanScrollTabsRight] = useState(false);
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -1839,6 +1850,55 @@ export default function CamionesPage() {
     };
   }, []);
 
+  const updateTabScrollState = useCallback(() => {
+    const container = creationTabsRef.current;
+    if (!container) {
+      setCanScrollTabsLeft(false);
+      setCanScrollTabsRight(false);
+      return;
+    }
+    const { scrollLeft, scrollWidth, clientWidth } = container;
+    setCanScrollTabsLeft(scrollLeft > 4);
+    setCanScrollTabsRight(scrollLeft + clientWidth < scrollWidth - 4);
+  }, []);
+
+  const scrollCreationTabs = useCallback((direction: "left" | "right") => {
+    const container = creationTabsRef.current;
+    if (!container) return;
+    const distance = container.clientWidth * 0.7;
+    container.scrollBy({
+      left: direction === "left" ? -distance : distance,
+      behavior: "smooth",
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isMobile) {
+      setCanScrollTabsLeft(false);
+      setCanScrollTabsRight(false);
+    }
+
+    if (typeof window === "undefined") return;
+    const container = creationTabsRef.current;
+    if (!container) return;
+
+    updateTabScrollState();
+
+    const handleScroll = () => updateTabScrollState();
+    container.addEventListener("scroll", handleScroll);
+
+    const observer =
+      typeof ResizeObserver !== "undefined"
+        ? new ResizeObserver(() => updateTabScrollState())
+        : null;
+    observer?.observe(container);
+
+    return () => {
+      container.removeEventListener("scroll", handleScroll);
+      observer?.disconnect();
+    };
+  }, [updateTabScrollState, isMobile, showForm]);
+
   const getEstadoBadge = (estado: string) => {
     const estados = {
       disponible: { color: "bg-green-100 text-green-800", label: "Disponible" },
@@ -2997,18 +3057,19 @@ export default function CamionesPage() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
               Gestión de Tractocamiones
             </h1>
             <p className="text-gray-600 mt-2">Administrar flota de camiones</p>
           </div>
-          <div className="flex space-x-2">
+          <div className="hidden md:flex flex-col sm:flex-row gap-2 w-full md:w-auto md:justify-end">
             <Button
               variant="outline"
               onClick={descargarExcel}
               disabled={camiones.length === 0}
+              className="hidden md:inline-flex"
             >
               <Download className="h-4 w-4 mr-2" />
               Descargar Reporte
@@ -3022,6 +3083,7 @@ export default function CamionesPage() {
                   ? "Ejecuta el script de migración para habilitar esta función"
                   : ""
               }
+              className="w-full sm:w-auto"
             >
               <Plus className="h-4 w-4 mr-2" />
               Gestionar Marcas
@@ -3030,13 +3092,17 @@ export default function CamionesPage() {
               <DialogTrigger asChild>
                 <Button
                   onClick={() => limpiarFormulario()}
-                  className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+                  className="w-full sm:w-auto bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
                 >
                   <Plus className="h-4 w-4 mr-2" />
                   Nuevo Camión
                 </Button>
               </DialogTrigger>
-              <DialogContent className={`max-w-4xl ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto`}>
+              <DialogContent
+                className={`w-full ${
+                  isMobile ? 'max-w-[88vw]' : 'sm:max-w-4xl'
+                } ${activeTab === 'adjuntos' ? 'max-h-[75vh]' : 'max-h-[90vh]'} overflow-y-auto px-4 sm:px-6`}
+              >
                 <DialogHeader>
                     <div className="flex items-center justify-between">
                       <div>
@@ -3066,58 +3132,65 @@ export default function CamionesPage() {
 
                 <div className="w-full">
                   <div className="border-b border-gray-200">
-                    <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-                      <button
-                        onClick={() => setActiveTab("basica")}
-                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "basica"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Información Básica
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("documentos")}
-                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "documentos"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Documentos y Verificaciones
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("tags")}
-                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "tags"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Tags y Números
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("adjuntos")}
-                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "adjuntos"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Adjuntos
-                      </button>
-                      <button
-                        onClick={() => setActiveTab("comentarios")}
-                        className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "comentarios"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Comentarios
-                      </button>
-                    </nav>
+                    {isMobile ? (
+                      <div className="flex items-center gap-2">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => scrollCreationTabs("left")}
+                          disabled={!canScrollTabsLeft}
+                          className="h-8 w-8"
+                          aria-label="Ver pestañas anteriores"
+                        >
+                          <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <nav
+                          ref={creationTabsRef}
+                          className="-mb-px flex gap-2 flex-1 overflow-x-auto scroll-smooth no-scrollbar"
+                          aria-label="Tabs"
+                        >
+                          {CREATION_TABS.map((tab) => (
+                            <button
+                              key={tab.id}
+                              onClick={() => setActiveTab(tab.id)}
+                              className={`flex-shrink-0 whitespace-nowrap py-2 px-2 border-b-2 font-medium text-xs ${
+                                activeTab === tab.id
+                                  ? "border-blue-500 text-blue-600"
+                                  : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                              }`}
+                            >
+                              {tab.shortLabel || tab.label}
+                            </button>
+                          ))}
+                        </nav>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => scrollCreationTabs("right")}
+                          disabled={!canScrollTabsRight}
+                          className="h-8 w-8"
+                          aria-label="Ver pestañas siguientes"
+                        >
+                          <ChevronRight className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    ) : (
+                      <nav className="-mb-px flex space-x-8" aria-label="Tabs">
+                        {CREATION_TABS.map((tab) => (
+                          <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`whitespace-nowrap py-2 px-1 border-b-2 font-medium text-sm ${
+                              activeTab === tab.id
+                                ? "border-blue-500 text-blue-600"
+                                : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                            }`}
+                          >
+                            {tab.label}
+                          </button>
+                        ))}
+                      </nav>
+                    )}
                   </div>
 
                   <div className="mt-6">
@@ -3777,18 +3850,19 @@ export default function CamionesPage() {
                     )}
                   </div>
 
-                  <div className="flex justify-end space-x-2 mt-8 pt-6 border-t">
+                  <div className="flex flex-col sm:flex-row gap-3 mt-8 pt-6 border-t justify-start sm:justify-end">
                     <Button
                       variant="outline"
                       onClick={() => { setShowForm(false); setActiveTab("informacion"); }}
                       disabled={saving}
+                      className="w-full sm:w-auto"
                     >
                       Cancelar
                     </Button>
                     <Button
                       onClick={guardarCamion}
                       disabled={saving}
-                      className="bg-green-600 hover:bg-green-700 text-white"
+                      className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
                     >
                       {saving ? (
                         <>
@@ -3903,56 +3977,56 @@ export default function CamionesPage() {
         )}
 
         {/* Estadísticas rápidas */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-4">
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Total Tractocamiones
                   </p>
-                  <p className="text-2xl font-bold">{camiones.length}</p>
+                  <p className="text-2xl font-bold text-blue-700">{camiones.length}</p>
                 </div>
-                <Truck className="h-8 w-8 text-blue-600" />
+                <Truck className="hidden md:block h-8 w-8 text-blue-700 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Disponibles</p>
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Disponibles</p>
                   <p className="text-2xl font-bold text-green-600">
                     {camiones.filter((c) => c.estado === "disponible").length}
                   </p>
                 </div>
-                <Truck className="h-8 w-8 text-green-600" />
+                <Truck className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Fuera de Servicio
                   </p>
                   <p className="text-2xl font-bold text-red-600">
                     {camiones.filter((c) => c.estado === "fuera-de-servicio").length}
                   </p>
                 </div>
-                <AlertTriangle className="h-8 w-8 text-red-600" />
+                <AlertTriangle className="hidden md:block h-8 w-8 text-red-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
 
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Seguros por Vencer</p>
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Seguros por Vencer</p>
                   <p className="text-2xl font-bold text-orange-600">
                     {(() => {
                       let segurosVenciendo = 0;
@@ -3982,17 +4056,19 @@ export default function CamionesPage() {
                     })()}
                   </p>
                 </div>
-                <Shield className="h-8 w-8 text-orange-600" />
+                <Shield className="hidden md:block h-8 w-8 text-orange-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
 
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">Seguros próximos (15 días)</p>
-                  <div className="flex items-center space-x-6 mt-2">
+          <Card className="col-span-2 md:col-span-1">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between w-full">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
+                    Seguros próximos (15 días)
+                  </p>
+                  <div className="flex justify-between mt-2 text-left">
                     {(() => {
                       let mex = 0;
                       let usa = 0;
@@ -4017,21 +4093,20 @@ export default function CamionesPage() {
                       });
                       return (
                         <>
-                          <div className="flex flex-col items-start">
-                            <span className="text-sm text-gray-500">México</span>
-                            <span className="text-2xl font-bold text-orange-600">{mex}</span>
+                          <div className="flex flex-col text-left">
+                            <span className="text-xs text-gray-500">México</span>
+                            <span className="text-xl md:text-2xl font-bold text-orange-600">{mex}</span>
                           </div>
-                          <div className="flex flex-col items-end">
-                            <span className="text-sm text-gray-500">USA</span>
-                            <span className="text-2xl font-bold text-orange-600">{usa}</span>
+                          <div className="flex flex-col text-right">
+                            <span className="text-xs text-gray-500">USA</span>
+                            <span className="text-xl md:text-2xl font-bold text-orange-600">{usa}</span>
                           </div>
                         </>
                       );
                     })()}
                   </div>
                 </div>
-                {/* icon removed per request */}
-                <div />
+                <Shield className="hidden md:block h-8 w-8 text-orange-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
@@ -4040,80 +4115,136 @@ export default function CamionesPage() {
         {/* Búsqueda */}
         <Card>
           <CardContent className="pt-6">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div className="flex items-center space-x-2">
-                <Search className="h-4 w-4 text-gray-400" />
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                <Search className="hidden md:block h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Buscar por número económico, marca, modelo o placas..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full sm:w-[28rem]"
+                  className="flex-1 md:w-[28rem]"
                 />
               </div>
               {totalItems > 0 && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.max(1, p - 1))}
-                    disabled={page === 1}
-                  >
-                    Anterior
-                  </Button>
-                  <span className="text-sm text-gray-700">
-                    Página {page} de {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                    disabled={page === totalPages}
-                  >
-                    Siguiente
-                  </Button>
-                  <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-700">Ver por fila:</span>
-                    <Select
-                      value={String(cardsPerRow)}
-                      onValueChange={(v) => setCardsPerRow(Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)))}
+                <>
+                  <div className="hidden md:flex items-center gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page === 1}
+                      aria-label="Página anterior"
                     >
-                      <SelectTrigger className="w-[110px]">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="2">2 por fila</SelectItem>
-                        <SelectItem value="3">3 por fila</SelectItem>
-                        <SelectItem value="4">4 por fila</SelectItem>
-           
-                      </SelectContent>
-                    </Select>
-                    <span className="text-sm text-gray-700">Por página:</span>
-                    <Select
-                      value={String(pageSize)}
-                      onValueChange={(v) => {
-                        const newSize = Number.parseInt(v, 10);
-                        setPageSize(newSize);
-                        setPage(1);
-                      }}
+                      <ChevronLeft className="h-4 w-4" />
+                      <span className="hidden md:inline md:ml-2">Anterior</span>
+                    </Button>
+                    <span className="text-sm text-gray-700">
+                      Página {page} de {totalPages}
+                    </span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page === totalPages}
+                      aria-label="Página siguiente"
                     >
-                      <SelectTrigger className="w-[140px]">
-                        <SelectValue placeholder="Por página" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="6">6 por página</SelectItem>
-                        <SelectItem value="12">12 por página</SelectItem>
-                        <SelectItem value="18">18 por página</SelectItem>
-                        <SelectItem value="24">24 por página</SelectItem>
-                        <SelectItem value="48">48 por página</SelectItem>
-                      </SelectContent>
-                    </Select>
+                      <ChevronRight className="h-4 w-4" />
+                      <span className="hidden md:inline md:ml-2">Siguiente</span>
+                    </Button>
+                    <div className="h-5 w-px bg-gray-200 mx-1" />
+                    <div className="hidden md:flex items-center gap-2">
+                      <span className="text-sm text-gray-700">Ver por fila:</span>
+                      <Select
+                        value={String(cardsPerRow)}
+                        onValueChange={(v) => setCardsPerRow(Math.max(2, Math.min(6, Number.parseInt(v, 10) || 3)))}
+                      >
+                        <SelectTrigger className="w-[110px]" aria-label="Camiones por fila">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="2">2 por fila</SelectItem>
+                          <SelectItem value="3">3 por fila</SelectItem>
+                          <SelectItem value="4">4 por fila</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <div className="hidden md:flex items-center gap-2">
+                      <span className="text-sm text-gray-700">Por página:</span>
+                      <Select
+                        value={String(pageSize)}
+                        onValueChange={(v) => {
+                          const newSize = Number.parseInt(v, 10);
+                          setPageSize(newSize);
+                          setPage(1);
+                        }}
+                      >
+                        <SelectTrigger className="w-[140px]" aria-label="Camiones por página">
+                          <SelectValue placeholder="Por página" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="6">6 por página</SelectItem>
+                          <SelectItem value="12">12 por página</SelectItem>
+                          <SelectItem value="18">18 por página</SelectItem>
+                          <SelectItem value="24">24 por página</SelectItem>
+                          <SelectItem value="48">48 por página</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
                   </div>
-                </div>
+                  <div className="flex md:hidden items-center justify-between gap-3">
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setPage((p) => Math.max(1, p - 1))}
+                        disabled={page === 1}
+                        aria-label="Página anterior"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                        disabled={page === totalPages}
+                        aria-label="Página siguiente"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           </CardContent>
         </Card>
+
+        <div className="flex md:hidden items-center gap-3 mt-4">
+          <Button
+            onClick={() => {
+              limpiarFormulario();
+              setShowForm(true);
+            }}
+            className="flex-1 bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Nuevo Camión
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setShowMarcasForm(true)}
+            disabled={!marcasTableExists}
+            title={
+              !marcasTableExists
+                ? "Ejecuta el script de migración para habilitar esta función"
+                : ""
+            }
+            className="flex-1"
+          >
+            <Plus className="h-4 w-4 mr-2" />
+            Gestionar Marcas
+          </Button>
+        </div>
 
         {/* Lista de camiones */}
         <div
@@ -4323,11 +4454,11 @@ export default function CamionesPage() {
 
         {/* Controles de paginación */}
         {totalItems > 0 && (
-          <div className="mt-6 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="mt-6 flex flex-col gap-3">
             <div className="text-sm text-gray-600">
               Mostrando {startIndex + 1}-{Math.min(endIndex, totalItems)} de {totalItems}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="hidden md:flex items-center gap-2">
               <Button
                 variant="outline"
                 size="sm"
@@ -4369,6 +4500,26 @@ export default function CamionesPage() {
                   </SelectContent>
                 </Select>
               </div>
+            </div>
+            <div className="flex md:hidden items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+                aria-label="Página anterior"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <Button
+                variant="outline"
+                size="icon"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+                aria-label="Página siguiente"
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
             </div>
           </div>
         )}

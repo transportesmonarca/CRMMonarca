@@ -14,6 +14,7 @@ import {
   Calendar,
   MapPin,
   Clock,
+  ChevronDown,
 } from "lucide-react"
 import Link from "next/link"
 import { useState, useEffect } from "react"
@@ -36,6 +37,10 @@ export function Dashboard() {
     remolques: { total: 0, disponibles: 0, enUso: 0, mantenimiento: 0 },
     recordatorios: { total: 0, pendientes: 0, vencidos: 0, completados: 0 },
   })
+  const [mostrarEmbarquesRecientes, setMostrarEmbarquesRecientes] = useState(false)
+  const [mostrarRecordatoriosUrgentes, setMostrarRecordatoriosUrgentes] = useState(false)
+  const [mostrarVencimientos, setMostrarVencimientos] = useState(false)
+  const [mostrarCumples, setMostrarCumples] = useState(false)
 
   useEffect(() => {
 
@@ -229,81 +234,97 @@ export function Dashboard() {
     }
   }
 
+  const getMobileEstadoBadge = (estado: string) => {
+    if (
+      estado === "listo-para-asignar" ||
+      estado === "listo-para-asignar_contingencia" ||
+      estado === "listo-para-asignar_contingencia_FF"
+    ) {
+      return <Badge className="bg-blue-100 text-blue-800">Asignar</Badge>
+    }
+
+    if (estado === "asignado_contingencia_FF") {
+      return <Badge className="bg-red-100 text-red-800">Contingencia</Badge>
+    }
+
+    return getEstadoBadge(estado)
+  }
+
   return (
     <div className="space-y-6">
       {/* Estadísticas principales */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Embarques</p>
-                <p className="text-2xl font-bold">{stats.embarques.total}</p>
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-2 md:gap-4">
+        <Card className="h-full">
+          <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+            <div className="flex flex-col md:flex-row items-center md:justify-between">
+              <div className="flex-1 min-w-0 text-center md:text-left">
+                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Embarques</p>
+                <p className="text-2xl font-bold text-blue-700">{stats.embarques.total}</p>
                 <p className="text-xs text-gray-500">
                   {stats.embarques.creados} creados • {stats.embarques.asignados} asignados
                 </p>
               </div>
-              <Package className="h-8 w-8 text-blue-600" />
+              <Package className="hidden md:block h-8 w-8 text-blue-700 flex-shrink-0 ml-2" />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Operadores</p>
-                <p className="text-2xl font-bold">{stats.operadores.total}</p>
+        <Card className="h-full">
+          <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+            <div className="flex flex-col md:flex-row items-center md:justify-between">
+              <div className="flex-1 min-w-0 text-center md:text-left">
+                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Operadores</p>
+                <p className="text-2xl font-bold text-green-700">{stats.operadores.total}</p>
                 <p className="text-xs text-gray-500">
                   {stats.operadores.activos} activos • {stats.operadores.inactivos} inactivos
                 </p>
               </div>
-              <Users className="h-8 w-8 text-green-600" />
+              <Users className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0 ml-2" />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Camiones</p>
-                <p className="text-2xl font-bold">{stats.camiones.total}</p>
+        <Card className="h-full">
+          <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+            <div className="flex flex-col md:flex-row items-center md:justify-between">
+              <div className="flex-1 min-w-0 text-center md:text-left">
+                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Camiones</p>
+                <p className="text-2xl font-bold text-orange-700">{stats.camiones.total}</p>
                 <p className="text-xs text-gray-500">
                   {stats.camiones.optima} óptimos • {stats.camiones.noOptima} no óptimos
                 </p>
               </div>
-              <Truck className="h-8 w-8 text-orange-600" />
+              <Truck className="hidden md:block h-8 w-8 text-orange-600 flex-shrink-0 ml-2" />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Remolques</p>
-                <p className="text-2xl font-bold">{stats.remolques.total}</p>
+        <Card className="h-full">
+          <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+            <div className="flex flex-col md:flex-row items-center md:justify-between">
+              <div className="flex-1 min-w-0 text-center md:text-left">
+                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Remolques</p>
+                <p className="text-2xl font-bold text-purple-700">{stats.remolques.total}</p>
                 <p className="text-xs text-gray-500">
                   {stats.remolques.disponibles} disponibles • {stats.remolques.enUso} en uso
                 </p>
               </div>
-              <Container className="h-8 w-8 text-purple-600" />
+              <Container className="hidden md:block h-8 w-8 text-purple-600 flex-shrink-0 ml-2" />
             </div>
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">Recordatorios</p>
-                <p className="text-2xl font-bold">{stats.recordatorios.total}</p>
+        <Card className="h-full">
+          <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+            <div className="flex flex-col md:flex-row items-center md:justify-between">
+              <div className="flex-1 min-w-0 text-center md:text-left">
+                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Recordatorios</p>
+                <p className="text-2xl font-bold text-red-700">{stats.recordatorios.total}</p>
                 <p className="text-xs text-gray-500">
                   {stats.recordatorios.pendientes} pendientes • {stats.recordatorios.vencidos} vencidos
                 </p>
               </div>
-              <Bell className="h-8 w-8 text-red-600" />
+              <Bell className="hidden md:block h-8 w-8 text-red-600 flex-shrink-0 ml-2" />
             </div>
           </CardContent>
         </Card>
@@ -314,18 +335,31 @@ export function Dashboard() {
         {/* Embarques recientes */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-lg font-semibold">Embarques Recientes</CardTitle>
-            <Link href="/embarques">
-              <Button variant="outline" size="sm">
-                Ver todos
-              </Button>
-            </Link>
+            <CardTitle className="text-base font-semibold text-gray-900 md:text-lg">Embarques Recientes</CardTitle>
+            <div className="flex items-center gap-2">
+              <Link href="/embarques" className="hidden md:inline-flex">
+                <Button variant="outline" size="sm">
+                  Ver todos
+                </Button>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMostrarEmbarquesRecientes((prev) => !prev)}
+                className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white p-1 text-gray-700 hover:bg-gray-100 transition-colors md:hidden"
+                aria-expanded={mostrarEmbarquesRecientes}
+                aria-label="Mostrar u ocultar embarques recientes"
+              >
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${mostrarEmbarquesRecientes ? "" : "-rotate-90"}`}
+                />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className={`${mostrarEmbarquesRecientes ? "" : "hidden"} md:block`}>
             <div className="space-y-3">
               {embarquesRecientes.map((embarque: Embarque) => (
-                <div key={embarque.id} className="flex items-center justify-between p-3 border rounded-lg">
-                  <div className="flex items-center space-x-3">
+                <div key={embarque.id} className="flex items-start justify-between gap-3 p-3 border rounded-lg md:items-center">
+                  <div className="flex items-start space-x-3">
                     <Package className="h-8 w-8 text-blue-600" />
                     <div>
                       <p className="font-medium">{embarque.folio}</p>
@@ -338,7 +372,10 @@ export function Dashboard() {
                       </div>
                     </div>
                   </div>
-                  <div className="text-right">{getEstadoBadge(embarque.estado)}</div>
+                  <div className="flex flex-col items-end gap-1 text-right self-start md:self-auto">
+                    <div className="md:hidden">{getMobileEstadoBadge(embarque.estado)}</div>
+                    <div className="hidden md:block">{getEstadoBadge(embarque.estado)}</div>
+                  </div>
                 </div>
               ))}
               {embarquesRecientes.length === 0 && (
@@ -354,14 +391,25 @@ export function Dashboard() {
         {/* Recordatorios urgentes */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-lg font-semibold">Recordatorios Urgentes</CardTitle>
-            <Link href="/recordatorios">
-              <Button variant="outline" size="sm">
-                Ver todos
-              </Button>
-            </Link>
+            <CardTitle className="text-base font-semibold text-gray-900 md:text-lg">Recordatorios Urgentes</CardTitle>
+            <div className="flex items-center gap-2">
+              <Link href="/recordatorios" className="hidden md:inline-flex">
+                <Button variant="outline" size="sm">
+                  Ver todos
+                </Button>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMostrarRecordatoriosUrgentes((prev) => !prev)}
+                className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white p-1 text-gray-700 hover:bg-gray-100 transition-colors md:hidden"
+                aria-expanded={mostrarRecordatoriosUrgentes}
+                aria-label="Mostrar u ocultar recordatorios urgentes"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${mostrarRecordatoriosUrgentes ? "" : "-rotate-90"}`} />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className={`${mostrarRecordatoriosUrgentes ? "" : "hidden"} md:block`}>
             <div className="space-y-3">
               {recordatoriosUrgentes.map((recordatorio: Recordatorio) => {
                 const fechaVencimiento = new Date(recordatorio.fecha_vencimiento)
@@ -459,12 +507,23 @@ export function Dashboard() {
         {/* Vencimientos */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-lg font-semibold">Vencimientos</CardTitle>
-            <Link href="/recordatorios">
-              <Button variant="outline" size="sm">Ver todos</Button>
-            </Link>
+            <CardTitle className="text-base font-semibold text-gray-900 md:text-lg">Vencimientos</CardTitle>
+            <div className="flex items-center gap-2">
+              <Link href="/recordatorios" className="hidden md:inline-flex">
+                <Button variant="outline" size="sm">Ver todos</Button>
+              </Link>
+              <button
+                type="button"
+                onClick={() => setMostrarVencimientos((prev) => !prev)}
+                className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white p-1 text-gray-700 hover:bg-gray-100 transition-colors md:hidden"
+                aria-expanded={mostrarVencimientos}
+                aria-label="Mostrar u ocultar vencimientos"
+              >
+                <ChevronDown className={`h-4 w-4 transition-transform ${mostrarVencimientos ? "" : "-rotate-90"}`} />
+              </button>
+            </div>
           </CardHeader>
-          <CardContent>
+          <CardContent className={`${mostrarVencimientos ? "" : "hidden"} md:block`}>
             <div className="space-y-3">
               {vencimientos.map((r) => {
                 const fv = new Date(r.fecha_vencimiento)
@@ -494,10 +553,19 @@ export function Dashboard() {
 
         {/* Cumpleaños de operadores (próximos) */}
         <Card>
-          <CardHeader>
-            <CardTitle className="text-lg font-semibold">Cumpleaños de operadores</CardTitle>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="text-base font-semibold text-gray-900 md:text-lg">Cumpleaños de operadores</CardTitle>
+            <button
+              type="button"
+              onClick={() => setMostrarCumples((prev) => !prev)}
+              className="inline-flex items-center justify-center rounded-full border border-gray-300 bg-white p-1 text-gray-700 hover:bg-gray-100 transition-colors md:hidden"
+              aria-expanded={mostrarCumples}
+              aria-label="Mostrar u ocultar cumpleaños"
+            >
+              <ChevronDown className={`h-4 w-4 transition-transform ${mostrarCumples ? "" : "-rotate-90"}`} />
+            </button>
           </CardHeader>
-          <CardContent>
+          <CardContent className={`${mostrarCumples ? "" : "hidden"} md:block`}>
             <div>
               <p className="font-semibold mb-2">Próximos cumpleaños</p>
               <div className="space-y-2">

@@ -33,6 +33,7 @@ import {
   Plus,
   Search,
   Edit,
+  Eye,
   Trash2,
   Phone,
   Mail,
@@ -45,6 +46,8 @@ import {
   UserX,
   Calendar,
   FileText,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import {
@@ -1606,11 +1609,12 @@ export default function ClientesPage() {
               Administrar información de clientes
             </p>
           </div>
-          <div className="flex space-x-2">
+          <div className="flex space-x-2 items-center">
             <Button
               variant="outline"
               onClick={descargarClientesExcel}
               disabled={clientes.length === 0}
+              className="hidden md:inline-flex"
             >
               <Download className="h-4 w-4 mr-2" />
               Descargar Excel
@@ -1696,16 +1700,7 @@ export default function ClientesPage() {
                       >
                         Contactos
                       </button>
-                      <button
-                        onClick={() => setActiveTab("representantes")}
-                        className={`py-2 px-1 border-b-2 font-medium text-sm ${
-                          activeTab === "representantes"
-                            ? "border-blue-500 text-blue-600"
-                            : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                        }`}
-                      >
-                        Representantes
-                      </button>
+                      {/* Representantes tab hidden per latest requirements */}
                       <button
                         onClick={() => setActiveTab("facturacion")}
                         className={`py-2 px-1 border-b-2 font-medium text-sm ${
@@ -1825,16 +1820,6 @@ export default function ClientesPage() {
                             <p className="text-sm text-gray-600">Total de contactos: <span className="font-semibold text-blue-600">{contactos.length}</span></p>
                           </div>
                           <div className="flex gap-2 items-center">
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => generarContactosAleatorios(10)}
-                              className="h-9 bg-blue-50 hover:bg-blue-100 border-blue-300"
-                            >
-                              <Plus className="h-4 w-4 mr-1" />
-                              Agregar 10 Contactos
-                            </Button>
                             <Button
                               type="button"
                               disabled={!nuevoContacto.nombre.trim()}
@@ -2306,59 +2291,56 @@ export default function ClientesPage() {
               return false;
             }
           }).length;
-          // Eliminados del año: usar el estado `eliminadosAnio` (DB-backed + UI increment).
-          // Evitamos redeclarar `eliminadosAnio` para que las llamadas a
-          // setEliminadosAnio(...) se reflejen inmediatamente en el header.
-          const eliminadosEsteAnio = eliminadosAnio;
-
           return (
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
-              {/* Clientes Totales (a la izquierda de Activos) */}
-              <div className="border rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-gray-600">Clientes Totales</div>
-                    <div className="text-2xl font-bold text-indigo-600">{totales}</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 md:gap-4">
+              <Card className="h-full">
+                <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+                  <div className="flex flex-col md:flex-row items-center md:justify-between">
+                    <div className="flex-1 min-w-0 text-center md:text-left">
+                      <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Clientes Totales</p>
+                      <p className="text-2xl font-bold text-indigo-600">{totales}</p>
+                    </div>
+                    <Users className="hidden md:block h-8 w-8 text-indigo-600 flex-shrink-0 ml-2" />
                   </div>
-                  <Users className="h-8 w-8 text-indigo-600" />
-                </div>
-              </div>
-              <div className="border rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-gray-600">Clientes Activos</div>
-                    <div className="text-2xl font-bold text-green-600">{activos}</div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-full">
+                <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+                  <div className="flex flex-col md:flex-row items-center md:justify-between">
+                    <div className="flex-1 min-w-0 text-center md:text-left">
+                      <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Clientes Activos</p>
+                      <p className="text-2xl font-bold text-green-600">{activos}</p>
+                    </div>
+                    <UserCheck className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0 ml-2" />
                   </div>
-                  <UserCheck className="h-8 w-8 text-green-600" />
-                </div>
-              </div>
-              <div className="border rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-gray-600">Clientes Inactivos</div>
-                    <div className="text-2xl font-bold text-gray-600">{inactivos}</div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-full">
+                <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+                  <div className="flex flex-col md:flex-row items-center md:justify-between">
+                    <div className="flex-1 min-w-0 text-center md:text-left">
+                      <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Clientes Inactivos</p>
+                      <p className="text-2xl font-bold text-gray-600">{inactivos}</p>
+                    </div>
+                    <UserX className="hidden md:block h-8 w-8 text-gray-600 flex-shrink-0 ml-2" />
                   </div>
-                  <UserX className="h-8 w-8 text-gray-600" />
-                </div>
-              </div>
-              <div className="border rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-gray-600">Nuevos clientes este año</div>
-                    <div className="text-2xl font-bold text-blue-600">{nuevosAnio}</div>
+                </CardContent>
+              </Card>
+
+              <Card className="h-full">
+                <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+                  <div className="flex flex-col md:flex-row items-center md:justify-between">
+                    <div className="flex-1 min-w-0 text-center md:text-left">
+                      <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">Nuevos clientes este año</p>
+                      <p className="text-2xl font-bold text-blue-600">{nuevosAnio}</p>
+                    </div>
+                    <Calendar className="hidden md:block h-8 w-8 text-blue-600 flex-shrink-0 ml-2" />
                   </div>
-                  <Calendar className="h-8 w-8 text-blue-600" />
-                </div>
-              </div>
-              <div className="border rounded-lg p-4 bg-white">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <div className="text-sm text-gray-600">Eliminados este año</div>
-                    <div className="text-2xl font-bold text-red-600">{eliminadosEsteAnio}</div>
-                  </div>
-                  <Trash2 className="h-8 w-8 text-red-600" />
-                </div>
-              </div>
+                </CardContent>
+              </Card>
+
             </div>
           );
         })()}
@@ -2366,8 +2348,8 @@ export default function ClientesPage() {
         {/* Búsqueda + paginación superior */}
         <Card>
           <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center space-x-2">
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2 flex-1 min-w-[280px]">
                 <Search className="h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Buscar por nombre comercial, RFC o email..."
@@ -2376,53 +2358,27 @@ export default function ClientesPage() {
                     setSearchTerm(e.target.value);
                     setPage(1);
                   }}
-                  className="w-full min-w-[300px] md:min-w-[440px] lg:min-w-[560px] xl:min-w-[640px] max-w-[760px]"
+                  className="flex-1 min-w-[200px] md:min-w-[320px] lg:min-w-[420px] xl:min-w-[520px] max-w-[760px]"
                 />
-              </div>
-              <div className="flex items-center gap-2 ml-auto">
-                <span className="text-sm text-gray-700">
-                  Página {page} de {totalPages}
-                </span>
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1 whitespace-nowrap">
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon"
                     onClick={() => setPage((p) => Math.max(1, p - 1))}
                     disabled={page <= 1}
+                    aria-label="Página anterior"
                   >
-                    Anterior
+                    <ChevronLeft className="h-4 w-4" />
                   </Button>
                   <Button
                     variant="outline"
-                    size="sm"
+                    size="icon"
                     onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
                     disabled={page >= totalPages}
+                    aria-label="Página siguiente"
                   >
-                    Siguiente
+                    <ChevronRight className="h-4 w-4" />
                   </Button>
-                </div>
-                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">Por página:</span>
-                  <Select
-                    value={String(pageSize)}
-                    onValueChange={(v) => {
-                      const newSize = Number.parseInt(v, 10);
-                      setPageSize(newSize);
-                      setPage(1);
-                    }}
-                  >
-                    <SelectTrigger className="w-[140px]">
-                      <SelectValue placeholder="Por página" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="6">6 por página</SelectItem>
-                      <SelectItem value="12">12 por página</SelectItem>
-                      <SelectItem value="18">18 por página</SelectItem>
-                      <SelectItem value="24">24 por página</SelectItem>
-                      <SelectItem value="48">48 por página</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
             </div>
@@ -2437,17 +2393,17 @@ export default function ClientesPage() {
                 <div className="flex justify-between items-start">
                   <div>
                     <CardTitle className="text-lg">{cliente.nombre}</CardTitle>
-                    <CardDescription>
-                      {cliente.rfc && `RFC: ${cliente.rfc}`}
-                    </CardDescription>
                   </div>
                   <div className="flex space-x-1">
                     <Button
                       variant="ghost"
                       size="sm"
                       onClick={() => verDetallesCliente(cliente)}
+                      className="gap-1"
                     >
-                      Ver Detalles
+                      <Eye className="h-4 w-4" />
+                      <span className="sr-only md:hidden">Ver detalles</span>
+                      <span className="hidden md:inline">Ver detalles</span>
                     </Button>
                     <Button
                       variant={
@@ -2465,8 +2421,21 @@ export default function ClientesPage() {
                           ? "bg-orange-500 hover:bg-orange-600 text-white"
                           : ""
                       }
+                      className="gap-1"
                     >
-                      {cliente.estado === "activo" ? "Desactivar" : "Activar"}
+                      {cliente.estado === "activo" ? (
+                        <>
+                          <UserX className="h-4 w-4" />
+                          <span className="sr-only md:hidden">Desactivar</span>
+                          <span className="hidden md:inline">Desactivar</span>
+                        </>
+                      ) : (
+                        <>
+                          <UserCheck className="h-4 w-4" />
+                          <span className="sr-only md:hidden">Activar</span>
+                          <span className="hidden md:inline">Activar</span>
+                        </>
+                      )}
                     </Button>
                     <Button
                       variant="outline"
@@ -2485,24 +2454,28 @@ export default function ClientesPage() {
               </CardHeader>
 
               <CardContent className="space-y-4">
-                {/* Mobile-only compact header to show client name (since CardHeader is hidden on mobile) */}
-                <div className="md:hidden border-b pb-2 mb-2">
-                  <div className="text-lg font-semibold text-gray-900">{cliente.nombre}</div>
-                  {cliente.rfc && (
-                    <div className="text-xs text-gray-500">RFC: {cliente.rfc}</div>
-                  )}
-                </div>
                 {/* Información Principal */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-3">
-                    <div className="flex items-center space-x-2">
-                      <Building className="h-4 w-4 text-gray-500" />
-                      <span className="font-medium text-sm text-gray-700">
-                        RFC:
-                      </span>
-                      <span className="text-sm">
-                        {cliente.rfc || "No especificado"}
-                      </span>
+                    <div className="flex flex-wrap items-center gap-2 justify-between">
+                      <div className="flex items-center gap-2">
+                        <Building className="h-4 w-4 text-gray-500" />
+                        <span className="font-medium text-sm text-gray-700">RFC:</span>
+                        <span className="text-sm">
+                          {cliente.rfc || "No especificado"}
+                        </span>
+                      </div>
+                      <Badge
+                        className={`md:hidden text-xs ${
+                          cliente.estado === "activo"
+                            ? "bg-green-500 text-white"
+                            : cliente.estado === "inactivo"
+                            ? "bg-red-500 text-white"
+                            : "bg-gray-200 text-gray-700"
+                        }`}
+                      >
+                        {cliente.estado}
+                      </Badge>
                     </div>
 
                     {cliente.telefono && (
@@ -2542,8 +2515,7 @@ export default function ClientesPage() {
                         </div>
                       </div>
                     )}
-
-                    <div className="flex items-center space-x-2">
+                    <div className="hidden md:flex items-center space-x-2">
                       <User className="h-4 w-4 text-gray-500" />
                       <span className="font-medium text-sm text-gray-700">
                         Estado:
@@ -2554,7 +2526,7 @@ export default function ClientesPage() {
                             ? "bg-green-500 text-white"
                             : cliente.estado === "inactivo"
                             ? "bg-red-500 text-white"
-                            : ""
+                            : "bg-gray-200 text-gray-700"
                         }`}
                       >
                         {cliente.estado}
@@ -2713,10 +2685,10 @@ export default function ClientesPage() {
               Mostrando {Math.min(clientesFiltrados.length, end) - start} de {clientesFiltrados.length}
             </div>
             <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-700">
+              <span className="hidden md:inline text-sm text-gray-700">
                 Página {page} de {totalPages}
               </span>
-              <div className="flex items-center gap-1">
+              <div className="hidden md:flex items-center gap-1">
                 <Button
                   variant="outline"
                   size="sm"
@@ -2733,29 +2705,6 @@ export default function ClientesPage() {
                 >
                   Siguiente
                 </Button>
-              </div>
-              <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-              <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-700">Por página:</span>
-                <Select
-                  value={String(pageSize)}
-                  onValueChange={(v) => {
-                    const newSize = Number.parseInt(v, 10);
-                    setPageSize(newSize);
-                    setPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-[140px]">
-                    <SelectValue placeholder="Por página" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="6">6 por página</SelectItem>
-                    <SelectItem value="12">12 por página</SelectItem>
-                    <SelectItem value="18">18 por página</SelectItem>
-                    <SelectItem value="24">24 por página</SelectItem>
-                    <SelectItem value="48">48 por página</SelectItem>
-                  </SelectContent>
-                </Select>
               </div>
             </div>
           </div>

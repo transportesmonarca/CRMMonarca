@@ -278,6 +278,10 @@ export function Header({ onMenuClick, showControls = true }: HeaderProps) {
                 />
               </Link>
             </div>
+            <div className="sm:hidden flex flex-col text-xs font-semibold text-gray-900 leading-tight">
+              <span>Transportes Internacionales Monarca</span>
+              <span className="text-[11px] font-medium text-gray-600">Cruzando Norteamérica</span>
+            </div>
             <div className="hidden sm:block">
               <h1 className="text-xl font-bold text-gray-900">Transportes Internacionales Monarca</h1>
               <p className="text-sm text-gray-600 flex items-center gap-1">

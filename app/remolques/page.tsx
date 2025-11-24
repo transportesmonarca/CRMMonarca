@@ -49,15 +49,15 @@ import {
   AlertTriangle,
   Package,
   Eye,
-  Upload,
   FileText,
-  Image,
+  Image as ImageIcon,
   UploadCloud,
   X,
-  Download,
   ExternalLink,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase, type Remolque, type MarcaRemolque, type DocumentoRemolque } from "@/lib/supabase";
 import { formatDateMatamoros, normalizeDate, todayLocalISODate } from '@/lib/date-utils';
 import { agregarAuditLog } from "@/lib/audit";
@@ -147,6 +147,34 @@ export default function RemolquesPage() {
   const [pageSize, setPageSize] = useState(12);
   // Número de cards por fila en la lista (2,3,4)
   const [cardsPerRow, setCardsPerRow] = useState<number>(3);
+  const [remolqueFormTab, setRemolqueFormTab] = useState("general");
+  const [remolqueTabWindowStart, setRemolqueTabWindowStart] = useState(0);
+  const remolqueTabsConfig = useMemo(() => {
+    const base = [
+      { value: "general", label: "Información General", shortLabel: "General" },
+      { value: "info-tecnica", label: "Info Técnica", shortLabel: "Técnica" },
+      { value: "seguros", label: "Inspecciones & Seguros", shortLabel: "Seguros" },
+      { value: "documentos", label: "Documentos", shortLabel: "Docs" },
+      { value: "mantenimiento", label: "Mantenimiento", shortLabel: "Manto" },
+      { value: "comentarios", label: "Comentarios", shortLabel: "Notas" },
+    ];
+    return editingRemolque ? base : base.filter((tab) => tab.value !== "mantenimiento");
+  }, [editingRemolque]);
+  const remolqueTabsWindowSize = Math.min(4, remolqueTabsConfig.length || 0);
+
+  const detalleTabsConfig = useMemo(
+    () => [
+      { value: "general", label: "General", shortLabel: "General" },
+      { value: "info-tecnica", label: "Info Técnica", shortLabel: "Técnica" },
+      { value: "seguros", label: "Inspecciones & Seguros", shortLabel: "Seguros" },
+      { value: "documentos", label: "Documentos", shortLabel: "Docs" },
+      { value: "mantenimiento", label: "Mantenimiento", shortLabel: "Manto" },
+      { value: "comentarios", label: "Comentarios", shortLabel: "Notas" },
+    ],
+    []
+  );
+  const [detalleTabWindowStart, setDetalleTabWindowStart] = useState(0);
+  const detalleTabsWindowSize = Math.min(4, detalleTabsConfig.length || 0);
 
   // Estados para los datos
   const [remolques, setRemolques] = useState<Remolque[]>([]);
@@ -206,65 +234,6 @@ export default function RemolquesPage() {
     comentarios: "",
   });
 
-  // Función para generar datos aleatorios de remolque
-  const generarDatosAleatorios = () => {
-    const pick = <T,>(arr: T[]): T => arr[Math.floor(Math.random() * arr.length)];
-    const randInt = (min: number, max: number) => Math.floor(Math.random() * (max - min + 1)) + min;
-    const randDigits = (len: number) => Array.from({ length: len }, () => String(randInt(0, 9))).join("");
-    const randLetters = (len: number) => Array.from({ length: len }, () => String.fromCharCode(randInt(65, 90))).join("");
-    const randDateFuture = (daysMin = 30, daysMax = 365) => {
-      const base = new Date();
-      const d = randInt(daysMin, daysMax);
-      const dt = new Date(base.getTime() + d * 24 * 3600 * 1000);
-      return new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate())).toISOString().slice(0, 10);
-    };
-    const randDatePast = (daysMin = 30, daysMax = 180) => {
-      const base = new Date();
-      const d = randInt(daysMin, daysMax);
-      const dt = new Date(base.getTime() - d * 24 * 3600 * 1000);
-      return new Date(Date.UTC(dt.getFullYear(), dt.getMonth(), dt.getDate())).toISOString().slice(0, 10);
-    };
-
-    const tipos = ["Caja Seca", "Refrigerado", "Plataforma", "Tolva", "Tanque", "Lowboy"];
-    const marcasMX = ["Great Dane", "Utility", "Wabash", "Hyundai", "Stoughton", "Fruehauf", "Dorsey"];
-    const modelos = ["Modelo A", "Modelo B", "Serie X", "Serie Pro", "Standard", "Heavy Duty"];
-    const estados = ["disponible", "en_uso", "mantenimiento"];
-    const comentarios = [
-      "Remolque en excelente estado",
-      "Requiere inspección rutinaria",
-      "Última revisión completa", 
-      "Apto para cargas pesadas",
-      "Sin observaciones",
-    ];
-
-    const numeroEconomico = `R-${randDigits(4)}`;
-    const placasMX = `${randDigits(3)}-${randLetters(3)}-${randDigits(1)}`;
-    const numeroSerie = `${randLetters(3)}${randDigits(8)}`;
-    const polizaSeguro = `POL-${randDigits(10)}`;
-
-    setFormData({
-      numeroEconomico,
-      tipo: pick(tipos),
-      marca: pick(marcasMX),
-      modelo: pick(modelos),
-      año: String(randInt(2015, 2024)),
-      numeroSerie,
-      capacidad: String(randInt(20, 53)) + " ton",
-      placas: placasMX,
-      fechaUltimaInspeccion: randDatePast(30, 90),
-      proximaInspeccion: randDateFuture(60, 180),
-      polizaSeguro,
-      vigenciaSeguro: randDateFuture(90, 365),
-      estado: pick(estados),
-      comentarios: pick(comentarios),
-    });
-
-    toast({
-      title: "Datos generados",
-      description: `Remolque ${numeroEconomico} creado con datos aleatorios`,
-    });
-  };
-
   // Cargar datos desde Supabase
   const cargarDatos = async () => {
     try {
@@ -322,6 +291,87 @@ export default function RemolquesPage() {
       // noop
     }
   }, [cardsPerRow]);
+
+  const remolqueVisibleTabs = remolqueTabsConfig.slice(
+    remolqueTabWindowStart,
+    remolqueTabWindowStart + remolqueTabsWindowSize
+  );
+  const canSlideRemolqueTabsLeft = remolqueTabWindowStart > 0;
+  const canSlideRemolqueTabsRight =
+    remolqueTabWindowStart + remolqueTabsWindowSize < remolqueTabsConfig.length;
+
+  const shiftRemolqueTabWindow = (direction: "left" | "right") => {
+    if (direction === "left") {
+      setRemolqueTabWindowStart((prev) => Math.max(0, prev - 1));
+    } else {
+      setRemolqueTabWindowStart((prev) =>
+        Math.min(
+          remolqueTabsConfig.length - remolqueTabsWindowSize,
+          Math.max(0, prev + 1)
+        )
+      );
+    }
+  };
+
+  const detalleVisibleTabs = detalleTabsConfig.slice(
+    detalleTabWindowStart,
+    detalleTabWindowStart + detalleTabsWindowSize
+  );
+  const canSlideDetalleTabsLeft = detalleTabWindowStart > 0;
+  const canSlideDetalleTabsRight =
+    detalleTabWindowStart + detalleTabsWindowSize < detalleTabsConfig.length;
+
+  const shiftDetalleTabWindow = (direction: "left" | "right") => {
+    if (direction === "left") {
+      setDetalleTabWindowStart((prev) => Math.max(0, prev - 1));
+    } else {
+      setDetalleTabWindowStart((prev) =>
+        Math.min(
+          detalleTabsConfig.length - detalleTabsWindowSize,
+          Math.max(0, prev + 1)
+        )
+      );
+    }
+  };
+
+  useEffect(() => {
+    setRemolqueTabWindowStart((current) => {
+      const maxStart = Math.max(0, remolqueTabsConfig.length - remolqueTabsWindowSize);
+      return Math.min(current, maxStart);
+    });
+  }, [remolqueTabsConfig.length, remolqueTabsWindowSize]);
+
+  useEffect(() => {
+    setDetalleTabWindowStart((current) => {
+      const maxStart = Math.max(0, detalleTabsConfig.length - detalleTabsWindowSize);
+      return Math.min(current, maxStart);
+    });
+  }, [detalleTabsConfig.length, detalleTabsWindowSize]);
+
+  useEffect(() => {
+    const currentIndex = remolqueTabsConfig.findIndex((tab) => tab.value === remolqueFormTab);
+    if (currentIndex === -1) return;
+    setRemolqueTabWindowStart((current) => {
+      if (currentIndex < current) return currentIndex;
+      if (currentIndex >= current + remolqueTabsWindowSize) {
+        return Math.max(0, currentIndex - remolqueTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [remolqueFormTab, remolqueTabsConfig, remolqueTabsWindowSize]);
+
+  useEffect(() => {
+    if (!showForm) {
+      setRemolqueFormTab("general");
+      setRemolqueTabWindowStart(0);
+    }
+  }, [showForm]);
+
+  useEffect(() => {
+    if (!remolqueTabsConfig.some((tab) => tab.value === remolqueFormTab)) {
+      setRemolqueFormTab(remolqueTabsConfig[0]?.value ?? "general");
+    }
+  }, [remolqueTabsConfig, remolqueFormTab]);
 
   const getGridClass = (n: number) => {
     switch (n) {
@@ -703,6 +753,24 @@ export default function RemolquesPage() {
   const [showDetallesRemolque, setShowDetallesRemolque] = useState(false);
   const [remolqueDetalle, setRemolqueDetalle] = useState<Remolque | null>(null);
   const [detalleTabRemolque, setDetalleTabRemolque] = useState('general');
+  useEffect(() => {
+    const currentIndex = detalleTabsConfig.findIndex((tab) => tab.value === detalleTabRemolque);
+    if (currentIndex === -1) return;
+    setDetalleTabWindowStart((current) => {
+      if (currentIndex < current) return currentIndex;
+      if (currentIndex >= current + detalleTabsWindowSize) {
+        return Math.max(0, currentIndex - detalleTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [detalleTabRemolque, detalleTabsConfig, detalleTabsWindowSize]);
+
+  useEffect(() => {
+    if (!showDetallesRemolque) {
+      setDetalleTabWindowStart(0);
+    }
+  }, [showDetallesRemolque]);
+
   const verDetallesRemolque = (remolque: Remolque) => {
     setRemolqueDetalle(remolque);
     setShowDetallesRemolque(true);
@@ -1291,51 +1359,53 @@ export default function RemolquesPage() {
         </AlertDialog>
 
       <div className="space-y-6">
-        <div className="flex justify-between items-center relative">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
               Gestión de Remolques
             </h1>
             <p className="text-gray-600 mt-2">Administrar la flota de remolques</p>
-            <div className="absolute right-0 flex items-center gap-2 -translate-y-14">
-              <Button
-                variant="outline"
-                onClick={() => descargarReporteRemolques()}
+          </div>
+          <div className="hidden md:flex items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => descargarReporteRemolques()}
+            >
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                className="h-4 w-4 mr-2"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
               >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className="h-4 w-4 mr-2"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
-                  />
-                </svg>
-                Descargar Reporte
-              </Button>
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth={2}
+                  d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4"
+                />
+              </svg>
+              Descargar Reporte
+            </Button>
 
-              <Button
-                variant="outline"
-                onClick={() => setShowMarcasRemolque(true)}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Marcas de Remolques
-              </Button>
+            <Button
+              variant="outline"
+              onClick={() => setShowMarcasRemolque(true)}
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Marcas de Remolques
+            </Button>
 
-              <Button
-                onClick={() => { limpiarFormulario(); setShowForm(true); }}
-                className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Nuevo Remolque
-              </Button>
-            </div>
-            {/* Modal para gestionar marcas de remolques */}
+            <Button
+              onClick={() => { limpiarFormulario(); setShowForm(true); }}
+              className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Remolque
+            </Button>
+          </div>
+        </div>
+        {/* Modal para gestionar marcas de remolques */}
             <Dialog
               open={showMarcasRemolque}
               onOpenChange={setShowMarcasRemolque}
@@ -1572,48 +1642,60 @@ export default function RemolquesPage() {
                 if(actualizado) setRemolqueDetalle(actualizado);
               }
             }}>
-              <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
-                <DialogHeader>
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <DialogTitle>
-                        {editingRemolque ? "Modificar Remolque" : "Nuevo Remolque"}
-                      </DialogTitle>
-                      <DialogDescription>
-                        Completa la información del remolque
-                      </DialogDescription>
-                    </div>
-                    {!editingRemolque && (
-                      <Button
-                        type="button"
-                        variant="outline"
-                        size="sm"
-                        onClick={generarDatosAleatorios}
-                        className="flex items-center gap-2 text-green-600 border-green-200 hover:bg-green-50"
-                      >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                        </svg>
-                        Auto-completar
-                      </Button>
-                    )}
-                  </div>
+              <DialogContent className="w-full max-w-[86vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto px-4 sm:px-6">
+                <DialogHeader className="text-left">
+                  <DialogTitle className="text-left">
+                    {editingRemolque ? "Modificar Remolque" : "Nuevo Remolque"}
+                  </DialogTitle>
+                  <DialogDescription>
+                    Completa la información del remolque
+                  </DialogDescription>
                 </DialogHeader>
-                
 
-                <Tabs defaultValue="general" className="w-full">
-                  <TabsList className={`grid w-full ${editingRemolque ? "grid-cols-6" : "grid-cols-5"}`}>
-                    <TabsTrigger value="general">
-                      Información General
-                    </TabsTrigger>
-                    <TabsTrigger value="info-tecnica">Info Técnica</TabsTrigger>
-                    <TabsTrigger value="seguros">Inspecciones & Seguros</TabsTrigger>
-                    <TabsTrigger value="documentos">Documentos</TabsTrigger>
-                    {editingRemolque && (
-                      <TabsTrigger value="mantenimiento">Mantenimiento</TabsTrigger>
-                    )}
-                    <TabsTrigger value="comentarios">Comentarios</TabsTrigger>
-                  </TabsList>
+
+                <Tabs value={remolqueFormTab} onValueChange={setRemolqueFormTab} className="w-full">
+                  <div className="border-b border-gray-200 pb-2">
+                    <div className="flex items-center gap-2 sm:hidden">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftRemolqueTabWindow("left")}
+                        disabled={!canSlideRemolqueTabsLeft}
+                        aria-label="Ver pestañas anteriores"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
+                        {remolqueVisibleTabs.map((tab) => (
+                          <TabsTrigger
+                            key={tab.value}
+                            value={tab.value}
+                            className="flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                          >
+                            {tab.shortLabel ?? tab.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftRemolqueTabWindow("right")}
+                        disabled={!canSlideRemolqueTabsRight}
+                        aria-label="Ver pestañas siguientes"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <TabsList className={`hidden sm:grid w-full ${editingRemolque ? "grid-cols-6" : "grid-cols-5"}`}>
+                      {remolqueTabsConfig.map((tab) => (
+                        <TabsTrigger key={tab.value} value={tab.value}>
+                          {tab.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </div>
 
                   <TabsContent value="general">
                     <div className="py-4">
@@ -1958,7 +2040,7 @@ export default function RemolquesPage() {
                                 <div key={index} className="flex items-center justify-between p-2 bg-blue-50 border border-blue-200 rounded">
                                   <div className="flex items-center gap-2">
                                     {file.type.startsWith('image/') ? (
-                                      <Image className="h-4 w-4 text-blue-600" />
+                                      <ImageIcon className="h-4 w-4 text-blue-600" />
                                     ) : (
                                       <FileText className="h-4 w-4 text-red-600" />
                                     )}
@@ -2004,7 +2086,7 @@ export default function RemolquesPage() {
                                   <div key={doc.id} className="flex items-center justify-between p-3 bg-gray-50 border border-gray-200 rounded">
                                     <div className="flex items-center gap-3">
                                       {doc.tipo_mime?.startsWith('image/') ? (
-                                        <Image className="h-5 w-5 text-green-600" />
+                                        <ImageIcon className="h-5 w-5 text-green-600" />
                                       ) : (
                                         <FileText className="h-5 w-5 text-red-600" />
                                       )}
@@ -2174,7 +2256,7 @@ export default function RemolquesPage() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="flex justify-end space-x-2 mt-6">
+                <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end sm:gap-0 sm:space-x-2">
                   <Button
                     variant="outline"
                     onClick={() => setShowForm(false)}
@@ -2197,11 +2279,9 @@ export default function RemolquesPage() {
                 </div>
               </DialogContent>
             </Dialog>
-          </div>
-        </div>
 
         {/* Estadísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 md:gap-4">
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
@@ -2289,9 +2369,9 @@ export default function RemolquesPage() {
 
         {/* Búsqueda + paginación superior */}
         <Card>
-          <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center space-x-2">
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="flex flex-1 items-center gap-2">
                 <Search className="h-4 w-4 text-gray-400" />
                 <Input
                   placeholder="Buscar por número económico, marca, modelo o placas..."
@@ -2300,17 +2380,17 @@ export default function RemolquesPage() {
                     setSearchTerm(e.target.value);
                     setPage(1);
                   }}
-                  className="w-72 sm:w-80 md:w-96 lg:w-[460px] xl:w-[520px]"
+                  className="flex-1 min-w-0 text-sm h-10 sm:h-11"
                 />
               </div>
+            </div>
 
-              <div className="flex items-center gap-2 ml-auto">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">
-                    Página {page} de {totalPages}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1">
+            <div className="flex flex-col gap-3 text-sm md:flex-row md:items-center md:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="hidden md:inline text-sm font-medium text-gray-700">
+                  Página {page} de {totalPages}
+                </span>
+                <div className="hidden md:flex items-center gap-2">
                   <Button
                     variant="outline"
                     size="sm"
@@ -2328,9 +2408,57 @@ export default function RemolquesPage() {
                     Siguiente
                   </Button>
                 </div>
-                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">Cards por fila:</span>
+                <div className="flex md:hidden items-center gap-2">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page <= 1}
+                      aria-label="Página anterior"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages}
+                      aria-label="Página siguiente"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <span className="text-xs text-gray-600">Por pág.</span>
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(v) => {
+                        const newSize = Number.parseInt(v, 10);
+                        setPageSize(newSize);
+                        setPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="w-24 h-9 text-xs">
+                        <SelectValue placeholder="Páginas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="6">6</SelectItem>
+                        <SelectItem value="12">12</SelectItem>
+                        <SelectItem value="18">18</SelectItem>
+                        <SelectItem value="24">24</SelectItem>
+                        <SelectItem value="48">48</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </div>
+
+              <div className="hidden md:block h-6 w-px bg-gray-200" />
+
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="hidden sm:flex items-center gap-2">
+                  <span className="hidden sm:inline text-sm text-gray-700">Cards por fila:</span>
                   <Select
                     value={String(cardsPerRow)}
                     onValueChange={(v) => {
@@ -2338,8 +2466,8 @@ export default function RemolquesPage() {
                       setCardsPerRow(n);
                     }}
                   >
-                    <SelectTrigger className="w-[120px]">
-                      <SelectValue />
+                    <SelectTrigger className="w-28 sm:w-[120px] h-9 text-sm">
+                      <SelectValue placeholder="Cards" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="2">2 por fila</SelectItem>
@@ -2348,8 +2476,8 @@ export default function RemolquesPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-700">Por página:</span>
+                <div className="hidden md:flex items-center gap-2">
+                  <span className="hidden sm:inline text-sm text-gray-700">Por página:</span>
                   <Select
                     value={String(pageSize)}
                     onValueChange={(v) => {
@@ -2358,8 +2486,8 @@ export default function RemolquesPage() {
                       setPage(1);
                     }}
                   >
-                    <SelectTrigger className="w-[140px]">
-                      <SelectValue placeholder="Por página" />
+                    <SelectTrigger className="w-32 sm:w-[140px] h-9 text-sm">
+                      <SelectValue placeholder="Paginación" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="6">6 por página</SelectItem>
@@ -2371,6 +2499,33 @@ export default function RemolquesPage() {
                   </Select>
                 </div>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Acciones móviles */}
+        <Card className="md:hidden border border-dashed border-gray-200">
+          <CardContent className="pt-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-700">Acciones rápidas</p>
+            <div className="grid grid-cols-1 gap-2">
+              <Button
+                onClick={() => {
+                  limpiarFormulario();
+                  setShowForm(true);
+                }}
+                className="bg-[#16A34A] hover:bg-[#12813a] text-white font-semibold"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Nuevo Remolque
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => setShowMarcasRemolque(true)}
+                className="justify-center font-medium text-gray-800"
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                Marcas de Remolques
+              </Button>
             </div>
           </CardContent>
         </Card>
@@ -2398,82 +2553,80 @@ export default function RemolquesPage() {
                         ` • Capacidad: ${remolque.capacidad} ton`}
                     </CardDescription>
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex flex-col items-end gap-2 sm:flex-row sm:items-start sm:gap-2">
                     {/* Badge de estado activo/inactivo */}
                     <Badge
                       variant={remolque.activo !== false ? "default" : "destructive"}
-                      className={
+                      className={`${
                         remolque.activo !== false
                           ? "bg-green-100 text-green-800"
                           : "bg-red-100 text-red-800 border border-red-300"
-                      }
+                      } order-2 sm:order-none self-end sm:self-auto`}
                     >
                       {remolque.activo !== false ? "Activo" : "Inactivo"}
                     </Badge>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => verDetallesRemolque(remolque)}
-                      title="Ver detalles"
-                    >
-                      <Eye className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center space-x-2 order-1 sm:order-none">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => verDetallesRemolque(remolque)}
+                        title="Ver detalles"
+                      >
+                        <Eye className="h-4 w-4" />
+                      </Button>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() =>
-                        toggleActivarRemolque(
-                          remolque.id,
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          toggleActivarRemolque(
+                            remolque.id,
+                            remolque.activo !== false
+                          )
+                        }
+                        className={
                           remolque.activo !== false
-                        )
-                      }
-                      className={
-                        remolque.activo !== false
-                          ? "text-red-600 hover:text-red-700"
-                          : "text-green-600 hover:text-green-700"
-                      }
-                    >
-                      {remolque.activo !== false ? (
-                        <>
+                            ? "text-red-600 hover:text-red-700"
+                            : "text-green-600 hover:text-green-700"
+                        }
+                      >
+                        {remolque.activo !== false ? (
                           <AlertTriangle className="h-4 w-4" />
-                        </>
-                      ) : (
-                        <>
+                        ) : (
                           <Package className="h-4 w-4" />
-                        </>
-                      )}
-                    </Button>
+                        )}
+                      </Button>
 
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button variant="outline" size="sm">
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            ¿Eliminar remolque?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Esta acción no se puede deshacer. Se eliminará
-                            permanentemente el remolque y todos sus datos
-                            asociados.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={() => eliminarRemolque(remolque.id)}
-                            className="bg-red-600 hover:bg-red-700 text-white"
-                          >
-                            Eliminar
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              ¿Eliminar remolque?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Esta acción no se puede deshacer. Se eliminará
+                              permanentemente el remolque y todos sus datos
+                              asociados.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => eliminarRemolque(remolque.id)}
+                              className="bg-red-600 hover:bg-red-700 text-white"
+                            >
+                              Eliminar
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </div>
                 </div>
               </CardHeader>
@@ -2586,7 +2739,58 @@ export default function RemolquesPage() {
                   ) : null;
                 })()}
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div className="space-y-3 text-sm md:hidden">
+                  {(remolque.placas || remolque.numero_serie) && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {remolque.placas && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Placas</p>
+                          <p className="font-semibold text-gray-800">{remolque.placas}</p>
+                        </div>
+                      )}
+                      {remolque.numero_serie && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Número de Serie</p>
+                          <p className="font-semibold text-gray-800">{remolque.numero_serie}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {(remolque.fecha_ultima_inspeccion || remolque.proxima_inspeccion) && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {remolque.fecha_ultima_inspeccion && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Última Inspección</p>
+                          <p className="font-semibold text-gray-800">{formatDateMatamoros(remolque.fecha_ultima_inspeccion)}</p>
+                        </div>
+                      )}
+                      {remolque.proxima_inspeccion && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Próxima Inspección</p>
+                          <p className="font-semibold text-gray-800">{formatDateMatamoros(remolque.proxima_inspeccion)}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  {(remolque.poliza_seguro || remolque.vigencia_seguro) && (
+                    <div className="grid grid-cols-2 gap-3">
+                      {remolque.poliza_seguro && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Póliza de Seguro</p>
+                          <p className="font-semibold text-gray-800">{remolque.poliza_seguro}</p>
+                        </div>
+                      )}
+                      {remolque.vigencia_seguro && (
+                        <div>
+                          <p className="text-xs uppercase text-gray-500">Vigencia Seguro</p>
+                          <p className="font-semibold text-gray-800">{formatDateMatamoros(remolque.vigencia_seguro)}</p>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="hidden md:grid md:grid-cols-3 gap-4 text-sm">
                   {remolque.placas && (
                     <div>
                       <p className="font-medium">Placas</p>
@@ -2641,9 +2845,9 @@ export default function RemolquesPage() {
 
         {/* Modal Detalles Remolque */}
         <Dialog open={showDetallesRemolque} onOpenChange={(o)=>{setShowDetallesRemolque(o); if(!o){setRemolqueDetalle(null);} }}>
-          <DialogContent className="max-w-5xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle className="text-2xl font-semibold">
+          <DialogContent className="w-full max-w-[90vw] sm:max-w-5xl max-h-[90vh] overflow-y-auto px-4 sm:px-6">
+            <DialogHeader className="text-left">
+              <DialogTitle className="text-2xl font-semibold text-left">
                 {`Detalles del remolque: ${remolqueDetalle?.numero_economico ?? ""}`}
               </DialogTitle>
               <DialogDescription>Información completa y acciones del remolque seleccionado.</DialogDescription>
@@ -2652,19 +2856,53 @@ export default function RemolquesPage() {
               <div className="space-y-4">
 
                 <Tabs value={detalleTabRemolque} onValueChange={setDetalleTabRemolque} className="w-full">
-                  <TabsList className="grid w-full grid-cols-6">
-                    <TabsTrigger value="general">General</TabsTrigger>
-                    <TabsTrigger value="info-tecnica">Info Técnica</TabsTrigger>
-                    <TabsTrigger value="seguros">Inspecciones & Seguros</TabsTrigger>
-                    <TabsTrigger value="documentos">Documentos</TabsTrigger>
-                    <TabsTrigger value="mantenimiento">Mantenimiento</TabsTrigger>
-                    <TabsTrigger value="comentarios">Comentarios</TabsTrigger>
-                  </TabsList>
+                  <div className="border-b border-gray-200 pb-2">
+                    <div className="flex items-center gap-2 sm:hidden">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftDetalleTabWindow("left")}
+                        disabled={!canSlideDetalleTabsLeft}
+                        aria-label="Ver pestañas anteriores"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
+                        {detalleVisibleTabs.map((tab) => (
+                          <TabsTrigger
+                            key={tab.value}
+                            value={tab.value}
+                            className="flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                          >
+                            {tab.shortLabel ?? tab.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftDetalleTabWindow("right")}
+                        disabled={!canSlideDetalleTabsRight}
+                        aria-label="Ver pestañas siguientes"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <TabsList className="hidden sm:grid w-full grid-cols-6">
+                      {detalleTabsConfig.map((tab) => (
+                        <TabsTrigger key={tab.value} value={tab.value}>
+                          {tab.label}
+                        </TabsTrigger>
+                      ))}
+                    </TabsList>
+                  </div>
 
                   <TabsContent value="general">
                     <div className="py-4 space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Información Básica</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                         <div><span className="font-medium text-gray-600">Número Económico:</span><p>{remolqueDetalle.numero_economico}</p></div>
                         <div><span className="font-medium text-gray-600">Tipo:</span><p>{remolqueDetalle.tipo || '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Estado:</span><p>{remolqueDetalle.estado}</p></div>
@@ -2678,7 +2916,7 @@ export default function RemolquesPage() {
                   <TabsContent value="info-tecnica">
                     <div className="py-4 space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Información Técnica</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                         <div><span className="font-medium text-gray-600">Número Serie:</span><p>{remolqueDetalle.numero_serie || '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Capacidad:</span><p>{remolqueDetalle.capacidad ? `${remolqueDetalle.capacidad} ton` : '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Placas:</span><p>{remolqueDetalle.placas || '—'}</p></div>
@@ -2689,7 +2927,7 @@ export default function RemolquesPage() {
                   <TabsContent value="seguros">
                     <div className="py-4 space-y-4">
                       <h3 className="text-sm font-semibold text-gray-900">Inspecciones & Seguros</h3>
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 text-sm">
                         <div><span className="font-medium text-gray-600">Última Inspección:</span><p>{remolqueDetalle.fecha_ultima_inspeccion ? formatDateMatamoros(remolqueDetalle.fecha_ultima_inspeccion) : '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Próxima Inspección:</span><p>{remolqueDetalle.proxima_inspeccion ? formatDateMatamoros(remolqueDetalle.proxima_inspeccion) : '—'}</p></div>
                         <div><span className="font-medium text-gray-600">Póliza Seguro:</span><p>{remolqueDetalle.poliza_seguro || '—'}</p></div>
@@ -2946,16 +3184,6 @@ export default function RemolquesPage() {
                   >
                     <Edit className="h-4 w-4 mr-1" /> Editar Remolque
                   </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => descargarExcelRemolque(remolqueDetalle)}
-                    className="flex items-center gap-2"
-                  >
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2M7 10l5 5m0 0l5-5m-5 5V4" />
-                    </svg>
-                    Descargar Excel
-                  </Button>
                   <Button variant="outline" onClick={() => setShowDetallesRemolque(false)}>Cerrar</Button>
                 </div>
               </div>
@@ -2968,7 +3196,7 @@ export default function RemolquesPage() {
           <DialogContent className="max-w-4xl w-full max-h-[90vh]">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
-                <Image className="w-5 h-5" />
+                <ImageIcon className="w-5 h-5" />
                 {imagenPreview?.nombre}
               </DialogTitle>
             </DialogHeader>
@@ -3009,11 +3237,11 @@ export default function RemolquesPage() {
 
         {/* Controles de paginación inferior */}
         {remolquesFiltrados.length > 0 && (
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm text-gray-600">
               Mostrando {Math.min(remolquesFiltrados.length, end) - start} de {remolquesFiltrados.length}
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="hidden sm:flex items-center gap-2 ml-auto">
               <span className="text-sm text-gray-700">
                 Página {page} de {totalPages}
               </span>
@@ -3035,7 +3263,7 @@ export default function RemolquesPage() {
                   Siguiente
                 </Button>
               </div>
-              <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+              <div className="h-5 w-px bg-gray-200 mx-1" />
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-700">Por página:</span>
                 <Select

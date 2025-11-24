@@ -61,9 +61,11 @@ import {
   Save,
   Zap,
   FolderOpen,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
 import { exportOperadoresToExcel, exportOperadorDetalleToExcel } from "./excel-export";
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { supabase, type Operador } from "@/lib/supabase";
 import { formatDateMatamoros, normalizeDate } from '@/lib/date-utils';
@@ -133,6 +135,10 @@ export default function OperadoresPage() {
   // Foto de perfil activa para el modal de detalles
   const [perfilFoto, setPerfilFoto] = useState<any | null>(null);
   const [perfilLoading, setPerfilLoading] = useState(false);
+  const archivosVisibleCount = useMemo(
+    () => documentos.filter((doc) => doc.tipo_mime?.startsWith('image/')).length + (perfilFoto ? 1 : 0),
+    [documentos, perfilFoto]
+  );
   // Ref to keep recently deleted targets to avoid immediate UI re-show (debounce server races)
   const recentlyDeletedRef = useRef<Set<string>>(new Set());
   const RECENTLY_DELETED_TTL = 15 * 1000; // ms to keep suppressed
@@ -145,6 +151,46 @@ export default function OperadoresPage() {
   usuario?: string | null;
   }
   const [comentarios, setComentarios] = useState<ComentarioOperador[]>([]);
+
+  const abrirDetallesCompletos = (operador: Operador) => {
+    setOperadorDetalle(operador);
+    setActiveTab('general');
+    cargarDocumentosOperador(operador.id);
+    setShowDetailsModal(true);
+  };
+
+  const toggleEstadoOperador = async (operador: Operador) => {
+    const nuevoEstado = operador.estado === "activo" ? "inactivo" : "activo";
+    const { error: updateError } = await supabase
+      .from("operadores")
+      .update({
+        estado: nuevoEstado,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", operador.id);
+    if (updateError) {
+      window.alert("Error al actualizar estado del operador");
+      return;
+    }
+    toast({
+      title: nuevoEstado === "activo" ? 'Operador activado correctamente' : 'Operador desactivado correctamente',
+      variant: nuevoEstado === 'activo' ? 'success' : 'destructive',
+    });
+    try {
+      agregarAuditLog(
+        "ACTUALIZAR",
+        "Operadores",
+        `Cambió estado del operador (ID: ${operador.id}) a ${nuevoEstado}`
+      );
+    } catch {}
+    await cargarDatos();
+  };
+
+  const openQuickDetails = (operador: Operador) => {
+    setOperadorQuickDetalle(operador);
+    setQuickTab('general');
+    setShowQuickDetailsModal(true);
+  };
 
   // Helper: parsear fechas "YYYY-MM-DD" (o ISO date-only) como fecha local sin shift por zona horaria
   const parseDateOnlyLocal = (value?: string | null) => {
@@ -187,6 +233,118 @@ export default function OperadoresPage() {
   const [operadorEmbarquesList, setOperadorEmbarquesList] = useState<string[]>([]);
   // Toggle para columnas (2 o 3)
   const [cols, setCols] = useState<2 | 3>(3);
+  const operadorTabsConfig = useMemo(
+    () => [
+      { value: "personal", label: "Personal", shortLabel: "Datos", icon: User },
+      { value: "detalles", label: "Detalles", shortLabel: "Detalles", icon: FileText },
+      { value: "fotografia", label: "Fotografía", shortLabel: "Foto", icon: ImageIcon },
+      { value: "documentos", label: "Documentos", shortLabel: "Docs", icon: IdCard },
+      { value: "licencias", label: "Licencias", shortLabel: "Lic.", icon: Shield },
+      { value: "emergencia", label: "Emergencia", shortLabel: "Emerg.", icon: Contact },
+      { value: "observaciones", label: "Observaciones", shortLabel: "Notas", icon: MessageSquare },
+    ],
+    []
+  );
+  const [operadorFormTab, setOperadorFormTab] = useState("personal");
+  const [operadorTabWindowStart, setOperadorTabWindowStart] = useState(0);
+  const operadorTabsWindowSize = Math.min(4, operadorTabsConfig.length || 0);
+  const operadorVisibleTabs = operadorTabsConfig.slice(
+    operadorTabWindowStart,
+    operadorTabWindowStart + operadorTabsWindowSize
+  );
+  const canSlideOperadorTabsLeft = operadorTabWindowStart > 0;
+  const canSlideOperadorTabsRight =
+    operadorTabWindowStart + operadorTabsWindowSize < operadorTabsConfig.length;
+  const shiftOperadorTabWindow = (direction: "left" | "right") => {
+    if (direction === "left") {
+      setOperadorTabWindowStart((prev) => Math.max(0, prev - 1));
+    } else {
+      setOperadorTabWindowStart((prev) =>
+        Math.min(
+          Math.max(0, operadorTabsConfig.length - operadorTabsWindowSize),
+          prev + 1
+        )
+      );
+    }
+  };
+
+  useEffect(() => {
+    setOperadorTabWindowStart((current) => {
+      const maxStart = Math.max(0, operadorTabsConfig.length - operadorTabsWindowSize);
+      return Math.min(current, maxStart);
+    });
+  }, [operadorTabsConfig.length, operadorTabsWindowSize]);
+
+  useEffect(() => {
+    const currentIndex = operadorTabsConfig.findIndex((tab) => tab.value === operadorFormTab);
+    if (currentIndex === -1) return;
+    setOperadorTabWindowStart((current) => {
+      if (currentIndex < current) return currentIndex;
+      if (currentIndex >= current + operadorTabsWindowSize) {
+        return Math.max(0, currentIndex - operadorTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [operadorFormTab, operadorTabsConfig, operadorTabsWindowSize]);
+
+  useEffect(() => {
+    if (!showModal) {
+      setOperadorFormTab("personal");
+      setOperadorTabWindowStart(0);
+    }
+  }, [showModal]);
+
+  const detalleTabsConfig = useMemo(
+    () => [
+      { value: "general", label: "General", shortLabel: "General", icon: User },
+      { value: "licencias", label: "Licencias", shortLabel: "Licencias", icon: FileText },
+      { value: "contactos", label: "Emergencia", shortLabel: "Contacto", icon: Contact },
+      { value: "documentos", label: "Documentos", shortLabel: "Docs", icon: IdCard },
+      { value: "observaciones", label: "Observaciones", shortLabel: "Notas", icon: MessageSquare },
+      { value: "fotografias", label: "Archivos", shortLabel: "Archivos", icon: FolderOpen },
+    ],
+    []
+  );
+  const [detalleTabWindowStart, setDetalleTabWindowStart] = useState(0);
+  const detalleTabsWindowSize = Math.min(4, detalleTabsConfig.length || 0);
+  const detalleVisibleTabs = detalleTabsConfig.slice(
+    detalleTabWindowStart,
+    detalleTabWindowStart + detalleTabsWindowSize
+  );
+  const canSlideDetalleTabsLeft = detalleTabWindowStart > 0;
+  const canSlideDetalleTabsRight =
+    detalleTabWindowStart + detalleTabsWindowSize < detalleTabsConfig.length;
+  const shiftDetalleTabWindow = (direction: "left" | "right") => {
+    if (direction === "left") {
+      setDetalleTabWindowStart((prev) => Math.max(0, prev - 1));
+    } else {
+      setDetalleTabWindowStart((prev) =>
+        Math.min(
+          Math.max(0, detalleTabsConfig.length - detalleTabsWindowSize),
+          prev + 1
+        )
+      );
+    }
+  };
+
+  useEffect(() => {
+    setDetalleTabWindowStart((current) => {
+      const maxStart = Math.max(0, detalleTabsConfig.length - detalleTabsWindowSize);
+      return Math.min(current, maxStart);
+    });
+  }, [detalleTabsConfig.length, detalleTabsWindowSize]);
+
+  useEffect(() => {
+    const currentIndex = detalleTabsConfig.findIndex((tab) => tab.value === activeTab);
+    if (currentIndex === -1) return;
+    setDetalleTabWindowStart((current) => {
+      if (currentIndex < current) return currentIndex;
+      if (currentIndex >= current + detalleTabsWindowSize) {
+        return Math.max(0, currentIndex - detalleTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [activeTab, detalleTabsConfig, detalleTabsWindowSize]);
   // Foto principal y documentos adicionales (antiguo comportamiento)
   // fotoOperador: archivo único (imagen)
   // documentosBasicos: lista de archivos adicionales (imágenes o PDFs), límite 7
@@ -1648,6 +1806,8 @@ export default function OperadoresPage() {
     } catch (e) {
       setFotoOperadorUrl("");
     }
+    setOperadorFormTab('personal');
+    setOperadorTabWindowStart(0);
     setShowModal(true);
   };
 
@@ -2291,135 +2451,72 @@ export default function OperadoresPage() {
                   } catch {}
                 }
               }}
-              className="flex items-center"
+              className="hidden md:inline-flex items-center"
             >
               <FileSpreadsheet className="h-4 w-4 mr-2" />
               Descargar Reporte
             </Button>
-            <div className="flex items-center space-x-2">
-              {/* Checkpoint button hidden intentionally */}
-
-              <input ref={restoreInputRef} type="file" accept="application/json" className="hidden" onChange={async (e) => {
-                const f = e.target.files?.[0];
-                if (!f) return;
-                try {
-                  setRestoring(true);
-                  const txt = await f.text();
-                  const data = JSON.parse(txt);
-                  // Simple restore strategy: insertar operadores que no existan por id
-                  if (Array.isArray(data.operadores)) {
-                    for (const op of data.operadores) {
-                      try {
-                        // insert or ignore if exists
-                        const { data: existing } = await supabase.from('operadores').select('id').eq('id', op.id).single();
-                        if (!existing) {
-                          await supabase.from('operadores').insert(op);
-                        }
-                      } catch (err) { console.warn('restore operador err', err); }
-                    }
-                  }
-                  // Restaurar documentos: insert metadata rows, no blob
-                  if (Array.isArray(data.documentos)) {
-                    for (const doc of data.documentos) {
-                      try {
-                        const { data: existingDoc } = await supabase.from('documentos_operadores').select('id').eq('id', doc.id).single();
-                        if (!existingDoc) {
-                          // Insert minimal fields
-                          await supabase.from('documentos_operadores').insert({
-                            ...doc,
-                            activo: doc.activo ?? true,
-                          });
-                        }
-                      } catch (err) { console.warn('restore doc err', err); }
-                    }
-                  }
-                  setSuccess('Restauración completada (verifica duplicados)');
-                  await cargarDatos();
-                } catch (err) {
-                  console.error('Error restaurando checkpoint', err);
-                  setError('Error restaurando checkpoint');
-                } finally { setRestoring(false); }
-                // limpiar input
-                (e.target as HTMLInputElement).value = '';
-              }} />
-
-              <Button
-                className="bg-green-600 hover:bg-green-700 text-white"
-                onClick={async () => {
-                  resetForm();
-                  // Asignar automáticamente el siguiente número de operador
-                  const siguienteNumero = await obtenerSiguienteNumeroOperador();
-                  setFormData(prev => ({ ...prev, operator_number: siguienteNumero }));
-                  setShowModal(true);
-                }}
-              >
-                <Plus className="h-4 w-4 mr-2" />
-                Nuevo Operador
-              </Button>
-
-            </div>
           </div>
         </div>
 
-        {/* Estadísticas */}
-        <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 gap-3 px-1 pb-1 sm:grid-cols-2 md:grid-cols-6 md:gap-4 md:px-0 md:pb-0">
           {/* Total Operadores */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Total Operadores
                   </p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-2xl md:text-2xl font-bold text-gray-900">
                     {operadores.length}
                   </p>
                 </div>
-                <Users className="h-8 w-8 text-blue-600" />
+                <Users className="hidden md:block h-8 w-8 text-blue-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
           {/* Operadores Activos */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Operadores Activos
                   </p>
-                  <p className="text-2xl font-bold text-green-600">
+                  <p className="text-2xl md:text-2xl font-bold text-green-600">
                     {operadores.filter((op) => op.estado === "activo").length}
                   </p>
                 </div>
-                <CheckCircle className="h-8 w-8 text-green-600" />
+                <CheckCircle className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
           {/* Operadores Inactivos */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Operadores Inactivos
                   </p>
-                  <p className="text-2xl font-bold text-red-600">
+                  <p className="text-2xl md:text-2xl font-bold text-red-600">
                     {operadores.filter((op) => op.estado === "inactivo").length}
                   </p>
                 </div>
-                <AlertTriangle className="h-8 w-8 text-red-600" />
+                <AlertTriangle className="hidden md:block h-8 w-8 text-red-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
           {/* Licencias por Vencer */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Licencias por Vencer
                   </p>
-                  <p className="text-2xl font-bold text-yellow-600">
+                  <p className="text-2xl md:text-2xl font-bold text-yellow-600">
                     {
                       operadores.filter((op) => {
                           if (!op.fecha_vencimiento_licencia) return false;
@@ -2430,19 +2527,19 @@ export default function OperadoresPage() {
                     }
                   </p>
                 </div>
-                <FileText className="h-8 w-8 text-yellow-600" />
+                <FileText className="hidden md:block h-8 w-8 text-yellow-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
           {/* Aptos Médicos por Vencer */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Aptos Médicos por Vencer
                   </p>
-                  <p className="text-2xl font-bold text-yellow-600">
+                  <p className="text-2xl md:text-2xl font-bold text-yellow-600">
                     {
                       operadores.filter((op) => {
                         if (!op.fecha_vencimiento_apto_medico) return false;
@@ -2453,19 +2550,19 @@ export default function OperadoresPage() {
                     }
                   </p>
                 </div>
-                <AlertTriangle className="h-8 w-8 text-yellow-600" />
+                <AlertTriangle className="hidden md:block h-8 w-8 text-yellow-600 flex-shrink-0 ml-2" />
               </div>
             </CardContent>
           </Card>
           {/* Cumpleaños Próximo */}
           <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-gray-600">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between">
+                <div className="flex-1 min-w-0 text-center md:text-left">
+                  <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
                     Cumpleaños Próximo
                   </p>
-                  <p className="text-2xl font-bold text-purple-600">
+                  <p className="text-2xl md:text-2xl font-bold text-purple-600">
                     {
                       operadores.filter((op) => {
                         if (!op.fecha_nacimiento) return false;
@@ -2479,7 +2576,7 @@ export default function OperadoresPage() {
                     }
                   </p>
                 </div>
-                <Users className="h-8 w-8 text-purple-600" />
+                <Users className="hidden md:block h-8 w-8 text-purple-600 flex-shrink-0 ml-2" />
               </div>
               {/* Solo conteo en próximas 2 semanas; sin lista detallada */}
             </CardContent>
@@ -2504,11 +2601,11 @@ export default function OperadoresPage() {
         {/* Filtros + paginación superior */}
         <Card>
           <CardContent className="pt-6">
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div className="flex items-center space-x-2">
+            <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-center space-x-2 w-full md:max-w-xl">
                 <Search className="h-4 w-4 text-gray-400" />
                 <Input
-                  className="w-72 md:w-96"
+                  className="w-full"
                   placeholder="Buscar por nombre, alias, teléfono o email..."
                   value={searchTerm}
                   onChange={(e) => {
@@ -2516,12 +2613,12 @@ export default function OperadoresPage() {
                     setPage(1);
                   }}
                 />
-              </div>
-              <div className="flex items-center gap-2 ml-auto">
-                <span className="text-sm text-gray-700">
+                </div>
+                <div className="flex flex-wrap items-center gap-2 w-full justify-start md:justify-end">
+                <span className="hidden md:inline text-sm text-gray-700">
                   Página {page} de {totalPages}
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="hidden md:flex items-center gap-1">
                   <Button
                     variant="outline"
                     size="sm"
@@ -2539,9 +2636,51 @@ export default function OperadoresPage() {
                     Siguiente
                   </Button>
                 </div>
-                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                {/* Dropdown columnas */}
-                <div className="flex items-center gap-2">
+                <div className="flex md:hidden items-center gap-2 w-full justify-start">
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setPage((p) => Math.max(1, p - 1))}
+                      disabled={page <= 1}
+                      aria-label="Página anterior"
+                    >
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                      disabled={page >= totalPages}
+                      aria-label="Página siguiente"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <div className="flex items-center gap-1 ml-auto">
+                    <span className="text-xs text-gray-600">Por pág.</span>
+                    <Select
+                      value={String(pageSize)}
+                      onValueChange={(v) => {
+                        const newSize = Number.parseInt(v, 10);
+                        setPageSize(newSize);
+                        setPage(1);
+                      }}
+                    >
+                      <SelectTrigger className="w-24 h-9 text-xs">
+                        <SelectValue placeholder="Páginas" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="6">6</SelectItem>
+                        <SelectItem value="12">12</SelectItem>
+                        <SelectItem value="18">18</SelectItem>
+                        <SelectItem value="24">24</SelectItem>
+                        <SelectItem value="48">48</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+                <div className="hidden md:flex items-center gap-2">
                   <span className="text-sm text-gray-700">Columnas:</span>
                   <Select
                     value={String(cols)}
@@ -2556,8 +2695,8 @@ export default function OperadoresPage() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-                <div className="flex items-center gap-2">
+                <div className="hidden md:block h-5 w-px bg-gray-200" />
+                <div className="hidden md:flex items-center gap-2">
                   <span className="text-sm text-gray-700">Por página:</span>
                   <Select
                     value={String(pageSize)}
@@ -2587,314 +2726,323 @@ export default function OperadoresPage() {
   {/* Lista de operadores en formato de tarjetas (paginada) */}
   {/* Ajuste solicitado: mostrar 2 operadores por fila (limitar a 2 columnas incluso en pantallas grandes) */}
   <div className={`grid grid-cols-1 sm:grid-cols-2 ${cols === 3 ? 'lg:grid-cols-3' : 'lg:grid-cols-2'} gap-6`}>
-          {operadoresPaginados.map((operador) => (
-            <Card
-              key={operador.id}
-              className="hover:shadow-lg transition-shadow duration-200"
-            >
+          {operadoresPaginados.map((operador) => {
+            const hasVisa = Boolean(operador.numero_visa);
+            const hasFast = Boolean(operador.numero_fast);
+            const visaFastGridClass = hasVisa && hasFast ? "grid grid-cols-2 gap-3" : "grid grid-cols-1 gap-3";
+
+            return (
+              <Card
+                key={operador.id}
+                className="hover:shadow-lg transition-shadow duration-200"
+              >
               <CardHeader className="pb-3">
-                <div className="flex items-start space-x-4">
-                  {/* Foto del operador */}
-                  <div className="flex-shrink-0">
-                    <div className="w-16 h-16 bg-gray-100 rounded-full overflow-hidden border-2 border-gray-300">
-                      <img
-                        src={operador.foto_url || "/images/logo-monarca-transparent.png"}
-                        alt={`${operador.nombre} ${operador.apellidos}`}
-                        className={`w-full h-full ${operador.foto_url ? 'object-cover' : 'object-contain p-1 bg-white'}`}
-                        loading="lazy"
-                        onError={(e) => {
-                          e.currentTarget.src = "/images/logo-monarca-transparent.png";
-                          // Ajustar estilo para que el logo no se recorte si falla la foto
-                          e.currentTarget.style.objectFit = 'contain';
-                          e.currentTarget.style.padding = '4px';
-                          e.currentTarget.style.backgroundColor = 'white';
-                        }}
-                      />
+                  <div className="flex flex-wrap gap-3 sm:flex-nowrap sm:items-start sm:gap-4">
+                    <div className="flex items-start gap-4 flex-1 min-w-0">
+                    {/* Foto + nombre */}
+                    <div className="hidden sm:block flex-shrink-0">
+                      <div className="w-16 h-16 bg-gray-100 rounded-full overflow-hidden border-2 border-gray-300">
+                        <img
+                          src={operador.foto_url || "/images/logo-monarca-transparent.png"}
+                          alt={`${operador.nombre} ${operador.apellidos}`}
+                          className={`w-full h-full ${operador.foto_url ? 'object-cover' : 'object-contain p-1 bg-white'}`}
+                          loading="lazy"
+                          onError={(e) => {
+                            e.currentTarget.src = "/images/logo-monarca-transparent.png";
+                            e.currentTarget.style.objectFit = 'contain';
+                            e.currentTarget.style.padding = '4px';
+                            e.currentTarget.style.backgroundColor = 'white';
+                          }}
+                        />
+                      </div>
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="sm:hidden w-full">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-base font-semibold text-gray-900 leading-tight break-words">
+                              {operador.nombre} {operador.apellidos}
+                            </p>
+                            {operador.alias && (
+                              <p className="text-sm font-medium text-blue-600 break-words mt-1">
+                                "{operador.alias}"
+                              </p>
+                            )}
+                            {(operador as any).operator_number && (
+                              <Badge variant="outline" className="mt-1 bg-blue-100 text-blue-800 border-blue-300 text-xs">
+                                {(operador as any).operator_number}
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                            <div className="flex items-center gap-1">
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                title="Detalles completos"
+                                onClick={() => abrirDetallesCompletos(operador)}
+                              >
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="icon"
+                                title={
+                                  operador.estado === "activo"
+                                    ? "Desactivar operador"
+                                    : "Activar operador"
+                                }
+                                onClick={() => toggleEstadoOperador(operador)}
+                              >
+                                {operador.estado === "activo" ? (
+                                  <AlertTriangle className="h-4 w-4 text-red-600" />
+                                ) : (
+                                  <CheckCircle className="h-4 w-4 text-green-600" />
+                                )}
+                              </Button>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="outline" size="icon" title="Eliminar operador">
+                                    <Trash2 className="h-4 w-4" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>
+                                      ¿Eliminar operador?
+                                    </AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Esta acción no se puede deshacer. Se eliminará permanentemente el operador {operador.nombre} {operador.apellidos}.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDelete(operador.id)}
+                                      className="bg-red-600 hover:bg-red-700 text-white"
+                                    >
+                                      Eliminar
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                            <div className="text-xs">{getEstadoBadge(operador.estado)}</div>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="hidden sm:block">
+                        <div className="flex items-start gap-2 mb-1 flex-wrap">
+                          <CardTitle className="text-lg font-semibold text-gray-900 leading-tight break-words">
+                            {operador.nombre} {operador.apellidos}
+                          </CardTitle>
+                        </div>
+                        {operador.alias && (
+                          <p className="text-sm font-medium text-blue-600 break-words">
+                            "{operador.alias}"
+                          </p>
+                        )}
+                        {(operador as any).operator_number && (
+                          <Badge variant="outline" className="mt-1 bg-blue-100 text-blue-800 border-blue-300 text-xs whitespace-nowrap">
+                            {(operador as any).operator_number}
+                          </Badge>
+                        )}
+                      </div>
                     </div>
                   </div>
 
-                  {/* Información y botones */}
-                  <div className="flex-1 min-w-0">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-1">
-                          <CardTitle className="text-lg font-semibold text-gray-900 truncate">
-                            {operador.nombre} {operador.apellidos}
-                          </CardTitle>
-                          {(operador as any).operator_number && (
-                            <Badge variant="outline" className="bg-blue-100 text-blue-800 border-blue-300 text-xs">
-                              {(operador as any).operator_number}
-                            </Badge>
-                          )}
-                        </div>
-                        <div className="flex items-center mb-2 gap-2 min-h-[24px]">
-                          {operador.alias && (
-                            <span className="text-sm font-medium text-blue-600 truncate">
-                              "{operador.alias}"
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      <div className="flex flex-col items-end ml-2">
-                        <div className="flex space-x-1">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title="Detalles completos"
-                          onClick={() => {
-                            setOperadorDetalle(operador);
-                            setActiveTab('general');
-                            cargarDocumentosOperador(operador.id);
-                            setShowDetailsModal(true);
-                          }}
-                          className="px-2"
-                        >
-                          Detalles
-                        </Button>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          title={
-                            operador.estado === "activo"
-                              ? "Desactivar operador"
-                              : "Activar operador"
-                          }
-                          onClick={async () => {
-                            // Cambiar estado (permitido siempre, sin importar embarques asociados)
-                            const nuevoEstado =
-                              operador.estado === "activo"
-                                ? "inactivo"
-                                : "activo";
-                            const { error: updateError } = await supabase
-                              .from("operadores")
-                              .update({
-                                estado: nuevoEstado,
-                                updated_at: new Date().toISOString(),
-                              })
-                              .eq("id", operador.id);
-                            if (updateError) {
-                              window.alert(
-                                "Error al actualizar estado del operador"
-                              );
-                              return;
-                            }
-                            toast({
-                              title: nuevoEstado === "activo" ? 'Operador activado correctamente' : 'Operador desactivado correctamente',
-                              variant: nuevoEstado === 'activo' ? 'success' : 'destructive',
-                            });
-                            // Audit log: cambio de estado
-                            try {
-                              agregarAuditLog(
-                                "ACTUALIZAR",
-                                "Operadores",
-                                `Cambió estado del operador (ID: ${operador.id}) a ${nuevoEstado}`
-                              );
-                            } catch {}
-                            await cargarDatos();
-                          }}
-                        >
-                          {operador.estado === "activo" ? (
-                            <AlertTriangle className="h-4 w-4 text-red-600" />
-                          ) : (
-                            <CheckCircle className="h-4 w-4 text-green-600" />
-                          )}
-                        </Button>
-                        {/* Botón Modificar ocultado según solicitud */}
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="outline" size="sm">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>
-                                ¿Eliminar operador?
-                              </AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Esta acción no se puede deshacer. Se eliminará permanentemente el operador {operador.nombre} {operador.apellidos}.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => handleDelete(operador.id)}
-                                className="bg-red-600 hover:bg-red-700 text-white"
-                              >
-                                Eliminar
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                        </div>
-                        <div className="mt-2">{getEstadoBadge(operador.estado)}</div>
-                      </div>
+                  {/* Botones escritorio */}
+                  <div className="hidden sm:flex flex-col items-end gap-2 sm:ml-2">
+                    <div className="flex space-x-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title="Detalles completos"
+                        className="px-2"
+                        onClick={() => abrirDetallesCompletos(operador)}
+                      >
+                        Detalles
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        title={
+                          operador.estado === "activo"
+                            ? "Desactivar operador"
+                            : "Activar operador"
+                        }
+                        onClick={() => toggleEstadoOperador(operador)}
+                      >
+                        {operador.estado === "activo" ? (
+                          <AlertTriangle className="h-4 w-4 text-red-600" />
+                        ) : (
+                          <CheckCircle className="h-4 w-4 text-green-600" />
+                        )}
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button variant="outline" size="sm">
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>
+                              ¿Eliminar operador?
+                            </AlertDialogTitle>
+                            <AlertDialogDescription>
+                              Esta acción no se puede deshacer. Se eliminará permanentemente el operador {operador.nombre} {operador.apellidos}.
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                            <AlertDialogAction
+                              onClick={() => handleDelete(operador.id)}
+                              className="bg-red-600 hover:bg-red-700 text-white"
+                            >
+                              Eliminar
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
+                    <div className="mt-1 self-end">{getEstadoBadge(operador.estado)}</div>
                   </div>
                 </div>
               </CardHeader>
 
-              <CardContent className="space-y-4">
-                {/* Información de contacto */}
-                <div className="space-y-2">
-                  {operador.telefono && (
-                    <div className="flex items-center space-x-2 text-sm">
-                      <Phone className="h-4 w-4 text-gray-400" />
-                      <span>{operador.telefono}</span>
-                    </div>
-                  )}
-                  {operador.email && (
-                    <div className="flex items-center space-x-2 text-sm">
-                      <Mail className="h-4 w-4 text-gray-400" />
-                      <span className="truncate">{operador.email}</span>
-                    </div>
-                  )}
-                </div>
-
-                {/* Información de documentos principales */}
-                <div className="grid grid-cols-2 gap-3 text-sm">
-                  {operador.licencia && (
-                    <div className="bg-gray-50 p-2 rounded">
-                      <div className="flex items-center space-x-1 mb-1">
-                        <FileText className="h-3 w-3 text-gray-400" />
-                        <span className="font-medium text-xs">Licencia</span>
+                  <CardContent className="pt-0 space-y-3">
+                    <div className="space-y-3 text-sm">
+                      <div className="flex items-center gap-2 text-gray-700">
+                        <Phone className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                        <div className="flex flex-col">
+                          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Teléfono</span>
+                          <span className="text-gray-900">
+                            {operador.telefono?.trim() || "Sin teléfono"}
+                          </span>
+                        </div>
                       </div>
-                      <p className="text-xs text-gray-600 truncate">
-                        {operador.licencia}
-                      </p>
-                      {operador.fecha_vencimiento_licencia && (
-                        <p className="text-xs text-gray-500">
-                          {formatDateMatamoros(operador.fecha_vencimiento_licencia)}
+                      <div className="flex items-center gap-2 text-gray-700">
+                        <Mail className="h-3.5 w-3.5 text-blue-500 flex-shrink-0" />
+                        <div className="flex flex-col min-w-0">
+                          <span className="text-[11px] font-semibold text-gray-500 uppercase tracking-wide">Correo</span>
+                          <span className="text-gray-900 truncate" title={operador.email || undefined}>
+                            {operador.email?.trim() || "Sin correo"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                    {(hasVisa || hasFast) && (
+                      <div className={visaFastGridClass}>
+                        {hasVisa && (
+                          <div className="bg-gray-50 p-2 rounded">
+                            <div className="flex items-center space-x-1 mb-1">
+                              <CheckCircle className="h-3 w-3 text-blue-400" />
+                              <span className="font-medium text-xs">Visa</span>
+                            </div>
+                            <p className="text-xs text-gray-600 truncate">
+                              {operador.numero_visa}
+                            </p>
+                            {operador.fecha_vencimiento_visa && (
+                              <p className="text-xs text-gray-500">
+                                {formatDateMatamoros(operador.fecha_vencimiento_visa)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {hasFast && (
+                          <div className="bg-gray-50 p-2 rounded">
+                            <div className="flex items-center space-x-1 mb-1">
+                              <CheckCircle className="h-3 w-3 text-green-400" />
+                              <span className="font-medium text-xs">FAST</span>
+                            </div>
+                            <p className="text-xs text-gray-600 truncate">
+                              {operador.numero_fast}
+                            </p>
+                            {operador.fecha_vencimiento_fast && (
+                              <p className="text-xs text-gray-500">
+                                {formatDateMatamoros(operador.fecha_vencimiento_fast)}
+                              </p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {operador.fecha_nacimiento && (
+                      <div className="bg-gray-50 p-2 rounded">
+                        <div className="flex items-center space-x-1 mb-1">
+                          <Users className="h-3 w-3 text-blue-400" />
+                          <span className="font-medium text-xs">
+                            Fecha de Nacimiento
+                          </span>
+                        </div>
+                        <p className="text-xs text-gray-600">
+                          {operador.fecha_nacimiento ? formatDateMatamoros(operador.fecha_nacimiento) : '—'}
                         </p>
-                      )}
-                    </div>
-                  )}
-
-                  {operador.tipo_sangre && (
-                    <div className="bg-gray-50 p-2 rounded">
-                      <div className="flex items-center space-x-1 mb-1">
-                        <AlertTriangle className="h-3 w-3 text-red-400" />
-                        <span className="font-medium text-xs">Tipo Sangre</span>
                       </div>
-                      <p className="text-xs text-gray-600">
-                        {operador.tipo_sangre}
-                      </p>
-                    </div>
-                  )}
+                    )}
 
-                  {operador.numero_visa && (
-                    <div className="bg-gray-50 p-2 rounded">
-                      <div className="flex items-center space-x-1 mb-1">
-                        <FileText className="h-3 w-3 text-blue-400" />
-                        <span className="font-medium text-xs">Visa</span>
-                      </div>
-                      <p className="text-xs text-gray-600 truncate">
-                        {operador.numero_visa}
-                      </p>
-                      {operador.fecha_vencimiento_visa && (
-                        <p className="text-xs text-gray-500">
-                          {formatDateMatamoros(operador.fecha_vencimiento_visa)}
-                        </p>
-                      )}
-                    </div>
-                  )}
-
-                  {operador.numero_fast && (
-                    <div className="bg-gray-50 p-2 rounded">
-                      <div className="flex items-center space-x-1 mb-1">
-                        <CheckCircle className="h-3 w-3 text-green-400" />
-                        <span className="font-medium text-xs">FAST</span>
-                      </div>
-                      <p className="text-xs text-gray-600 truncate">
-                        {operador.numero_fast}
-                      </p>
-                      {operador.fecha_vencimiento_fast && (
-                        <p className="text-xs text-gray-500">
-                          {formatDateMatamoros(operador.fecha_vencimiento_fast)}
-                        </p>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Información adicional */}
-                {operador.fecha_nacimiento && (
-                  <div className="bg-gray-50 p-2 rounded">
-                    <div className="flex items-center space-x-1 mb-1">
-                      <Users className="h-3 w-3 text-blue-400" />
-                      <span className="font-medium text-xs">
-                        Fecha de Nacimiento
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-600">
-                      {operador.fecha_nacimiento ? formatDateMatamoros(operador.fecha_nacimiento) : '—'}
-                    </p>
-                  </div>
-                )}
-
-                {/* Observaciones si existen (mostrar solo el texto del comentario, no el id ni JSON crudo) */}
-                {operador.observaciones && (
-                  <div className="bg-gray-50 p-2 rounded">
-                    <p className="text-xs">
-                      <strong>Obs:</strong>{" "}
-                      {(() => {
-                        try {
-                          const raw = operador.observaciones;
-                          let text = "";
-                          if (!raw) text = "";
-                          else if (typeof raw === "string") {
-                            // intentar parsear JSON
+                    {operador.observaciones && (
+                      <div className="bg-gray-50 p-2 rounded">
+                        <p className="text-xs">
+                          <strong>Obs:</strong>{" "}
+                          {(() => {
                             try {
-                              const parsed = JSON.parse(raw);
-                              if (Array.isArray(parsed) && parsed.length > 0) {
+                              const raw = operador.observaciones;
+                              let text = "";
+                              if (!raw) text = "";
+                              else if (typeof raw === "string") {
+                                try {
+                                  const parsed = JSON.parse(raw);
+                                  if (Array.isArray(parsed) && parsed.length > 0) {
                                     const first: any = parsed[0];
                                     text = typeof first === "string" ? first : (first?.texto || first?.text || "");
                                   } else if (typeof parsed === "string") {
-                                text = parsed;
+                                    text = parsed;
+                                  } else {
+                                    text = String(parsed || "");
+                                  }
+                                } catch {
+                                  text = raw;
+                                }
+                              } else if (Array.isArray(raw)) {
+                                const first: any = raw[0];
+                                text = typeof first === "string" ? first : (first?.texto || first?.text || "");
                               } else {
-                                text = String(parsed || "");
+                                text = String(raw);
                               }
-                            } catch {
-                              // no JSON, usar el string tal cual
-                              text = raw;
+
+                              const display = (text || "").trim();
+                              if (!display) return <span className="text-xs text-gray-500">Sin observaciones</span>;
+                              return display.length > 50 ? `${display.substring(0, 50)}...` : display;
+                            } catch (e) {
+                              console.error("Error parseando observaciones en card", e);
+                              const s = String(operador.observaciones || "");
+                              return s.length > 50 ? `${s.substring(0,50)}...` : s;
                             }
-                          } else if (Array.isArray(raw)) {
-                            const first: any = raw[0];
-                            text = typeof first === "string" ? first : (first?.texto || first?.text || "");
-                          } else {
-                            text = String(raw);
-                          }
+                          })()}
+                        </p>
+                      </div>
+                    )}
 
-                          const display = (text || "").trim();
-                          if (!display) return <span className="text-xs text-gray-500">Sin observaciones</span>;
-                          return display.length > 50 ? `${display.substring(0, 50)}...` : display;
-                        } catch (e) {
-                          console.error("Error parseando observaciones en card", e);
-                          const s = String(operador.observaciones || "");
-                          return s.length > 50 ? `${s.substring(0,50)}...` : s;
-                        }
-                      })()}
-                    </p>
-                  </div>
-                )}
-
-                {/* Fecha de registro */}
-                <div className="text-xs text-gray-400 pt-2 border-t">
-                  Registrado:{" "}
-                  {(new Date(operador.fecha_registro)).toLocaleDateString()}
-                </div>
-              </CardContent>
+                    <div className="text-xs text-gray-400 pt-2 border-t">
+                      Registrado:{" "}
+                      {(new Date(operador.fecha_registro)).toLocaleDateString()}
+                    </div>
+                  </CardContent>
             </Card>
-          ))}
+          );
+        })}
         </div>
 
         {/* Controles de paginación inferior */}
         {operadoresFiltrados.length > 0 && (
-          <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             <div className="text-sm text-gray-600">
               Mostrando {Math.min(operadoresFiltrados.length, end) - start} de {operadoresFiltrados.length}
             </div>
-            <div className="flex items-center gap-2 ml-auto">
+            <div className="hidden sm:flex items-center gap-2 ml-auto">
               <span className="text-sm text-gray-700">
                 Página {page} de {totalPages}
               </span>
@@ -2916,7 +3064,7 @@ export default function OperadoresPage() {
                   Siguiente
                 </Button>
               </div>
-              <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+              <div className="h-5 w-px bg-gray-200 mx-1" />
               <div className="flex items-center gap-2">
                 <span className="text-sm text-gray-700">Por página:</span>
                 <Select
@@ -2941,21 +3089,6 @@ export default function OperadoresPage() {
               </div>
             </div>
           </div>
-        )}
-
-        {/* Mensaje cuando no hay operadores */}
-        {operadoresFiltrados.length === 0 && (
-          <Card>
-            <CardContent className="text-center py-8">
-              <Users className="h-12 w-12 mx-auto mb-4 text-gray-400" />
-              <p className="text-gray-500">No se encontraron operadores</p>
-              {searchTerm && (
-                <p className="text-sm text-gray-400 mt-1">
-                  Intenta con otros términos de búsqueda
-                </p>
-              )}
-            </CardContent>
-          </Card>
         )}
       </div>
 
@@ -2984,7 +3117,7 @@ export default function OperadoresPage() {
       {/* Modal de Formulario con Pestañas */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-[92vw] sm:max-w-5xl max-h-[90vh] overflow-hidden">
             <div className="flex justify-between items-start p-6 border-b">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
@@ -3002,7 +3135,7 @@ export default function OperadoresPage() {
                     onClick={rellenarDatosPrueba}
                     variant="outline"
                     size="sm"
-                    className="bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
+                    className="hidden md:inline-flex bg-blue-50 border-blue-300 text-blue-700 hover:bg-blue-100"
                   >
                     <Zap className="h-4 w-4 mr-2" />
                     Datos Prueba
@@ -3020,58 +3153,57 @@ export default function OperadoresPage() {
 
             <div className="overflow-y-auto max-h-[calc(90vh-120px)]">
               <form onSubmit={handleSubmit} className="p-6">
-                <Tabs defaultValue="personal" className="w-full">
-                  <TabsList className="grid w-full grid-cols-6">
-                    <TabsTrigger
-                      value="personal"
-                      className="flex items-center gap-2"
-                    >
-                      <User className="h-4 w-4" />
-                      Personal
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="detalles"
-                      className="flex items-center gap-2"
-                    >
-                      <FileText className="h-4 w-4" />
-                      Detalles
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="fotografia"
-                      className="flex items-center gap-2"
-                    >
-                      <ImageIcon className="h-4 w-4" />
-                      Fotografía
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="documentos"
-                      className="flex items-center gap-2"
-                    >
-                      <IdCard className="h-4 w-4" />
-                      Documentos
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="licencias"
-                      className="flex items-center gap-2"
-                    >
-                      <Shield className="h-4 w-4" />
-                      Licencias
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="emergencia"
-                      className="flex items-center gap-2"
-                    >
-                      <Contact className="h-4 w-4" />
-                      Emergencia
-                    </TabsTrigger>
-                    <TabsTrigger
-                      value="observaciones"
-                      className="flex items-center gap-2"
-                    >
-                      <MessageSquare className="h-4 w-4" />
-                      Observaciones
-                    </TabsTrigger>
-                  </TabsList>
+                <Tabs value={operadorFormTab} onValueChange={setOperadorFormTab} className="w-full">
+                  <div className="border-b border-gray-200 pb-2">
+                    <div className="flex items-center gap-2 sm:hidden">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftOperadorTabWindow("left")}
+                        disabled={!canSlideOperadorTabsLeft}
+                        aria-label="Ver pestañas anteriores"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
+                        {operadorVisibleTabs.map((tab) => {
+                          const Icon = tab.icon;
+                          return (
+                            <TabsTrigger
+                              key={tab.value}
+                              value={tab.value}
+                              className="flex flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                            >
+                              <Icon className="h-3.5 w-3.5 mr-1" />
+                              {tab.shortLabel ?? tab.label}
+                            </TabsTrigger>
+                          );
+                        })}
+                      </TabsList>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftOperadorTabWindow("right")}
+                        disabled={!canSlideOperadorTabsRight}
+                        aria-label="Ver pestañas siguientes"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <TabsList className="hidden sm:grid w-full grid-cols-7">
+                      {operadorTabsConfig.map((tab) => {
+                        const Icon = tab.icon;
+                        return (
+                          <TabsTrigger key={tab.value} value={tab.value} className="flex items-center gap-2">
+                            <Icon className="h-4 w-4" />
+                            {tab.label}
+                          </TabsTrigger>
+                        );
+                      })}
+                    </TabsList>
+                  </div>
 
                   <TabsContent value="personal" className="space-y-4 mt-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -3258,92 +3390,149 @@ export default function OperadoresPage() {
                       <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">Fotografía y Documentos</h3>
                       <p className="text-xs text-gray-500 mb-4">Sube una fotografía principal y hasta 7 documentos adicionales (imágenes o PDFs).</p>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                        <div>
-                          <Label>Fotografía del operador (imagen)</Label>
-                          <div className="mt-2 w-48 h-48 bg-gray-100 rounded overflow-hidden border">
-                            {fotoOperadorUrl ? (
-                              <img src={fotoOperadorUrl} alt="Fotografía" className="w-full h-full object-cover" />
-                            ) : (
-                              <div className="w-full h-full flex items-center justify-center text-gray-400">Sin fotografía</div>
+                        <div className="space-y-4">
+                          <div>
+                            <Label>Fotografía del operador (imagen)</Label>
+                            <div className="mt-2 w-48 h-48 bg-gray-100 rounded overflow-hidden border">
+                              {fotoOperadorUrl ? (
+                                <img src={fotoOperadorUrl} alt="Fotografía" className="w-full h-full object-cover" />
+                              ) : (
+                                <div className="w-full h-full flex items-center justify-center text-gray-400">Sin fotografía</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <label className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-md cursor-pointer hover:bg-blue-100">
+                              <Upload className="h-4 w-4" />
+                              Seleccionar fotografía
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(event) => {
+                                  handleFotoOperadorSelect(event);
+                                  event.target.value = "";
+                                }}
+                              />
+                            </label>
+                            {fotoOperadorUrl && (
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  if (fotoOperadorUrl.startsWith("blob:")) {
+                                    try {
+                                      URL.revokeObjectURL(fotoOperadorUrl);
+                                    } catch (error) {
+                                      console.warn("No se pudo liberar la URL de la fotografía", error);
+                                    }
+                                  }
+                                  setFotoOperador(null);
+                                  setFotoOperadorUrl("");
+                                }}
+                              >
+                                <Trash2 className="h-3.5 w-3.5 mr-1" />
+                                Quitar foto
+                              </Button>
                             )}
                           </div>
-                          <div className="mt-2 flex items-center gap-2">
-                            <input type="file" accept="image/*" onChange={handleFotoOperadorSelect} />
-                            {fotoOperador && (
-                              <Button variant="outline" size="sm" onClick={() => { URL.revokeObjectURL(fotoOperadorUrl); setFotoOperador(null); setFotoOperadorUrl(''); }}>Quitar</Button>
-                            )}
+                          <p className="text-xs text-gray-500">
+                            Formatos permitidos: JPG, PNG, GIF o WEBP. Tamaño máximo 5MB.
+                          </p>
+                        </div>
+
+                        <div className="space-y-4">
+                          <div className="space-y-2">
+                            <Label htmlFor="rfc">RFC</Label>
+                            <Input
+                              id="rfc"
+                              value={formData.rfc}
+                              onChange={(e) => setFormData({ ...formData, rfc: e.target.value })}
+                              placeholder="RFC (opcional)"
+                            />
                           </div>
-                        </div>
-
-                        <div>
-                          <Label>Documentos adicionales (hasta 7)</Label>
-                          <input
-                            type="file"
-                            multiple
-                            accept="image/*,application/pdf"
-                            onChange={handleDocumentosBasicosSelect}
-                            className="mt-2"
-                          />
-                          <div className="mt-3 grid grid-cols-2 gap-2">
-                            {documentosBasicosUrls.map((url, idx) => (
-                              <div key={idx} className="border rounded p-2 bg-gray-50 flex items-center justify-between">
-                                <div className="flex items-center gap-2">
-                                  {documentosBasicos[idx].type.startsWith('image/') ? (
-                                    <img src={url} className="w-12 h-12 object-cover rounded" alt={documentosBasicos[idx].name} />
-                                  ) : (
-                                    <FileText className="w-8 h-8 text-gray-400" />
-                                  )}
-                                  <div className="text-xs">
-                                    <div className="font-medium truncate w-36">{documentosBasicos[idx].name}</div>
-                                    <div className="text-gray-500">{formatFileSize(documentosBasicos[idx].size)}</div>
-                                  </div>
-                                </div>
-                                <div>
-                                  <Button variant="ghost" size="sm" onClick={() => eliminarDocumentoBasico(idx)} className="text-red-600">Eliminar</Button>
-                                </div>
-                              </div>
-                            ))}
+                          <div className="space-y-2">
+                            <Label htmlFor="nss">NSS</Label>
+                            <Input
+                              id="nss"
+                              value={formData.nss}
+                              onChange={(e) => setFormData({ ...formData, nss: e.target.value })}
+                              placeholder="NSS (opcional)"
+                            />
                           </div>
-                        </div>
-                      </div>
+                          <div className="space-y-2">
+                            <Label>Documentos adicionales</Label>
+                            <div className="flex flex-col sm:flex-row gap-2">
+                              <label className="inline-flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 bg-slate-50 border border-slate-200 rounded-md cursor-pointer hover:bg-slate-100">
+                                <FolderOpen className="h-4 w-4" />
+                                Seleccionar archivos
+                                <input
+                                  type="file"
+                                  accept="image/*,application/pdf"
+                                  multiple
+                                  className="hidden"
+                                  onChange={(event) => {
+                                    handleDocumentosBasicosSelect(event);
+                                    event.target.value = "";
+                                  }}
+                                />
+                              </label>
+                              {documentosBasicos.length > 0 && (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => {
+                                    documentosBasicosUrls.forEach((url) => {
+                                      try {
+                                        URL.revokeObjectURL(url);
+                                      } catch (error) {
+                                        console.warn("No se pudo liberar la URL del documento", error);
+                                      }
+                                    });
+                                    setDocumentosBasicos([]);
+                                    setDocumentosBasicosUrls([]);
+                                  }}
+                                >
+                                  Limpiar selección
+                                </Button>
+                              )}
+                            </div>
+                            <p className="text-xs text-gray-500">
+                              Hasta 7 archivos. Cada documento puede ser imagen o PDF (máx. 10MB).
+                            </p>
+                          </div>
 
-                      {(uploadingFoto || uploadingDocumentos) && (
-                        <div className="flex items-center justify-center mt-4 text-sm text-gray-600">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600 mr-2"></div>
-                          Subiendo archivos...
+                          {documentosBasicos.length > 0 && (
+                            <div className="space-y-2">
+                              <p className="text-xs font-medium text-gray-600">
+                                Documentos listos para subir:
+                              </p>
+                              <ul className="space-y-2">
+                                {documentosBasicos.map((doc, index) => (
+                                  <li
+                                    key={`${doc.name}-${index}`}
+                                    className="flex items-center justify-between rounded border px-3 py-2 text-xs bg-gray-50"
+                                  >
+                                    <span className="truncate pr-3">
+                                      {doc.name} ({Math.ceil(doc.size / 1024)} KB)
+                                    </span>
+                                    <Button
+                                      type="button"
+                                      size="sm"
+                                      variant="outline"
+                                      onClick={() => eliminarDocumentoBasico(index)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5 mr-1" />
+                                      Quitar
+                                    </Button>
+                                  </li>
+                                ))}
+                              </ul>
+                            </div>
+                          )}
                         </div>
-                      )}
-                    </div>
-                  </TabsContent>
-
-                  <TabsContent value="documentos" className="space-y-4 mt-6">
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                      <div className="space-y-2">
-                        <Label htmlFor="curp">CURP</Label>
-                        <Input
-                          id="curp"
-                          value={formData.curp}
-                          onChange={(e) => setFormData({ ...formData, curp: e.target.value })}
-                          placeholder="CURP (opcional)"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="rfc">RFC</Label>
-                        <Input
-                          id="rfc"
-                          value={formData.rfc}
-                          onChange={(e) => setFormData({ ...formData, rfc: e.target.value })}
-                          placeholder="RFC (opcional)"
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <Label htmlFor="nss">NSS</Label>
-                        <Input
-                          id="nss"
-                          value={formData.nss}
-                          onChange={(e) => setFormData({ ...formData, nss: e.target.value })}
-                          placeholder="NSS (opcional)"
-                        />
                       </div>
                     </div>
                   </TabsContent>
@@ -3672,39 +3861,42 @@ export default function OperadoresPage() {
                   </TabsContent>
                 </Tabs>
 
-                <div className="flex justify-start space-x-3 pt-6 border-t mt-6">
+                <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 pt-6 border-t mt-6">
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setShowModal(false)}
+                      className="w-full sm:w-auto"
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={saving}
+                      className="w-full sm:w-auto bg-green-600 hover:bg-green-700 text-white"
+                    >
+                      {saving ? (
+                        <>
+                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
+                          Guardando...
+                        </>
+                      ) : (
+                        <>
+                          <Save className="h-4 w-4 mr-2" />
+                          {editingId ? "Actualizar" : "Crear registro"}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <Button
                     type="button"
                     variant="outline"
                     onClick={() => exportOperadoresToExcel(operadores)}
-                    className="flex items-center"
+                    className="hidden md:inline-flex items-center"
                   >
                     <FileSpreadsheet className="h-4 w-4 mr-2" />
                     Descargar Excel
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setShowModal(false)}
-                  >
-                    Cancelar
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={saving}
-                    className="bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    {saving ? (
-                      <>
-                        <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2"></div>
-                        Guardando...
-                      </>
-                    ) : (
-                      <>
-                        <Save className="h-4 w-4 mr-2" />
-                        {editingId ? "Actualizar" : "Crear registro"}
-                      </>
-                    )}
                   </Button>
                 </div>
               </form>
@@ -3716,7 +3908,7 @@ export default function OperadoresPage() {
       {/* Modal de Detalles con Pestañas */}
       {showDetailsModal && operadorDetalle && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+          <div className="bg-white rounded-lg shadow-xl w-full max-w-[95vw] sm:max-w-6xl max-h-[90vh] overflow-hidden flex flex-col">
             <div className="flex justify-between items-center p-6 border-b">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
@@ -3748,27 +3940,56 @@ export default function OperadoresPage() {
                   onValueChange={setActiveTab}
                   className="w-full"
                 >
-                  {/* Se agrega nueva pestaña 'Contactos de Emergencia' */}
-                  <TabsList className="grid w-full grid-cols-6">
-                    <TabsTrigger value="general" className="flex items-center gap-2">
-                      <User className="h-4 w-4" /> General
-                    </TabsTrigger>
-                    <TabsTrigger value="licencias" className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" /> Licencias
-                    </TabsTrigger>
-                    <TabsTrigger value="contactos" className="flex items-center gap-2">
-                      <Contact className="h-4 w-4" /> Contactos de Emergencia
-                    </TabsTrigger>
-                    <TabsTrigger value="documentos" className="flex items-center gap-2">
-                      <IdCard className="h-4 w-4" /> Documentos
-                    </TabsTrigger>
-                    <TabsTrigger value="observaciones" className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" /> Observaciones
-                    </TabsTrigger>
-                    <TabsTrigger value="fotografias" className="flex items-center gap-2">
-                      <FolderOpen className="h-4 w-4" /> Archivos {(documentos.filter(doc => doc.tipo_mime?.startsWith('image/')).length + (perfilFoto ? 1 : 0))}
-                    </TabsTrigger>
-                  </TabsList>
+                  <div className="border-b border-gray-200 pb-2">
+                    <div className="flex items-center gap-2 sm:hidden">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftDetalleTabWindow("left")}
+                        disabled={!canSlideDetalleTabsLeft}
+                        aria-label="Ver pestañas anteriores"
+                      >
+                        <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
+                        {detalleVisibleTabs.map((tab) => (
+                          <TabsTrigger
+                            key={tab.value}
+                            value={tab.value}
+                            className="flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
+                          >
+                            {tab.value === 'fotografias'
+                              ? `${tab.shortLabel ?? tab.label} (${archivosVisibleCount})`
+                              : tab.shortLabel ?? tab.label}
+                          </TabsTrigger>
+                        ))}
+                      </TabsList>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={() => shiftDetalleTabWindow("right")}
+                        disabled={!canSlideDetalleTabsRight}
+                        aria-label="Ver pestañas siguientes"
+                      >
+                        <ChevronRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                    <TabsList className="hidden sm:grid w-full grid-cols-6 gap-2">
+                      {detalleTabsConfig.map((tab) => {
+                        const Icon = tab.icon;
+                        return (
+                          <TabsTrigger key={tab.value} value={tab.value} className="flex items-center justify-center gap-2">
+                            <Icon className="h-4 w-4" />
+                            {tab.value === 'fotografias'
+                              ? `${tab.label} (${archivosVisibleCount})`
+                              : tab.label}
+                          </TabsTrigger>
+                        );
+                      })}
+                    </TabsList>
+                  </div>
                   {/* Tab Contactos de Emergencia */}
                   <TabsContent value="contactos" className="space-y-6 mt-6">
                     <div className="bg-white border rounded-lg p-6">
@@ -3817,7 +4038,7 @@ export default function OperadoresPage() {
                   <TabsContent value="general" className="space-y-6 mt-6">
                     <div className="space-y-8">
                       {/* Identidad y Estado */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6 text-sm">
                         <div>
                           <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Número de Operador</p>
                           <div>
@@ -3855,7 +4076,7 @@ export default function OperadoresPage() {
                       </div>
 
                       {/* Contacto (sin contactos de emergencia) */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-sm">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 text-sm">
                         <div>
                           <p className="text-xs font-semibold tracking-wide text-gray-500 uppercase mb-1">Teléfono</p>
                           <p>{operadorDetalle.telefono || '—'}</p>
@@ -3873,7 +4094,7 @@ export default function OperadoresPage() {
                   {/* Tab Licencias */}
                   <TabsContent value="licencias" className="space-y-4 mt-6 text-base min-h-[220px]">
                     <h4 className="text-base font-semibold text-gray-700 uppercase tracking-wide">Documentos y Vencimientos</h4>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-x-10 gap-y-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-3">
                       <p className="text-base">
                         <span className="font-semibold">Licencia:</span> <span className="font-medium text-gray-800">{operadorDetalle.licencia || '—'}</span>
                         {operadorDetalle.fecha_vencimiento_licencia && (
@@ -4330,6 +4551,8 @@ export default function OperadoresPage() {
                       }
                       setEditingId(op.id);
                       setShowDetailsModal(false);
+                      setOperadorFormTab('personal');
+                      setOperadorTabWindowStart(0);
                       setShowModal(true);
                     }
                   }}
@@ -4337,14 +4560,6 @@ export default function OperadoresPage() {
                 >
                   Editar Operador
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => exportOperadorToExcel(operadorDetalle)}
-                >
-                  Descargar Excel
-                </Button>
-                
                 <Button
                   variant="outline"
                   size="sm"
