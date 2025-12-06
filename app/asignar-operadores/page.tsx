@@ -43,9 +43,11 @@ import {
   MapPin,
   FileText,
   FolderOpen,
+  ChevronDown,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
+import type { ReactNode } from "react";
 import { useToast } from "@/hooks/use-toast";
 import ModalUbicacionOperador from "@/components/ModalUbicacionOperador";
 import { obtenerUltimaUbicacionOperador, UbicacionConOperador } from "@/lib/ubicacion";
@@ -128,6 +130,90 @@ const encontrarTipoFleteFalso = (
 ): Partial<TipoServicio> | undefined => {
   return (tipos || []).find((tipo) => esTipoServicioFleteFalso(tipo));
 };
+
+const getShortPersonName = (nombre?: string | null, apellidos?: string | null): string => {
+  const firstName = (nombre || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+  const firstLastName = (apellidos || "").trim().split(/\s+/).filter(Boolean)[0] || "";
+  const compact = [firstName, firstLastName].filter(Boolean).join(" ");
+  return compact || (nombre || "").trim() || (apellidos || "").trim();
+};
+
+const getShortCamionLabel = (camion?: Partial<Camion> | null): string => {
+  if (!camion) return "";
+  return (camion.numero_economico || camion.placas || "").toString();
+};
+
+const buildDireccionesMultiplesBadge = (
+  embarque: any,
+  options: { className?: string } = {}
+) => {
+  const estado = embarque?.estado || "";
+  const estadosValidos = ["asignado", "listo-para-asignar"];
+  const mostrarBadge = estadosValidos.some((est) => estado.includes(est));
+  if (!mostrarBadge) return null;
+
+  let recolectas: any[] = [];
+  let entregas: any[] = [];
+  try {
+    if ((embarque as any)?.recolectas_json) {
+      recolectas = JSON.parse((embarque as any).recolectas_json);
+    }
+    if ((embarque as any)?.entregas_json) {
+      entregas = JSON.parse((embarque as any).entregas_json);
+    }
+  } catch (e) {
+    const extracted = extraerDireccionesMultiples(embarque?.observaciones || "");
+    recolectas = extracted.recolectas;
+    entregas = extracted.entregas;
+  }
+
+  if (tieneMultiplesDirecciones(recolectas, entregas)) {
+    return (
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help ${
+          options.className || ""
+        }`.trim()}
+        title="Este embarque tiene múltiples direcciones de recolección o entrega"
+      >
+        D. Múltiples
+      </span>
+    );
+  }
+  return null;
+};
+
+const buildContingenciaBadge = (
+  embarque: any,
+  options: { className?: string } = {}
+) => {
+  const analisis = analizarContingencia(embarque?.estado || "");
+  if (analisis.esContingencia && !analisis.esFleteFalso) {
+    return (
+      <span
+        className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200 ${
+          options.className || ""
+        }`.trim()}
+        title="Modificado por contingencia"
+      >
+        🔴 CONTINGENCIA
+      </span>
+    );
+  }
+  return null;
+};
+
+function analizarContingencia(estado: string) {
+  const esContingencia = estado.includes("_contingencia");
+  const esFleteFalso = estado.includes("_contingencia_FF");
+  const estadoBase = estado.replace(/_contingencia_FF$/, "").replace(/_contingencia$/, "");
+
+  return {
+    esContingencia,
+    esFleteFalso,
+    estadoBase,
+    tipoContingencia: esFleteFalso ? "Flete en Falso" : "Modificación general"
+  };
+}
 
 // Función helper para detectar si un embarque tiene múltiples direcciones
 const tieneMultiplesDirecciones = (recolectas: any[], entregas: any[]) => {
@@ -288,6 +374,27 @@ export default function AsignarOperadoresPage() {
   const [highlightId, setHighlightId] = useState<string | null>(null);
   const [showDetailsModal, setShowDetailsModal] = useState(false);
   const [showModifyModal, setShowModifyModal] = useState(false);
+  const [mobileExpandedSections, setMobileExpandedSections] = useState<Record<string, Record<string, boolean>>>(
+    {}
+  );
+  const toggleMobileSection = useCallback((embarqueId: string, section: string) => {
+    setMobileExpandedSections((prev) => {
+      const current = prev[embarqueId] || {};
+      return {
+        ...prev,
+        [embarqueId]: {
+          ...current,
+          [section]: !current[section],
+        },
+      };
+    });
+  }, []);
+  const isMobileSectionExpanded = useCallback(
+    (embarqueId: string, section: string) => {
+      return Boolean(mobileExpandedSections[embarqueId]?.[section]);
+    },
+    [mobileExpandedSections]
+  );
   // Cancelación
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelingEmbarque, setCancelingEmbarque] = useState<Embarque | null>(
@@ -2398,20 +2505,6 @@ export default function AsignarOperadoresPage() {
     setActiveModifyTab("justificacion");
   };
 
-  // 🎯 Función helper para analizar el tipo de contingencia
-  const analizarContingencia = (estado: string) => {
-    const esContingencia = estado.includes('_contingencia');
-    const esFleteFalso = estado.includes('_contingencia_FF');
-    const estadoBase = estado.replace(/_contingencia_FF$/, '').replace(/_contingencia$/, '');
-    
-    return {
-      esContingencia,
-      esFleteFalso,
-      estadoBase,
-      tipoContingencia: esFleteFalso ? 'Flete en Falso' : 'Modificación general'
-    };
-  };
-
   // 🎯 Función helper para verificar si un estado es activo (incluye contingencia)
   const esEstadoActivo = (estado: string) => {
     return estado?.startsWith("listo-para-asignar") || 
@@ -3434,6 +3527,190 @@ export default function AsignarOperadoresPage() {
             const puedeFinalizar = embarque.estado?.startsWith("asignado") || embarque.estado?.startsWith("en-transito");
             const sinOperadorAsignado = !embarque.operador_id;
             const alinearBotonesDerecha = sinOperadorAsignado || puedeFinalizar;
+            const precioFleteVal = Number(embarque.precio_flete) || 0;
+            const monedaFlete = embarque.moneda_flete || "MXN";
+            const quickpaidDescuento = typeof embarque.quickpaid_descuento === "number" ? Number(embarque.quickpaid_descuento) : 0;
+            const quickpaidPercent =
+              typeof embarque.quickpaid_percent === "number" && embarque.quickpaid_percent > 0
+                ? embarque.quickpaid_percent
+                : precioFleteVal > 0 && quickpaidDescuento > 0
+                ? quickpaidDescuento / precioFleteVal
+                : 0;
+            const quickpaidPrecio =
+              typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0
+                ? (embarque as any).precio_quickpaid
+                : precioFleteVal;
+            const servicioDesc = getServiceDisplayName(embarque.tipo_servicio_id || "");
+            const [servicioLine1, servicioLine2] = servicioDesc.split(" - ");
+            const direccionRecolecta = embarque.direccion_recolecta || embarque.origen || "No especificada";
+            const direccionEntrega = embarque.direccion_entrega || embarque.destino || "No especificada";
+            const fechaRecolecta = embarque.fecha_recolecta
+              ? formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta)
+              : "Sin fecha";
+            const fechaEntrega = embarque.fecha_entrega
+              ? formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega)
+              : "Sin fecha";
+            const horaRecolecta = embarque.hora_recolecta || "Sin hora";
+            const horaEntrega = embarque.hora_entrega || "Sin hora";
+            const operadorDisplay = embarque.operador
+              ? getShortPersonName(embarque.operador.nombre, embarque.operador.apellidos)
+              : "Sin asignar";
+            const camionDisplay = getShortCamionLabel(embarque.camion) || "Sin asignar";
+            const remolqueDisplay =
+              embarque.remolque?.numero_economico || embarque.remolque_placa || "Sin asignar";
+            const contenidoTexto = embarque.contenido || "No especificado";
+            const loadNumber = embarque.load_number || "N/A";
+            const cartaPorte = embarque.carta_porte || "Sin asignar";
+            const mobileSections = [
+              {
+                key: "precio",
+                title: "Precio",
+                content: (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs uppercase text-gray-500">Precio Flete</span>
+                      <span className="font-semibold text-green-600">
+                        {precioFleteVal > 0
+                          ? `$${precioFleteVal.toLocaleString("es-MX", {
+                              minimumFractionDigits: 2,
+                              maximumFractionDigits: 2,
+                            })} ${monedaFlete}`
+                          : "Sin definir"}
+                      </span>
+                    </div>
+                    {quickpaidPercent > 0 && (
+                      <div className="flex items-center justify-between text-xs text-yellow-700">
+                        <span>% Descuento</span>
+                        <span>
+                          {(quickpaidPercent * 100).toLocaleString("es-MX", {
+                            maximumFractionDigits: 2,
+                          })}
+                          %
+                        </span>
+                      </div>
+                    )}
+                    {quickpaidDescuento > 0 && (
+                      <div className="flex items-center justify-between text-xs text-yellow-700">
+                        <span>Monto Descuento</span>
+                        <span>
+                          -${quickpaidDescuento.toLocaleString("es-MX", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} {monedaFlete}
+                        </span>
+                      </div>
+                    )}
+                    {(quickpaidPercent > 0 || quickpaidPrecio !== precioFleteVal) && (
+                      <div className="flex items-center justify-between text-xs text-gray-700">
+                        <span>Precio QP</span>
+                        <span>
+                          ${quickpaidPrecio.toLocaleString("es-MX", {
+                            minimumFractionDigits: 2,
+                            maximumFractionDigits: 2,
+                          })} {monedaFlete}
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ),
+              },
+              {
+                key: "tipo-servicio",
+                title: "Tipo de servicio",
+                content: (
+                  <div className="space-y-1">
+                    <span className="block font-semibold text-gray-800">
+                      {servicioLine1 || "No especificado"}
+                    </span>
+                    {servicioLine2 && <span className="block text-gray-700">{servicioLine2}</span>}
+                  </div>
+                ),
+              },
+              {
+                key: "direcciones",
+                title: "Direcciones",
+                content: (
+                  <div className="space-y-3">
+                    <div>
+                      <p className="text-xs uppercase text-gray-500">Recolecta</p>
+                      <p className="text-sm text-gray-800 leading-snug">{direccionRecolecta}</p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                        <span className="px-2 py-0.5 rounded-full border bg-gray-100">{fechaRecolecta}</span>
+                        <span className="px-2 py-0.5 rounded-full border bg-gray-100">{horaRecolecta}</span>
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-gray-500">Entrega</p>
+                      <p className="text-sm text-gray-800 leading-snug">{direccionEntrega}</p>
+                      <div className="mt-1 flex flex-wrap gap-2 text-[11px] text-gray-600">
+                        <span className="px-2 py-0.5 rounded-full border bg-gray-100">{fechaEntrega}</span>
+                        <span className="px-2 py-0.5 rounded-full border bg-gray-100">{horaEntrega}</span>
+                      </div>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "recursos",
+                title: "Recursos asignados",
+                content: (
+                  <div className="space-y-2">
+                    <div>
+                      <p className="text-xs uppercase text-gray-500">Operador</p>
+                      <p className="text-sm text-gray-800 leading-snug">{operadorDisplay}</p>
+                      {embarque.operador?.id && asignadosPorOperador[embarque.operador.id] > 0 && (
+                        <span className="mt-1 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
+                          {asignadosPorOperador[embarque.operador.id]}
+                        </span>
+                      )}
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-gray-500">Tractocamión</p>
+                      <p className="text-sm text-gray-800 leading-snug">{camionDisplay}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs uppercase text-gray-500">Remolque</p>
+                      <p className="text-sm text-gray-800 leading-snug">
+                        {remolqueDisplay}
+                        {embarque.remolque_placa && !embarque.remolque && (
+                          <span className="ml-1 text-[11px] text-blue-600">(Manual)</span>
+                        )}
+                      </p>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "embarque",
+                title: "Embarque",
+                content: (
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between text-sm text-gray-800">
+                      <span className="text-xs uppercase text-gray-500">Load</span>
+                      <span className="font-medium">{loadNumber}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm text-gray-800">
+                      <span className="text-xs uppercase text-gray-500">Carta Porte</span>
+                      <span className="font-medium">{cartaPorte}</span>
+                    </div>
+                  </div>
+                ),
+              },
+              {
+                key: "contenido",
+                title: "Contenido",
+                content: (
+                  <div className="text-sm text-gray-800 leading-snug">
+                    {contenidoTexto}
+                  </div>
+                ),
+              },
+            ];
+            const mobileBadgeElements = [
+              getEstadoBadge(embarque.estado),
+              buildDireccionesMultiplesBadge(embarque),
+              buildContingenciaBadge(embarque),
+            ].filter((badge): badge is ReactNode => Boolean(badge));
             
             return (
               <Card
@@ -3443,7 +3720,7 @@ export default function AsignarOperadoresPage() {
                 ${highlightId === embarque.id ? "ring-2 ring-blue-500" : ""}
                 ${analisisContingencia.esFleteFalso ? "!bg-orange-50 !border-orange-200" : ""}
                 ${analisisContingencia.esContingencia && !analisisContingencia.esFleteFalso ? "!bg-red-50 !border-red-200" : ""}
-                w-full md:w-auto
+                w-full md:w-auto max-w-full overflow-hidden
               `.trim()}
               style={analisisContingencia.esContingencia ? { 
                 backgroundColor: analisisContingencia.esFleteFalso ? '#fff7ed' : '#fef2f2', 
@@ -3661,6 +3938,15 @@ export default function AsignarOperadoresPage() {
                         </span>
                       </div>
                     )}
+                    {mobileBadgeElements.length > 0 && (
+                      <div className="md:hidden mt-2 flex flex-wrap gap-2">
+                        {mobileBadgeElements.map((badge, index) => (
+                          <Fragment key={`mobile-badge-${embarque.id}-${index}`}>
+                            {badge}
+                          </Fragment>
+                        ))}
+                      </div>
+                    )}
                     {/* CardDescription - Solo visible en desktop */}
                     <CardDescription className="hidden md:block">
                       {(() => {
@@ -3674,46 +3960,9 @@ export default function AsignarOperadoresPage() {
                   <div className="hidden md:flex items-center space-x-2">
                     {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1 items-center">
-                      {/* Badge D. Múltiples - Solo mostrar cuando esté asignado o listo para asignar */}
-                      {(() => {
-                        const estado = embarque.estado || '';
-                        const estadosValidos = ['asignado', 'listo-para-asignar'];
-                        const mostrarBadge = estadosValidos.some(est => estado.includes(est));
-                        
-                        if (mostrarBadge) {
-                          // Extraer direcciones múltiples
-                          let recolectas: any[] = [];
-                          let entregas: any[] = [];
-                          
-                          try {
-                            // Intentar JSON primero
-                            if ((embarque as any).recolectas_json) {
-                              recolectas = JSON.parse((embarque as any).recolectas_json);
-                            }
-                            if ((embarque as any).entregas_json) {
-                              entregas = JSON.parse((embarque as any).entregas_json);
-                            }
-                          } catch (e) {
-                            // Si falla JSON, extraer de observaciones
-                            const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
-                            recolectas = extracted.recolectas;
-                            entregas = extracted.entregas;
-                          }
-                          
-                          if (tieneMultiplesDirecciones(recolectas, entregas)) {
-                            return (
-                              <span 
-                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
-                                title="Este embarque tiene múltiples direcciones de recolección o entrega"
-                              >
-                                D. Múltiples
-                              </span>
-                            );
-                          }
-                        }
-                        return null;
-                      })()}
+                      {buildDireccionesMultiplesBadge(embarque)}
                     </div>
+                    {buildContingenciaBadge(embarque)}
                   </div>
                   
                   {/* Botones de acción - Visible en todas las resoluciones */}
@@ -3954,12 +4203,12 @@ export default function AsignarOperadoresPage() {
                           <span className="hidden md:inline">Modificar</span>
                         </Button>
                       )}
-                      {/* Finalizar - order-4, solo "Finalizar" en móvil */}
+                      {/* Finalizar - última acción en móvil */}
                       {puedeFinalizar && (
                         <Button
                           variant="default"
                           size="sm"
-                          className="bg-green-600 hover:bg-green-700 text-white order-4 md:order-7"
+                          className="bg-green-600 hover:bg-green-700 text-white order-10 md:order-7 w-full md:w-auto max-w-[220px] ml-auto md:ml-0 justify-center mt-3 md:mt-0 px-3 py-1.5 md:px-4 md:py-2 text-sm md:text-base"
                           onClick={() => { setEmbarqueAFinalizar(embarque); setShowFinalizarDialog(true); }}
                           disabled={saving}
                         >
@@ -3993,66 +4242,10 @@ export default function AsignarOperadoresPage() {
                     </div>
                 </div>
               </CardHeader>
-              <CardContent className="space-y-2 md:space-y-4 pt-3 md:pt-6 px-3 md:px-6">
-                {/* Badges móvil - Debajo de botones, solo en móvil */}
-                <div className="md:hidden flex flex-wrap gap-2 items-center pb-2 border-b border-gray-200">
-                  {getEstadoBadge(embarque.estado)}
-                  {/* Badge D. Múltiples */}
-                  {(() => {
-                    const estado = embarque.estado || '';
-                    const estadosValidos = ['asignado', 'listo-para-asignar'];
-                    const mostrarBadge = estadosValidos.some(est => estado.includes(est));
-                    
-                    if (mostrarBadge) {
-                      let recolectas: any[] = [];
-                      let entregas: any[] = [];
-                      
-                      try {
-                        if ((embarque as any).recolectas_json) {
-                          recolectas = JSON.parse((embarque as any).recolectas_json);
-                        }
-                        if ((embarque as any).entregas_json) {
-                          entregas = JSON.parse((embarque as any).entregas_json);
-                        }
-                      } catch (e) {
-                        const extracted = extraerDireccionesMultiples(embarque.observaciones || "");
-                        recolectas = extracted.recolectas;
-                        entregas = extracted.entregas;
-                      }
-                      
-                      if (tieneMultiplesDirecciones(recolectas, entregas)) {
-                        return (
-                          <span 
-                            className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
-                            title="Este embarque tiene múltiples direcciones de recolección o entrega"
-                          >
-                            D. Múltiples
-                          </span>
-                        );
-                      }
-                    }
-                    return null;
-                  })()}
-                  {/* Badge Contingencia */}
-                  {(() => {
-                    const analisis = analizarContingencia(embarque.estado || '');
-                    if (analisis.esContingencia && !analisis.esFleteFalso) {
-                      return (
-                        <span
-                          className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold bg-red-100 text-red-800 border border-red-200"
-                          title="Modificado por contingencia"
-                        >
-                          🔴 CONTINGENCIA
-                        </span>
-                      );
-                    }
-                    return null;
-                  })()}
-                </div>
-
+              <CardContent className="space-y-2 md:space-y-4 pt-3 md:pt-6 px-3 md:px-6 overflow-x-hidden">
                 {/* Indicador de modificación si aplica */}
                 {embarque.modificado && (
-                  <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <div className="hidden md:block bg-red-50 border border-red-200 rounded-lg p-4">
                     <div className="flex items-center space-x-2">
                       <AlertTriangle className="h-5 w-5 text-red-600" />
                       <div>
@@ -4073,8 +4266,41 @@ export default function AsignarOperadoresPage() {
                       : "border-gray-200 bg-white"
                   }`}
                 >
+                  <div className="md:hidden p-4 space-y-2">
+                    {mobileSections.map((section) => {
+                      const sectionId = `mobile-section-${section.key}-${embarque.id}`;
+                      const expanded = isMobileSectionExpanded(embarque.id, section.key);
+                      return (
+                        <div
+                          key={section.key}
+                          className="border border-gray-200 rounded-lg bg-white"
+                        >
+                          <button
+                            type="button"
+                            className="flex w-full items-center justify-between px-3 py-2 text-sm font-semibold text-gray-800"
+                            onClick={() => toggleMobileSection(embarque.id, section.key)}
+                            aria-expanded={expanded}
+                            aria-controls={sectionId}
+                          >
+                            <span>{section.title}</span>
+                            <ChevronDown
+                              className={`h-4 w-4 text-gray-500 transition-transform ${expanded ? "rotate-180" : ""}`}
+                            />
+                          </button>
+                          <div
+                            id={sectionId}
+                            className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${expanded ? "max-h-[480px]" : "max-h-0"}`}
+                          >
+                            <div className="px-3 pb-3 text-sm text-gray-700 space-y-2">
+                              {section.content}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                   {isV2 ? (
-                    <div className="p-4">
+                    <div className="hidden md:block p-4">
                       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
                         {/* Columna izquierda: Recursos + Documentación + Tipo de Servicio */}
                         <div className="lg:col-span-4 space-y-4">
@@ -4313,9 +4539,10 @@ export default function AsignarOperadoresPage() {
                       </div>
                     </div>
                   ) : (
-                    <div className="p-4 space-y-4">
+                    <div className="px-4 pb-4 pt-0 md:p-4 md:pt-4 space-y-4">
+                    <div className="space-y-4 hidden md:block">
                     {/* Información General */}
-                    <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-6 gap-4">
                       <div className="space-y-1 col-span-1">
                         <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                           Cliente
@@ -4472,7 +4699,7 @@ export default function AsignarOperadoresPage() {
 
                         <div className="flex flex-col md:flex-row md:items-start w-full gap-4">
                           {/* Grupo izquierdo: Operador, Tractocamión, Remolque */}
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 flex-1">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 flex-1">
                             {/* Operador */}
                             <div className="space-y-1 col-span-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -4542,7 +4769,7 @@ export default function AsignarOperadoresPage() {
 
                           {/* Contenedor derecho: Carta Porte, Load y Contenido (móvil) */}
                           <div className="md:hidden w-full">
-                            <div className="grid grid-cols-2 gap-4 text-left w-full pr-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-left w-full pr-2">
                               <div>
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Carta Porte</label>
                                 <p className="text-sm text-gray-700">{embarque.carta_porte || "Sin asignar"}</p>
@@ -4580,6 +4807,7 @@ export default function AsignarOperadoresPage() {
                         </div>
                       </div>
                     )}
+                    </div>
 
                     {/* Formulario de Asignación */}
                     {embarque.estado?.startsWith("listo-para-asignar") && (
@@ -4592,7 +4820,7 @@ export default function AsignarOperadoresPage() {
                         </div>
 
                         <div className="bg-gray-50 rounded-lg p-4 border">
-                          <div className="grid grid-cols-2 gap-4">
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                             {/* Fila 1: Operador | Precio Flete */}
                             <div className="space-y-2">
                               <Label className="text-sm font-medium text-gray-700">
@@ -4624,21 +4852,26 @@ export default function AsignarOperadoresPage() {
                                     >
                                       <div className="flex items-center justify-between w-full">
                                         <div className="flex items-center gap-2">
-                                          <span>
-                                            {(operador as any).operator_number && (
-                                              <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold mr-2">
-                                                {(operador as any).operator_number}
-                                              </span>
-                                            )}
+                                          {(operador as any).operator_number && (
+                                            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold">
+                                              {(operador as any).operator_number}
+                                            </span>
+                                          )}
+                                          <span className="md:hidden">
+                                            {getShortPersonName(operador.nombre, operador.apellidos) || "Sin nombre"}
+                                          </span>
+                                          <span className="hidden md:inline">
                                             {operador.nombre} {operador.apellidos}
                                           </span>
                                           {asignadosPorOperador[operador.id] > 0 && (
-                                            <span className="ml-2 inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
+                                            <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-orange-300 text-orange-800 text-xs font-semibold">
                                               {asignadosPorOperador[operador.id]}
                                             </span>
                                           )}
                                         </div>
-                                        {getVehicleStatusBadge(operador.estado)}
+                                        <span className="hidden md:inline-flex">
+                                          {getVehicleStatusBadge(operador.estado)}
+                                        </span>
                                       </div>
                                     </SelectItem>
                                   ))}
@@ -4774,17 +5007,23 @@ export default function AsignarOperadoresPage() {
                                         value={camion.id}
                                       >
                                         <div className="flex items-center justify-between w-full">
-                                          <span>
-                                            {camion.numero_economico} -{" "}
-                                            {camion.marca || "Sin marca"}
-                                          </span>
+                                          <div className="flex items-center gap-2">
+                                            <span className="md:hidden">
+                                              {getShortCamionLabel(camion) || "Sin número"}
+                                            </span>
+                                            <span className="hidden md:inline">
+                                              {camion.numero_economico} - {camion.marca || "Sin marca"}
+                                            </span>
+                                          </div>
                                           <div className="flex items-center gap-2 ml-2">
                                             {asignadosPorCamion[camion.id] > 0 && (
                                               <span className="inline-flex items-center justify-center px-2 py-0.5 rounded-full bg-blue-300 text-blue-800 text-xs font-semibold">
                                                 {asignadosPorCamion[camion.id]}
                                               </span>
                                             )}
-                                            {getVehicleStatusBadge(camion.estado)}
+                                            <span className="hidden md:inline-flex">
+                                              {getVehicleStatusBadge(camion.estado)}
+                                            </span>
                                           </div>
                                         </div>
                                       </SelectItem>
@@ -4819,9 +5058,10 @@ export default function AsignarOperadoresPage() {
                                 />
                                 <Label
                                   htmlFor={`quickpaid-enabled-${embarque.id}`}
-                                  className="text-sm font-medium text-gray-700 select-none cursor-pointer"
+                                  className="text-xs md:text-sm font-medium text-gray-700 select-none cursor-pointer flex items-center gap-1"
                                 >
-                                  Aplicar QuickPaid
+                                  <span className="hidden md:inline">Aplicar QuickPaid</span>
+                                  <span className="md:hidden uppercase tracking-wide">QP</span>
                                 </Label>
                                 <Select
                                   value={
