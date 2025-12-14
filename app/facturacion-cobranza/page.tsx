@@ -2471,11 +2471,86 @@ export default function FacturacionCobranzaPage() {
   // Controles de generación aleatoria removidos por requerimiento (sin auto-generar facturas)
 
   const [activeDetailTab, setActiveDetailTab] = useState("general");
-
-  // Fotos (Detalle)
+  // Fotos del modal de detalles (se usa para etiquetar la pestaña, así que debe declararse antes del memo)
   const [fotosDetalle, setFotosDetalle] = useState<FotoEmbarque[]>([]);
   const [loadingFotosDetalle, setLoadingFotosDetalle] = useState(false);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
+
+  const detailTabsConfig = useMemo(() => {
+    const tabs: Array<{ value: string; label: string; tone?: "alert" }> = [
+      { value: "general", label: "Información General" },
+      { value: "entrega", label: "Ubicaciones" },
+      { value: "transportacion", label: "Transportación" },
+      { value: "facturacion", label: "Facturación" },
+      { value: "cliente", label: "Contacto del Cliente" },
+      {
+        value: "modificaciones",
+        label: "Historial de Cambios",
+        tone: embarqueDetalle?.modificadoPorEmergencia ? "alert" : undefined,
+      },
+      { value: "fotos", label: `Fotos (${fotosDetalle.length})` },
+    ];
+    return tabs;
+  }, [embarqueDetalle?.modificadoPorEmergencia, fotosDetalle.length]);
+  const detailTabsCount = detailTabsConfig.length;
+
+  const [detailTabWindowStart, setDetailTabWindowStart] = useState(0);
+  const detailTabsWindowSize = useMemo(() => {
+    const totalTabs = detailTabsCount || 1;
+    const maxVisible = isMobile ? 3 : totalTabs;
+    return Math.max(1, Math.min(maxVisible, totalTabs));
+  }, [detailTabsCount, isMobile]);
+  const detailVisibleTabs = useMemo(
+    () =>
+      detailTabsConfig.slice(
+        detailTabWindowStart,
+        detailTabWindowStart + detailTabsWindowSize
+      ),
+    [detailTabWindowStart, detailTabsWindowSize, detailTabsConfig]
+  );
+  const canSlideDetailTabsLeft = detailTabWindowStart > 0;
+  const canSlideDetailTabsRight =
+    detailTabWindowStart + detailTabsWindowSize < detailTabsCount;
+
+  const shiftDetailTabs = useCallback(
+    (direction: "left" | "right") => {
+      if (direction === "left") {
+        setDetailTabWindowStart((current) => Math.max(0, current - 1));
+      } else {
+        setDetailTabWindowStart((current) =>
+          Math.min(
+            Math.max(0, detailTabsCount - detailTabsWindowSize),
+            current + 1
+          )
+        );
+      }
+    },
+    [detailTabsCount, detailTabsWindowSize]
+  );
+
+  useEffect(() => {
+    setDetailTabWindowStart((current) =>
+      Math.min(
+        current,
+        Math.max(0, detailTabsCount - detailTabsWindowSize)
+      )
+    );
+  }, [detailTabsCount, detailTabsWindowSize]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const activeIndex = detailTabsConfig.findIndex(
+      (tab) => tab.value === activeDetailTab
+    );
+    if (activeIndex === -1) return;
+    setDetailTabWindowStart((current) => {
+      if (activeIndex < current) return activeIndex;
+      if (activeIndex >= current + detailTabsWindowSize) {
+        return Math.max(0, activeIndex - detailTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [activeDetailTab, detailTabsConfig, detailTabsWindowSize, isMobile]);
 
   const cargarFotosDetalle = useCallback(async (embarqueId: string) => {
     if (!embarqueId) return;
@@ -10848,7 +10923,17 @@ export default function FacturacionCobranzaPage() {
         </Dialog>
 
         <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-  <DialogContent className={`max-w-7xl w-full ${activeDetailTab === "modificaciones" ? "h-[70vh]" : activeDetailTab === "transportacion" ? "h-[45vh]" : activeDetailTab === "facturacion" ? "h-[65vh]" : "h-[50vh]"} overflow-hidden flex flex-col`}>
+          <DialogContent
+            className={`w-full max-w-full md:max-w-7xl md:w-full max-h-[90vh] overflow-hidden flex flex-col ${
+              activeDetailTab === "modificaciones"
+                ? "md:h-[70vh]"
+                : activeDetailTab === "transportacion"
+                ? "md:h-[45vh]"
+                : activeDetailTab === "facturacion"
+                ? "md:h-[65vh]"
+                : "md:h-[50vh]"
+            }`}
+          >
             <DialogHeader>
               <DialogTitle>
                 Detalles del Embarque - {embarqueDetalle?.folio}
@@ -10857,78 +10942,87 @@ export default function FacturacionCobranzaPage() {
 
             {embarqueDetalle && (
               <div className="space-y-4 flex-1 overflow-y-auto">
-                <div className="border-b flex items-center justify-between gap-2">
-                  <nav className="-mb-px flex space-x-8" aria-label="Tabs">
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "general"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("general")}
+                <div className="border-b flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-center gap-2 md:hidden">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => shiftDetailTabs("left")}
+                      disabled={!canSlideDetailTabsLeft}
+                      aria-label="Ver pestañas anteriores"
                     >
-                      Información General
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "entrega"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("entrega")}
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="flex-1 overflow-hidden">
+                      <div className="flex gap-2">
+                        {detailVisibleTabs.map((tab) => {
+                          const isActive = activeDetailTab === tab.value;
+                          const baseClasses = tab.tone === "alert"
+                            ? `flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                                isActive
+                                  ? "border-red-500 bg-red-50 text-red-600"
+                                  : "border-red-300 text-red-600"
+                              }`
+                            : `flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium ${
+                                isActive
+                                  ? "border-blue-500 bg-blue-600 text-white"
+                                  : "border-gray-200 text-gray-600"
+                              }`;
+                          return (
+                            <button
+                              key={tab.value}
+                              type="button"
+                              className={baseClasses}
+                              onClick={() => setActiveDetailTab(tab.value)}
+                            >
+                              {tab.tone === "alert" && (
+                                <AlertTriangle className="inline h-3.5 w-3.5 mr-1 align-middle" />
+                              )}
+                              {tab.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => shiftDetailTabs("right")}
+                      disabled={!canSlideDetailTabsRight}
+                      aria-label="Ver pestañas siguientes"
                     >
-                      Ubicaciones
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "transportacion"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("transportacion")}
-                    >
-                      Transportación
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "facturacion"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("facturacion")}
-                    >
-                      Facturación
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "cliente"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("cliente")}
-                    >
-                      Contacto del Cliente
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "modificaciones"
-                          ? "border-red-500 text-red-600"
-                          : "border-transparent text-red-500 hover:text-red-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("modificaciones")}
-                    >
-                      Historial de Cambios
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeDetailTab === "fotos"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveDetailTab("fotos")}
-                    >
-                      Fotos ({fotosDetalle.length})
-                    </button>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <nav className="hidden md:flex -mb-px space-x-8" aria-label="Tabs">
+                    {detailTabsConfig.map((tab) => {
+                      const isActive = activeDetailTab === tab.value;
+                      const baseClasses = tab.tone === "alert"
+                        ? `border-b-2 py-2 px-1 text-sm font-medium ${
+                            isActive
+                              ? "border-red-500 text-red-600"
+                              : "border-transparent text-red-500 hover:text-red-700"
+                          }`
+                        : `border-b-2 py-2 px-1 text-sm font-medium ${
+                            isActive
+                              ? "border-blue-500 text-blue-600"
+                              : "border-transparent text-gray-500 hover:text-gray-700"
+                          }`;
+                      return (
+                        <button
+                          key={tab.value}
+                          className={baseClasses}
+                          onClick={() => setActiveDetailTab(tab.value)}
+                        >
+                          {tab.tone === "alert" && (
+                            <AlertTriangle className="h-4 w-4 inline mr-1" />
+                          )}
+                          {tab.label}
+                        </button>
+                      );
+                    })}
                   </nav>
                   {/* Botón Exportar oculto por solicitud */}
                   {/* <div className="-mb-px">
@@ -10942,110 +11036,105 @@ export default function FacturacionCobranzaPage() {
                   {activeDetailTab === "general" && (
                     <div className="space-y-6">
                       {/* Información del Embarque */}
-                      <div className="space-y-3">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">
+                      <div className="space-y-4 md:space-y-3 border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                        <h3 className="text-lg font-semibold text-gray-900 md:mb-4 md:border-b md:pb-2">
                           Información del Embarque
                         </h3>
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 items-start">
                           {/* Columna izquierda: datos del embarque */}
-                          <div className="space-y-1">
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Folio:</span>
-                              <span>{embarqueDetalle.folio}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Cliente:</span>
-                              <span>{embarqueDetalle.clienteNombre}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Cliente del Embarque:</span>
-                              <span>{(embarqueDetalle as any).dueno_mercancia || "-"}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Load:</span>
-                              <span>{embarqueDetalle.load_number}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Fecha Creación:</span>
-                              <span>
+                          <div className="space-y-3">
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Folio</span>
+                              <span className="text-sm text-gray-900 md:text-base">{embarqueDetalle.folio}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Cliente</span>
+                              <span className="text-sm text-gray-900 md:text-base">{embarqueDetalle.clienteNombre}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Cliente del embarque</span>
+                              <span className="text-sm text-gray-900 md:text-base">{(embarqueDetalle as any).dueno_mercancia || "-"}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Load</span>
+                              <span className="text-sm text-gray-900 md:text-base">{embarqueDetalle.load_number}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Fecha creación</span>
+                              <span className="text-sm text-gray-900 md:text-base">
                                 {new Date(embarqueDetalle.updated_at!).toLocaleDateString()}
                               </span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Carta Porte:</span>
-                              <span>{(embarqueDetalle as any).carta_porte || "-"}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Tipo de Servicio:</span>
-                              <span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Carta porte</span>
+                              <span className="text-sm text-gray-900 md:text-base">{(embarqueDetalle as any).carta_porte || "-"}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Tipo de servicio</span>
+                              <span className="text-sm text-gray-900 md:text-base">
                                 {embarqueDetalle.tipoServicioNombre ||
                                   (tiposServicio.find((t) => t.id === (embarqueDetalle as any).tipo_servicio_id)?.nombre || "Sin especificar")}
                               </span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Contenido:</span>
-                              <span>{(embarqueDetalle as any).contenido || "-"}</span>
-                            </p>
-                            <p className="grid grid-cols-2 text-sm">
-                              <span className="text-gray-500 font-semibold">Observaciones:</span>
-                              <span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Contenido</span>
+                              <span className="text-sm text-gray-900 md:text-base">{(embarqueDetalle as any).contenido || "-"}</span>
+                            </div>
+                            <div className="flex flex-col gap-1 text-sm md:grid md:grid-cols-2 md:gap-2">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">Observaciones</span>
+                              <span className="text-sm text-gray-900 md:text-base">
                                 {embarqueDetalle.comentarios ||
                                   embarqueDetalle.observacionesFacturacion ||
                                   (embarqueDetalle as any).observaciones_facturacion ||
                                   "-"}
                               </span>
-                            </p>
+                            </div>
                           </div>
 
                           {/* Columna derecha: Total facturado grande */}
-                          <div className="flex md:justify-end md:pr-8">
-                            <div className="text-right">
-                              <div className="text-xs font-medium text-gray-500 uppercase tracking-wide">Total Facturado</div>
-                              <div className="text-3xl md:text-4xl font-bold text-blue-600 leading-tight">
+                          <div className="md:pr-8">
+                            <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 text-left md:border-none md:bg-transparent md:p-0 md:text-right">
+                              <div className="text-xs font-medium text-gray-600 uppercase tracking-wide md:text-right">Total facturado</div>
+                              <div className="text-2xl font-bold text-blue-700 leading-tight md:text-4xl">
                                 ${(() => {
                                   const isQuick = (embarqueDetalle as any)?.quickpaid_enabled;
                                   const quick = (embarqueDetalle as any)?.precio_quickpaid;
                                   const base = (embarqueDetalle.cantidad_final_facturada ?? embarqueDetalle.precio_flete ?? 0) as number;
-                                  const amount = isQuick && (typeof quick === 'number' || typeof quick === 'string') ? (typeof quick === 'number' ? quick : Number(quick) || 0) : base;
+                                  const amount = isQuick && (typeof quick === "number" || typeof quick === "string") ? (typeof quick === "number" ? quick : Number(quick) || 0) : base;
                                   return amount.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
                                 })()} {embarqueDetalle.moneda_flete || "MXN"}
                               </div>
-                              <div className="text-xs text-gray-500 mt-1">
+                              <div className="text-xs text-gray-600 mt-1 md:text-right">
                                 {monedaNombre(embarqueDetalle.moneda_flete)}
                               </div>
 
                               {(embarqueDetalle as any).quickpaid_enabled ? (
-                                <div className="mt-4">
-                                  <div className="flex flex-col md:flex-row md:items-start md:justify-end gap-4">
-                                    <div className="text-right md:text-right">
-                                      <p className="text-sm text-gray-500">Monto Flete</p>
-                                      <p className="font-semibold text-gray-900">${((embarqueDetalle.cantidad_final_facturada ?? embarqueDetalle.precio_flete ?? 0) as number).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {embarqueDetalle.moneda_flete || 'MXN'}</p>
-                                      <p className="text-xs text-gray-500 mt-0.5">{monedaNombre(embarqueDetalle.moneda_flete)}</p>
-                                    </div>
-
-                                    <div className="text-right md:text-right">
-                                      <p className="text-sm text-gray-500">Descuento</p>
-                                      {(embarqueDetalle as any).quickpaid_enabled && typeof (embarqueDetalle as any).quickpaid_descuento === 'number' && (embarqueDetalle as any).quickpaid_descuento > 0 ? (
-                                        <>
-                                          <p className="font-semibold text-yellow-700">-${(embarqueDetalle as any).quickpaid_descuento.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                                          <p className="text-xs text-gray-500 mt-0.5">{monedaNombre((embarqueDetalle as any).moneda_flete)}</p>
-                                        </>
-                                      ) : (
-                                        <p className="text-gray-500">-</p>
-                                      )}
-                                    </div>
-
-                                    <div className="text-right md:text-right">
-                                      <p className="text-sm text-gray-500">Precio QuickPaid</p>
-                                      {(embarqueDetalle as any).quickpaid_enabled && typeof (embarqueDetalle as any).precio_quickpaid === 'number' && (embarqueDetalle as any).precio_quickpaid > 0 ? (
-                                        <>
-                                          <p className="font-semibold text-yellow-900">${(embarqueDetalle as any).precio_quickpaid.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
-                                          <p className="text-xs text-gray-500 mt-0.5">{monedaNombre((embarqueDetalle as any).moneda_flete)}</p>
-                                        </>
-                                      ) : (
-                                        <p className="text-gray-500">-</p>
-                                      )}
-                                    </div>
+                                <div className="mt-4 space-y-3">
+                                  <div className="flex items-center justify-between text-sm md:flex-col md:items-end md:text-right">
+                                    <span className="text-gray-500">Monto flete</span>
+                                    <span className="font-semibold text-gray-900">
+                                      ${((embarqueDetalle.cantidad_final_facturada ?? embarqueDetalle.precio_flete ?? 0) as number).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {embarqueDetalle.moneda_flete || "MXN"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm md:flex-col md:items-end md:text-right">
+                                    <span className="text-gray-500">Descuento</span>
+                                    {(embarqueDetalle as any).quickpaid_enabled && typeof (embarqueDetalle as any).quickpaid_descuento === "number" && (embarqueDetalle as any).quickpaid_descuento > 0 ? (
+                                      <span className="font-semibold text-yellow-700">
+                                        -${(embarqueDetalle as any).quickpaid_descuento.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-500">-</span>
+                                    )}
+                                  </div>
+                                  <div className="flex items-center justify-between text-sm md:flex-col md:items-end md:text-right">
+                                    <span className="text-gray-500">Precio QuickPaid</span>
+                                    {(embarqueDetalle as any).quickpaid_enabled && typeof (embarqueDetalle as any).precio_quickpaid === "number" && (embarqueDetalle as any).precio_quickpaid > 0 ? (
+                                      <span className="font-semibold text-yellow-900">
+                                        ${(embarqueDetalle as any).precio_quickpaid.toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                      </span>
+                                    ) : (
+                                      <span className="text-gray-500">-</span>
+                                    )}
                                   </div>
                                 </div>
                               ) : null}
@@ -11054,10 +11143,8 @@ export default function FacturacionCobranzaPage() {
                         </div>
                       </div>
 
-                      
-
                       {embarqueDetalle.comentarios && (
-                        <div className="border-t pt-4 mt-4">
+                        <div className="border border-gray-200 rounded-lg bg-white p-4 md:border-t md:border-gray-200 md:rounded-none md:bg-transparent md:p-0 md:pt-4 md:mt-4">
                           <h3 className="font-medium text-gray-900 mb-2">Comentarios</h3>
                           <p className="text-sm text-gray-600">{embarqueDetalle.comentarios}</p>
                         </div>
@@ -11067,27 +11154,24 @@ export default function FacturacionCobranzaPage() {
 
                   {activeDetailTab === "facturacion" && (
                     <div className="space-y-6 flex-1 overflow-y-auto px-1 md:px-4 py-2">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Información de Facturación</h3>
-                      {/* Resumen compacto en una fila + botón editar alineado */}
-                          <div className="flex flex-col md:flex-row md:items-center md:gap-6 text-sm">
-                        <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-1">
-                          <span className="text-gray-500">Valor Facturado</span>
-                          <span className="font-semibold text-gray-900">
-                            ${ getMontoContable(embarqueDetalle).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) } {embarqueDetalle.moneda_flete}
-                            <span className="block text-xs text-gray-500">{monedaNombre(embarqueDetalle.moneda_flete)}</span>
-                          </span>
-                        </div>
-                        <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-1">
-                          <span className="text-gray-500">Estado facturación</span>
-                          <div className="flex items-center">
-                            <Select
-                              value={embarqueDetalle.estado_facturacion || "pendiente_facturacion"}
-                              onValueChange={async (value) => {
+                      <div className="border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                        <h3 className="text-lg font-semibold text-gray-900 mb-3 md:mb-2 md:border-b md:pb-2">Información de Facturación</h3>
+                        <div className="flex flex-col md:flex-row md:items-center md:gap-6 text-sm">
+                          <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-2">
+                            <span className="text-gray-500">Valor facturado</span>
+                            <span className="text-right font-semibold text-gray-900">
+                              ${getMontoContable(embarqueDetalle).toLocaleString("es-MX", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {embarqueDetalle.moneda_flete}
+                              <span className="block text-xs text-gray-500">{monedaNombre(embarqueDetalle.moneda_flete)}</span>
+                            </span>
+                          </div>
+                          <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-2">
+                            <span className="text-gray-500">Estado facturación</span>
+                            <div className="flex items-center">
+                              <Select
+                                value={embarqueDetalle.estado_facturacion || "pendiente_facturacion"}
+                                onValueChange={async (value) => {
                                   try {
-                                    // If user selected 'archivar' from the detalle select,
-                                    // open the confirm dialog for this embarque instead of
-                                    // immediately updating the DB.
-                                    if (value === 'archivar') {
+                                    if (value === "archivar") {
                                       setEmbarqueAArchivar(embarqueDetalle);
                                       setShowConfirmArchivarDialog(true);
                                       return;
@@ -11112,103 +11196,180 @@ export default function FacturacionCobranzaPage() {
                                       .eq("id", embarqueDetalle.id);
                                   } catch (error) {
                                     console.error("Error actualizando estado de facturación:", error);
-                                    toast({ title: 'Error al actualizar el estado de facturación', description: String((error as any)?.message || ''), variant: 'default' });
+                                    toast({ title: "Error al actualizar el estado de facturación", description: String((error as any)?.message || ""), variant: "default" });
                                   }
                                 }}
-                            >
-                              <SelectTrigger className="w-44 h-8">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                <SelectItem value="pendiente_facturacion">Pendiente Facturación</SelectItem>
-                                <SelectItem value="facturado">Facturado</SelectItem>
-                                <SelectItem value="pagado">Pagado</SelectItem>
-                              </SelectContent>
-                            </Select>
+                              >
+                                <SelectTrigger className="w-[180px] h-9">
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="pendiente_facturacion">Pendiente Facturación</SelectItem>
+                                  <SelectItem value="facturado">Facturado</SelectItem>
+                                  <SelectItem value="pagado">Pagado</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
                           </div>
-                        </div>
-                          <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-1">
-                          <span className="text-gray-500">Pago</span>
-                          <span className="flex items-center gap-2">
-                            <Badge variant={embarqueDetalle.pagado ? "default" : "secondary"}>
-                              {embarqueDetalle.pagado ? "Pagado" : "Pendiente"}
-                            </Badge>
-                            <span className="text-xs text-gray-600">
-                              {embarqueDetalle.fecha_pago ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_pago) || (embarqueDetalle as any).fecha_pago) : "Sin fecha"}
+                          <div className="flex-1 flex items-center justify-between md:justify-start md:gap-2 py-2">
+                            <span className="text-gray-500">Pago</span>
+                            <span className="flex items-center gap-2">
+                              <Badge variant={embarqueDetalle.pagado ? "default" : "secondary"}>
+                                {embarqueDetalle.pagado ? "Pagado" : "Pendiente"}
+                              </Badge>
+                              <span className="text-xs text-gray-600">
+                                {embarqueDetalle.fecha_pago
+                                  ? formatDateMatamoros(
+                                      normalizeDate((embarqueDetalle as any).fecha_pago) || (embarqueDetalle as any).fecha_pago
+                                    )
+                                  : "Sin fecha"}
+                              </span>
                             </span>
-                          </span>
-                        </div>
-                        <div className="mt-2 md:mt-0 md:ml-auto">
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            onClick={() => embarqueDetalle && abrirModalFacturacion(embarqueDetalle)}
-                          >
-                            <Edit className="h-4 w-4 mr-2" /> Editar Facturación
-                          </Button>
+                          </div>
+                          <div className="mt-2 md:mt-0 md:ml-auto">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              className="w-full md:w-auto"
+                              onClick={() => embarqueDetalle && abrirModalFacturacion(embarqueDetalle)}
+                            >
+                              <Edit className="h-4 w-4 mr-2" /> Editar facturación
+                            </Button>
+                          </div>
                         </div>
                       </div>
 
                       {(embarqueDetalle as any).quickpaid_enabled && (
-                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Precio Flete</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).precio_flete != null ? `${Number((embarqueDetalle as any).precio_flete).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${(embarqueDetalle as any).moneda_flete || 'MXN'}` : ((embarqueDetalle as any).precioFlete != null ? `${Number((embarqueDetalle as any).precioFlete).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${(embarqueDetalle as any).moneda_flete || 'MXN'}` : '-')}</span><span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Descuento QuickPaid</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).quickpaid_descuento != null ? `-${Number((embarqueDetalle as any).quickpaid_descuento).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${(embarqueDetalle as any).moneda_flete || 'MXN'}` : "-"}</span><span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Precio QuickPaid</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).precio_quickpaid != null ? `${Number((embarqueDetalle as any).precio_quickpaid).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${(embarqueDetalle as any).moneda_flete || 'MXN'}` : "-"}</span><span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span></p>
-                          <div></div>
+                        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                          <p className="flex justify-between md:block">
+                            <span className="text-gray-500">Precio flete</span>
+                            <span className="md:block md:mt-1 font-medium text-gray-900">
+                              {(embarqueDetalle as any).precio_flete != null
+                                ? `${Number((embarqueDetalle as any).precio_flete).toLocaleString("es-MX", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} ${(embarqueDetalle as any).moneda_flete || "MXN"}`
+                                : (embarqueDetalle as any).precioFlete != null
+                                ? `${Number((embarqueDetalle as any).precioFlete).toLocaleString("es-MX", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} ${(embarqueDetalle as any).moneda_flete || "MXN"}`
+                                : "-"}
+                            </span>
+                            <span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span>
+                          </p>
+                          <p className="flex justify-between md:block">
+                            <span className="text-gray-500">Descuento QuickPaid</span>
+                            <span className="md:block md:mt-1 font-medium text-gray-900">
+                              {(embarqueDetalle as any).quickpaid_descuento != null
+                                ? `-${Number((embarqueDetalle as any).quickpaid_descuento).toLocaleString("es-MX", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} ${(embarqueDetalle as any).moneda_flete || "MXN"}`
+                                : "-"}
+                            </span>
+                            <span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span>
+                          </p>
+                          <p className="flex justify-between md:block">
+                            <span className="text-gray-500">Precio QuickPaid</span>
+                            <span className="md:block md:mt-1 font-medium text-gray-900">
+                              {(embarqueDetalle as any).precio_quickpaid != null
+                                ? `${Number((embarqueDetalle as any).precio_quickpaid).toLocaleString("es-MX", {
+                                    minimumFractionDigits: 2,
+                                    maximumFractionDigits: 2,
+                                  })} ${(embarqueDetalle as any).moneda_flete || "MXN"}`
+                                : "-"}
+                            </span>
+                            <span className="block text-xs text-gray-500">{monedaNombre((embarqueDetalle as any).moneda_flete)}</span>
+                          </p>
+                          <div className="hidden md:block"></div>
                         </div>
                       )}
 
                       {/* Listado de facturas en filas */}
                       <div className="space-y-3">
-                        {/* Etiqueta 'Facturas (1 a 4)' removida por solicitud */}
-                        <div className="overflow-x-auto">
-                          <table className="min-w-full text-sm">
-                            <thead>
-                              <tr className="bg-gray-100">
-                                <th className="px-2 py-1 text-left">Factura</th>
-                                <th className="px-2 py-1 text-left">Folio</th>
-                                <th className="px-2 py-1 text-left">Referencia</th>
-                                <th className="px-2 py-1 text-left">Fecha envío</th>
-                                <th className="px-2 py-1 text-left">Fecha pago</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {(() => {
-                                // Leer datos desde facturas_json (nueva fuente de verdad)
-                                const facturas = embarqueDetalle?.facturas_json || [];
-                                
-                                const f = [1,2,3,4].map((i) => {
-                                  const factura = facturas[i-1]; // Array es 0-indexed
-                                  const anyDet = embarqueDetalle as any;
-                                  
-                                  return {
-                                    n: i,
-                                    folio: 
-                                      factura?.numero ||
-                                      (anyDet.foliosFactura && anyDet.foliosFactura[`folio${i}`]) ||
-                                      "",
-                                    envio: factura?.fecha_envio || "",
-                                    pago: factura?.fecha_pago || (i === 1 ? anyDet["fecha_pago"] : ""),
-                                    ref: factura?.referencia || "",
-                                  };
-                                });
-                                return f.map((row) => (
-                                  <tr key={row.n} className="border-b">
-                                    <td className="px-2 py-1">Factura {row.n}</td>
-                                    <td className="px-2 py-1">{row.folio || "-"}</td>
-                                    <td className="px-2 py-1">{row.ref || "-"}</td>
-                                    <td className="px-2 py-1">{row.envio ? formatDateMatamoros(normalizeDate(row.envio) || row.envio) : "-"}</td>
-                                    <td className="px-2 py-1">{row.pago ? formatDateMatamoros(normalizeDate(row.pago) || row.pago) : "-"}</td>
-                                  </tr>
-                                ));
-                              })()}
-                            </tbody>
-                          </table>
-                        </div>
+                        {(() => {
+                          const facturas = embarqueDetalle?.facturas_json || [];
+                          const rows = [1, 2, 3, 4].map((i) => {
+                            const factura = facturas[i - 1];
+                            const anyDet = embarqueDetalle as any;
+                            return {
+                              n: i,
+                              folio:
+                                factura?.numero ||
+                                (anyDet.foliosFactura && anyDet.foliosFactura[`folio${i}`]) ||
+                                "",
+                              envio: factura?.fecha_envio || "",
+                              pago: factura?.fecha_pago || (i === 1 ? anyDet["fecha_pago"] : ""),
+                              ref: factura?.referencia || "",
+                            };
+                          });
+
+                          return (
+                            <>
+                              <div className="hidden md:block overflow-x-auto">
+                                <table className="min-w-full text-sm">
+                                  <thead>
+                                    <tr className="bg-gray-100">
+                                      <th className="px-2 py-1 text-left">Factura</th>
+                                      <th className="px-2 py-1 text-left">Folio</th>
+                                      <th className="px-2 py-1 text-left">Referencia</th>
+                                      <th className="px-2 py-1 text-left">Fecha envío</th>
+                                      <th className="px-2 py-1 text-left">Fecha pago</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {rows.map((row) => (
+                                      <tr key={row.n} className="border-b">
+                                        <td className="px-2 py-1">Factura {row.n}</td>
+                                        <td className="px-2 py-1">{row.folio || "-"}</td>
+                                        <td className="px-2 py-1">{row.ref || "-"}</td>
+                                        <td className="px-2 py-1">
+                                          {row.envio ? formatDateMatamoros(normalizeDate(row.envio) || row.envio) : "-"}
+                                        </td>
+                                        <td className="px-2 py-1">
+                                          {row.pago ? formatDateMatamoros(normalizeDate(row.pago) || row.pago) : "-"}
+                                        </td>
+                                      </tr>
+                                    ))}
+                                  </tbody>
+                                </table>
+                              </div>
+                              <div className="md:hidden space-y-3">
+                                {rows.map((row) => (
+                                  <div key={row.n} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                                    <div className="flex items-center justify-between text-sm font-semibold text-gray-900">
+                                      <span>Factura {row.n}</span>
+                                      <span>{row.folio || "Sin folio"}</span>
+                                    </div>
+                                    <div className="mt-3 space-y-2 text-sm">
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-500">Referencia</span>
+                                        <span className="text-gray-800">{row.ref || "-"}</span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-500">Fecha envío</span>
+                                        <span className="text-gray-800">
+                                          {row.envio ? formatDateMatamoros(normalizeDate(row.envio) || row.envio) : "-"}
+                                        </span>
+                                      </div>
+                                      <div className="flex justify-between">
+                                        <span className="text-gray-500">Fecha pago</span>
+                                        <span className="text-gray-800">
+                                          {row.pago ? formatDateMatamoros(normalizeDate(row.pago) || row.pago) : "-"}
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
 
                       {(embarqueDetalle.observacionesFacturacion || (embarqueDetalle as any).observaciones_facturacion) && (
-                        <div className="border-t pt-4 mt-2">
+                        <div className="border border-gray-200 rounded-lg bg-white p-4 md:border-t md:border-gray-200 md:rounded-none md:bg-transparent md:p-0 md:pt-4">
                           <h3 className="font-medium text-gray-900 mb-2">Observaciones</h3>
                           <p className="text-sm text-gray-600">
                             {embarqueDetalle.observacionesFacturacion || (embarqueDetalle as any).observaciones_facturacion}
@@ -11221,33 +11382,70 @@ export default function FacturacionCobranzaPage() {
                   {activeDetailTab === "transportacion" && (
                     <div className="space-y-6">
                       {/* Detalles de Operación (movido a este tab) */}
-                      <div className="space-y-3">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Detalles de Operación</h3>
+                      <div className="space-y-4 border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                        <h3 className="text-lg font-semibold text-gray-900 md:mb-2 md:border-b md:pb-2">Detalles de Operación</h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Operador</span><span className="md:block md:mt-1 font-medium text-gray-900">{embarqueDetalle.operadorAsignado?.nombre || "Sin asignar"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Unidad (Tractocamión)</span><span className="md:block md:mt-1 font-medium text-gray-900">{embarqueDetalle.camionAsignado?.numeroEconomico || (embarqueDetalle as any).camion?.numero_economico || "N/A"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Remolque</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).remolque?.numero_economico || (embarqueDetalle as any).remolque_numero_economico || (embarqueDetalle as any).remolque_placa || "N/A"}</span></p>
+                          {[{
+                            label: "Operador",
+                            value: embarqueDetalle.operadorAsignado?.nombre || "Sin asignar",
+                          }, {
+                            label: "Unidad (Tractocamión)",
+                            value:
+                              embarqueDetalle.camionAsignado?.numeroEconomico ||
+                              (embarqueDetalle as any).camion?.numero_economico ||
+                              "N/A",
+                          }, {
+                            label: "Remolque",
+                            value:
+                              (embarqueDetalle as any).remolque?.numero_economico ||
+                              (embarqueDetalle as any).remolque_numero_economico ||
+                              (embarqueDetalle as any).remolque_placa ||
+                              "N/A",
+                          }].map((item) => (
+                            <div key={item.label} className="flex flex-col gap-1 rounded-lg border border-gray-100 bg-gray-50 p-3 md:border-none md:bg-transparent md:p-0 md:flex md:flex-col">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">{item.label}</span>
+                              <span className="text-sm font-medium text-gray-900 md:text-base">{item.value}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
 
                       {/* Información de Transportación */}
-                      <div className="space-y-3">
-                        <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Información de Transportación</h3>
+                      <div className="space-y-4 border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                        <h3 className="text-lg font-semibold text-gray-900 md:mb-2 md:border-b md:pb-2">Información de Transportación</h3>
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Patente Agente Aduana</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).patente_agente_aduanal || "-"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Aduana de Cruce</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).aduana_cruce || "-"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Cliente del Embarque</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).dueno_mercancia || "-"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Contenido</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).contenido || "-"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Peso (kg)</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).peso ?? (embarqueDetalle as any).peso_kg ?? "-"}</span></p>
-                          <p className="flex justify-between md:block"><span className="text-gray-500">Carta Porte</span><span className="md:block md:mt-1 font-medium text-gray-900">{(embarqueDetalle as any).carta_porte || "-"}</span></p>
+                          {[{
+                            label: "Patente Agente Aduana",
+                            value: (embarqueDetalle as any).patente_agente_aduanal || "-",
+                          }, {
+                            label: "Aduana de Cruce",
+                            value: (embarqueDetalle as any).aduana_cruce || "-",
+                          }, {
+                            label: "Cliente del Embarque",
+                            value: (embarqueDetalle as any).dueno_mercancia || "-",
+                          }, {
+                            label: "Contenido",
+                            value: (embarqueDetalle as any).contenido || "-",
+                          }, {
+                            label: "Peso (kg)",
+                            value: (embarqueDetalle as any).peso ?? (embarqueDetalle as any).peso_kg ?? "-",
+                          }, {
+                            label: "Carta Porte",
+                            value: (embarqueDetalle as any).carta_porte || "-",
+                          }].map((item) => (
+                            <div key={item.label} className="flex flex-col gap-1 rounded-lg border border-gray-100 bg-gray-50 p-3 md:border-none md:bg-transparent md:p-0">
+                              <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">{item.label}</span>
+                              <span className="text-sm font-medium text-gray-900 md:text-base">{item.value}</span>
+                            </div>
+                          ))}
                         </div>
                       </div>
                     </div>
                   )}
 
                   {activeDetailTab === "cliente" && (
-                    <div className="space-y-4">
-                      <h3 className="text-lg font-semibold text-gray-900 mb-2 border-b pb-2">Contacto del Cliente</h3>
+                    <div className="space-y-4 border border-gray-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                      <h3 className="text-lg font-semibold text-gray-900 md:mb-2 md:border-b md:pb-2">Contacto del Cliente</h3>
                       {(() => {
                         const c = getClienteById(embarqueDetalle.cliente_id);
                         const anyDet: any = embarqueDetalle;
@@ -11256,13 +11454,33 @@ export default function FacturacionCobranzaPage() {
                         const contactoEmail = anyDet.info_representante?.email || c?.correo || c?.correo_contacto || "";
                         return (
                           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Cliente</span><span className="md:block md:mt-1 font-medium text-gray-900">{c?.nombre || embarqueDetalle.clienteNombre}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">RFC</span><span className="md:block md:mt-1 font-medium text-gray-900">{c?.rfc || "-"}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Divisa de pago</span><span className="md:block md:mt-1 font-medium text-gray-900">{c?.divisa_pago || c?.moneda_preferida || "-"}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Empresa facturadora</span><span className="md:block md:mt-1 font-medium text-gray-900">{c?.empresa_facturadora || c?.razon_social || c?.nombre_comercial || "-"}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Contacto</span><span className="md:block md:mt-1 font-medium text-gray-900">{contactoNombre || "-"}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Teléfono</span><span className="md:block md:mt-1 font-medium text-gray-900">{contactoTel || "-"}</span></p>
-                            <p className="flex justify-between md:block"><span className="text-gray-500">Correo</span><span className="md:block md:mt-1 font-medium text-gray-900">{contactoEmail || "-"}</span></p>
+                            {[{
+                              label: "Cliente",
+                              value: c?.nombre || embarqueDetalle.clienteNombre,
+                            }, {
+                              label: "RFC",
+                              value: c?.rfc || "-",
+                            }, {
+                              label: "Divisa de pago",
+                              value: c?.divisa_pago || c?.moneda_preferida || "-",
+                            }, {
+                              label: "Empresa facturadora",
+                              value: c?.empresa_facturadora || c?.razon_social || c?.nombre_comercial || "-",
+                            }, {
+                              label: "Contacto",
+                              value: contactoNombre || "-",
+                            }, {
+                              label: "Teléfono",
+                              value: contactoTel || "-",
+                            }, {
+                              label: "Correo",
+                              value: contactoEmail || "-",
+                            }].map((item) => (
+                              <div key={item.label} className="flex flex-col gap-1 rounded-lg border border-gray-100 bg-gray-50 p-3 md:border-none md:bg-transparent md:p-0">
+                                <span className="text-xs font-semibold uppercase text-gray-500 md:text-sm md:normal-case">{item.label}</span>
+                                <span className="text-sm font-medium text-gray-900 md:text-base break-words">{item.value}</span>
+                              </div>
+                            ))}
                           </div>
                         );
                       })()}
@@ -11273,7 +11491,7 @@ export default function FacturacionCobranzaPage() {
                     <div className="space-y-6">
                       <div className="bg-white border rounded-lg p-6">
                         <h3 className="text-lg font-semibold text-gray-900 mb-4 border-b pb-2">Direcciones de Recolecta y Entrega</h3>
-                        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                           <div className="space-y-3">
                             <label className="text-sm font-medium text-gray-700">Dirección de Recolecta</label>
                             <div className="bg-gray-50 border rounded-lg p-4">
@@ -11281,7 +11499,7 @@ export default function FacturacionCobranzaPage() {
                                 {(embarqueDetalle as any).direccion_recolecta || (embarqueDetalle as any).direccionRecolecta || "No especificada"}
                               </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
                                 <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_recolecta ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_recolecta) || (embarqueDetalle as any).fecha_recolecta) : "Sin fecha"}</p>
@@ -11299,7 +11517,7 @@ export default function FacturacionCobranzaPage() {
                                 {(embarqueDetalle as any).direccion_entrega || (embarqueDetalle as any).direccionEnganche || "No especificada"}
                               </p>
                             </div>
-                            <div className="grid grid-cols-2 gap-4 mt-3">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
                               <div className="space-y-1">
                                 <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">Fecha</label>
                                 <p className="text-sm text-gray-700">{(embarqueDetalle as any).fecha_entrega ? formatDateMatamoros(normalizeDate((embarqueDetalle as any).fecha_entrega) || (embarqueDetalle as any).fecha_entrega) : ((embarqueDetalle as any).fechaEntrega || "Sin fecha")}</p>
@@ -11376,8 +11594,8 @@ export default function FacturacionCobranzaPage() {
                   )}
 
                   {activeDetailTab === "modificaciones" && (
-                    <div className="space-y-4">
-                      <h3 className="font-medium text-gray-900">
+                    <div className="space-y-4 border border-red-200 rounded-lg bg-white p-4 md:border-none md:bg-transparent md:p-0">
+                      <h3 className="font-medium text-gray-900 mb-2 md:mb-3">
                         Historial de Modificaciones
                       </h3>
                       <ModificacionesHistory embarqueId={embarqueDetalle.id} />
@@ -11400,6 +11618,7 @@ export default function FacturacionCobranzaPage() {
               <Button
                 variant="outline"
                 size="sm"
+                className="hidden md:inline-flex"
                 onClick={exportarDetalleEmbarqueExcel}
                 aria-label="Exportar detalles"
               >
