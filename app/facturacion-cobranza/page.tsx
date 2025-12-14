@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { toast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 
 import { DialogFooter } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
@@ -33,6 +34,7 @@ import {
   FileText,
   Edit,
   AlertTriangle,
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
   Save,
@@ -373,6 +375,7 @@ const ModificacionesHistory = ({ embarqueId }: { embarqueId: string }) => {
                     </div>
                   </div>
                 </div>
+
               )}
 
               {/* Cambio de Tractocamión */}
@@ -666,6 +669,25 @@ export default function FacturacionCobranzaPage() {
   const mounted = useRef(true);
   // Helper: mostrar nombre legible de la moneda en la UI
   const monedaNombre = (code?: string) => (code === "USD" ? "Dólares Americanos" : "Pesos Mexicanos");
+  const isMobile = useIsMobile();
+  const badgeMultiplesLabel = isMobile ? "D. Multip" : "D. Múltiples";
+  const [mobileExpandedSections, setMobileExpandedSections] = useState<Record<string, Record<string, boolean>>>({});
+  const toggleMobileSection = useCallback((embarqueId: string, section: string) => {
+    setMobileExpandedSections((prev) => {
+      const current = prev[embarqueId] || {};
+      return {
+        ...prev,
+        [embarqueId]: {
+          ...current,
+          [section]: !current[section],
+        },
+      };
+    });
+  }, []);
+  const isMobileSectionExpanded = useCallback(
+    (embarqueId: string, section: string) => Boolean(mobileExpandedSections[embarqueId]?.[section]),
+    [mobileExpandedSections]
+  );
 
   // Estado para límites de crédito por cliente (usd/mxn) y estado UI por fila (candado, valores como strings)
   const [creditLimits, setCreditLimits] = useState<Record<string, { usd: number; mxn: number }>>({});
@@ -5672,7 +5694,7 @@ export default function FacturacionCobranzaPage() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">
               Facturación / Cobranza
@@ -5682,12 +5704,12 @@ export default function FacturacionCobranzaPage() {
               generar reportes y gestionar facturación
             </p>
           </div>
-          <div className="flex space-x-2">
+          <div className="flex items-center gap-2 flex-wrap w-full md:w-auto justify-end">
             <Dialog
               open={showAnalisisOperadoresModal}
               onOpenChange={setShowAnalisisOperadoresModal}
             >
-              <DialogContent className="max-w-7xl w-[96vw] max-h-[95vh] overflow-y-auto">
+              <DialogContent className="w-full max-w-full md:max-w-7xl md:w-[96vw] max-h-[95vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>
                     Análisis de Operadores - Pagos y Rendimiento
@@ -5697,9 +5719,9 @@ export default function FacturacionCobranzaPage() {
                     por tipo de servicio y gestionar casos de contingencia
                   </DialogDescription>
                 </DialogHeader>
-                <div className="flex flex-wrap justify-between gap-3 mb-4 items-end">
-                  <div className="flex flex-wrap gap-3 items-end">
-                    <div className="flex flex-col">
+                <div className="flex flex-col gap-4 md:flex-row md:flex-wrap md:items-end md:justify-between mb-4">
+                  <div className="flex flex-col gap-3 md:flex-row md:flex-wrap md:items-end">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label className="text-xs text-gray-600 mb-1">
                         Desde
                       </Label>
@@ -5711,10 +5733,10 @@ export default function FacturacionCobranzaPage() {
                           if (analisisError) setAnalisisError(null);
                           // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                         }}
-                        className="w-36"
+                        className="w-full md:w-36"
                       />
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label className="text-xs text-gray-600 mb-1">
                         Hasta
                       </Label>
@@ -5726,10 +5748,10 @@ export default function FacturacionCobranzaPage() {
                           if (analisisError) setAnalisisError(null);
                           // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                         }}
-                        className="w-36"
+                        className="w-full md:w-36"
                       />
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label className="text-xs text-gray-600 mb-1">
                         Operador
                       </Label>
@@ -5766,7 +5788,7 @@ export default function FacturacionCobranzaPage() {
                           // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                           console.log('💡 Presiona el botón "Analizar" para generar el análisis con el operador seleccionado');
                         }}
-                        className="border rounded px-3 py-2 w-56 h-10 text-sm"
+                        className="border rounded px-3 py-2 w-full md:w-56 h-10 text-sm"
                         disabled={loadingEmbarques}
                       >
                         <option value="todos">Todos los operadores</option>
@@ -5790,11 +5812,11 @@ export default function FacturacionCobranzaPage() {
                         )}
                       </select>
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label className="text-xs text-gray-600 mb-1">
                         Periodo
                       </Label>
-                      <div className="flex items-end gap-2">
+                      <div className="flex flex-col gap-2 md:flex-row md:items-end">
                         <select
                           value={periodoAnalisis}
                           onChange={(e) => {
@@ -5803,7 +5825,7 @@ export default function FacturacionCobranzaPage() {
                             setPeriodoActual(val);
                             // No generar análisis automáticamente - esperar a que el usuario presione "Analizar"
                           }}
-                          className="border rounded px-3 py-2 w-56 h-10 text-sm"
+                          className="border rounded px-3 py-2 w-full md:w-56 h-10 text-sm"
                         >
                           <option value="mes">Mes actual</option>
                           <option value="mes_anterior">Mes anterior</option>
@@ -5825,7 +5847,7 @@ export default function FacturacionCobranzaPage() {
                             console.log('🚀 Iniciando análisis manual por solicitud del usuario');
                             generarAnalisisOperadores();
                           }}
-                          className="bg-green-600 hover:bg-green-700 text-white"
+                          className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white"
                           disabled={loadingAnalisis || !fechaInicioAnalisis || !fechaFinAnalisis}
                         >
                           {loadingAnalisis ? 'Analizando...' : 'Analizar'}
@@ -5834,6 +5856,7 @@ export default function FacturacionCobranzaPage() {
                         <Button
                           onClick={exportarAnalisisExcel}
                           variant="outline"
+                          className="hidden md:inline-flex"
                           disabled={
                             !analisisData.embarquesFiltradosAnalisis.length
                           }
@@ -5858,10 +5881,10 @@ export default function FacturacionCobranzaPage() {
                   </div>
                 ) : (
                   <>
-                    <div className="flex items-center justify-between mb-4 gap-3">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-between mb-4 gap-3">
                       <div className="flex items-center gap-2 w-full">
                         <Tabs value={activeAnalisisTab} onValueChange={setActiveAnalisisTab} className="w-full">
-                          <TabsList className="grid w-full grid-cols-3">
+                          <TabsList className="grid w-full grid-cols-1 sm:grid-cols-3">
                             <TabsTrigger value="porOperador">Por Operador</TabsTrigger>
                             <TabsTrigger value="detalle">Detalle</TabsTrigger>
                             <TabsTrigger value="contingencia">Casos de Contingencia</TabsTrigger>
@@ -6014,93 +6037,158 @@ export default function FacturacionCobranzaPage() {
                               })()}
                             </div>
                           </div>
-                          <div className="overflow-x-auto mb-4">
-                            <table className="min-w-full text-sm">
-                              <thead>
-                                <tr className="bg-gray-100">
-                                  <th className="px-2 py-1 text-left min-w-[100px]">
-                                    Operador
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Total Pagos
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Cantidad Embarques
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Correctos
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Cancelados
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Contingencia
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Promedio/Embarque
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(() => {
-                                  const lista =
-                                    analisisData.analisisPorOperador;
-                                  const totalPages = Math.max(
-                                    1,
-                                    Math.ceil(
-                                      lista.length / itemsPerPageAnalisisOp
-                                    )
-                                  );
-                                  const startIndex =
-                                    (currentPageAnalisisOp - 1) *
-                                    itemsPerPageAnalisisOp;
-                                  const endIndex =
-                                    startIndex + itemsPerPageAnalisisOp;
-                                  const pageItems = lista.slice(
-                                    startIndex,
-                                    endIndex
-                                  );
-                                  return pageItems.map((op: any) => (
-                                    <tr key={op.nombre} className="border-b">
-                                      <td className="px-2 py-1">{op.nombre}</td>
-                                      <td className="px-2 py-1 text-center">{`$${op.totalPagos.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                      <td className="px-2 py-1 text-center">
-                                        {op.cantidadEmbarques}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">
-                                        {op.correctos > 0 ? (
-                                          <Badge className="bg-green-100 text-green-800">
-                                            {op.correctos}
-                                          </Badge>
-                                        ) : (
-                                          "0"
-                                        )}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">
-                                        {op.cancelados > 0 ? (
-                                          <Badge className="bg-red-100 text-red-800">
-                                            {op.cancelados}
-                                          </Badge>
-                                        ) : (
-                                          "0"
-                                        )}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">
-                                        {op.embarquesContingencia > 0 ? (
-                                          <Badge variant="destructive">
-                                            {op.embarquesContingencia}
-                                          </Badge>
-                                        ) : (
-                                          "0"
-                                        )}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">{`$${op.promedioPorEmbarque.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
-                                    </tr>
-                                  ));
-                                })()}
-                              </tbody>
-                            </table>
-                          </div>
+                          {(() => {
+                            const lista = analisisData.analisisPorOperador;
+                            const totalPages = Math.max(
+                              1,
+                              Math.ceil(lista.length / itemsPerPageAnalisisOp)
+                            );
+                            const startIndex =
+                              (currentPageAnalisisOp - 1) * itemsPerPageAnalisisOp;
+                            const endIndex = startIndex + itemsPerPageAnalisisOp;
+                            const pageItems = lista.slice(startIndex, endIndex);
+                            return (
+                              <>
+                                <div className="space-y-3 md:hidden">
+                                  {pageItems.map((op: any) => (
+                                    <div
+                                      key={`${op.nombre}-card`}
+                                      className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+                                    >
+                                      <div className="flex flex-col gap-2">
+                                        <div className="flex items-start justify-between gap-3">
+                                          <span className="font-semibold text-gray-900">
+                                            {op.nombre}
+                                          </span>
+                                          <span className="text-xs text-gray-500">
+                                            Embarques: {op.cantidadEmbarques}
+                                          </span>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3 text-xs text-gray-600">
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Total Pagos
+                                            </span>
+                                            <span className="text-sm font-semibold text-gray-900">
+                                              {`$${op.totalPagos.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Pagos Mes Actual
+                                            </span>
+                                            <span className="text-sm font-semibold text-gray-900">
+                                              {`$${op.totalPagosMesActual?.toLocaleString?.('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) ?? op.totalPagosMesActual}`}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Correctos
+                                            </span>
+                                            <span className="inline-flex items-center justify-center rounded-full bg-green-100 px-2 py-0.5 text-sm font-semibold text-green-700">
+                                              {op.correctos}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Cancelados
+                                            </span>
+                                            <span className="inline-flex items-center justify-center rounded-full bg-red-100 px-2 py-0.5 text-sm font-semibold text-red-700">
+                                              {op.cancelados}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Contingencia
+                                            </span>
+                                            <span className="inline-flex items-center justify-center rounded-full bg-rose-100 px-2 py-0.5 text-sm font-semibold text-rose-700">
+                                              {op.embarquesContingencia}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="font-medium text-gray-500 block">
+                                              Promedio/Embarque
+                                            </span>
+                                            <span className="text-sm font-semibold text-gray-900">
+                                              {`$${op.promedioPorEmbarque.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="hidden md:block overflow-x-auto mb-4">
+                                  <table className="min-w-full text-sm">
+                                    <thead>
+                                      <tr className="bg-gray-100">
+                                        <th className="px-2 py-1 text-left min-w-[100px]">
+                                          Operador
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Total Pagos
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Cantidad Embarques
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Correctos
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Cancelados
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Contingencia
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Promedio/Embarque
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {pageItems.map((op: any) => (
+                                        <tr key={op.nombre} className="border-b">
+                                          <td className="px-2 py-1">{op.nombre}</td>
+                                          <td className="px-2 py-1 text-center">{`$${op.totalPagos.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                          <td className="px-2 py-1 text-center">
+                                            {op.cantidadEmbarques}
+                                          </td>
+                                          <td className="px-2 py-1 text-center">
+                                            {op.correctos > 0 ? (
+                                              <Badge className="bg-green-100 text-green-800">
+                                                {op.correctos}
+                                              </Badge>
+                                            ) : (
+                                              "0"
+                                            )}
+                                          </td>
+                                          <td className="px-2 py-1 text-center">
+                                            {op.cancelados > 0 ? (
+                                              <Badge className="bg-red-100 text-red-800">
+                                                {op.cancelados}
+                                              </Badge>
+                                            ) : (
+                                              "0"
+                                            )}
+                                          </td>
+                                          <td className="px-2 py-1 text-center">
+                                            {op.embarquesContingencia > 0 ? (
+                                              <Badge variant="destructive">
+                                                {op.embarquesContingencia}
+                                              </Badge>
+                                            ) : (
+                                              "0"
+                                            )}
+                                          </td>
+                                          <td className="px-2 py-1 text-center">{`$${op.promedioPorEmbarque.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            );
+                          })()}
                           {/* Controles de paginación */}
                           <div className="flex items-center justify-between mt-2">
                             <div className="text-sm text-gray-600">
@@ -6233,114 +6321,202 @@ export default function FacturacionCobranzaPage() {
                               })()}
                             </div>
                           </div>
-                          <div className="overflow-x-auto">
-                            <table className="min-w-full text-sm">
-                              <thead>
-                                <tr className="bg-gray-100">
-                                  <th className="px-2 py-1 text-left min-w-[120px]">
-                                    Folio
-                                  </th>
-                                  <th className="px-2 py-1 text-left">
-                                    Operador
-                                  </th>
-                                  <th className="px-2 py-1 text-left w-56">
-                                    Cliente
-                                  </th>
-                                  <th className="px-2 py-1 text-left">Load</th>
-                                  <th className="px-2 py-1 text-left">Fecha</th>
-                                  <th className="px-2 py-1 text-left min-w-[24px]">
-                                    Tipo Servicio
-                                  </th>
-                                  <th className="px-2 py-1 text-center w-40">
-                                    Pago Operador
-                                  </th>
-                                  <th className="px-2 py-1 text-center w-40">
-                                    Contingencia/Cancelado
-                                  </th>
-                                  <th className="px-2 py-1 text-center">
-                                    Acciones
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody>
-                                {(() => {
-                                  const lista = analisisData.embarquesFiltradosAnalisis || [];
-                                  const startIndex = (currentPageAnalisisDetalle - 1) * itemsPerPageAnalisisDetalle;
-                                  const endIndex = startIndex + itemsPerPageAnalisisDetalle;
-                                  const pageItems = lista.slice(startIndex, endIndex);
-                                  return pageItems.map((e: any) => (
-                                    <tr
-                                      key={`${e.id}-${e.rolContingencia || "normal"}`}
-                                      className="border-b"
-                                    >
-                                      <td className="px-2 py-1 min-w-[120px]">
-                                        <div className="flex items-center gap-2">
-                                          <span className="font-mono">{e.folio}</span>
+                          {(() => {
+                            const lista = analisisData.embarquesFiltradosAnalisis || [];
+                            const startIndex = (currentPageAnalisisDetalle - 1) * itemsPerPageAnalisisDetalle;
+                            const endIndex = startIndex + itemsPerPageAnalisisDetalle;
+                            const pageItems = lista.slice(startIndex, endIndex);
+                            return (
+                              <>
+                                <div className="space-y-3 md:hidden">
+                                  {pageItems.map((e: any) => {
+                                    const monto = Number(e.pago_operador ?? 0);
+                                    const pagoFormateado = `$${(Number.isFinite(monto) ? monto : 0).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                    const fechaAsignacion = e.fechaAsignacion ? new Date(e.fechaAsignacion).toLocaleDateString('es-MX') : '';
+                                    const loadNumber = (e as any).load_number || (e as any).numeroLoad || '';
+                                    const isContingencia = Boolean(e.modificadoPorEmergencia);
+                                    const folioShort = (() => {
+                                      const folio = e.folio || '';
+                                      return folio.includes('-') ? folio.split('-').slice(1).join('-') : folio;
+                                    })();
+                                    return (
+                                      <div
+                                        key={`${e.id}-${e.rolContingencia || 'normal'}-card`}
+                                        className="rounded-lg border border-gray-200 bg-white p-3 shadow-sm"
+                                      >
+                                        <div className="flex flex-wrap items-center justify-between gap-2">
+                                          <div>
+                                            <div className="text-xs uppercase tracking-wide text-gray-500">Folio</div>
+                                            <div className="font-mono text-base font-semibold text-gray-900">{e.folio}</div>
+                                          </div>
+                                          <div className="text-right">
+                                            {isContingencia ? (
+                                              <Badge variant="destructive">{`Contingencia${folioShort ? ` / ${folioShort}` : ''}`}</Badge>
+                                            ) : (
+                                              <span className="text-xs text-gray-500">Sin contingencia</span>
+                                            )}
+                                            {esCancelado(e) && (
+                                              <div className="mt-1 inline-flex items-center rounded-full bg-purple-600 px-2 py-0.5 text-xs font-semibold text-white">
+                                                Cancelado
+                                              </div>
+                                            )}
+                                          </div>
                                         </div>
-                                      </td>
-                                      <td className="px-2 py-1 min-w-[100px] break-words">
-                                        {e.operadorAsignado?.nombre}
-                                      </td>
-                                      <td className="px-2 py-1 w-56 truncate whitespace-nowrap">
-                                        {e.clienteNombre}
-                                      </td>
-                                      <td className="px-2 py-1 font-mono truncate">
-                                        {(e as any).load_number || (e as any).numeroLoad || ""}
-                                      </td>
-                                      <td className="px-2 py-1">
-                                        {e.fechaAsignacion
-                                          ? new Date(e.fechaAsignacion).toLocaleDateString("es-MX")
-                                          : ""}
-                                      </td>
-                                      <td className="px-2 py-1 min-w-[24px] break-words">
-                                        {e.tipoServicioNombre}
-                                      </td>
-                                      <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
-                                        {(() => {
-                                          const monto = Number(e.pago_operador ?? 0);
-                                          const seguro = Number.isFinite(monto) ? monto : 0;
-                                          return `$${seguro.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-                                        })()}
-                                      </td>
-                                      <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
-                                        {(() => {
-                                          const elementos: any[] = [];
-                                          if (e.modificadoPorEmergencia) {
-                                            const folio = e.folio || "";
-                                            const folioShort = folio.includes("-") ? folio.split("-").slice(1).join("-") : folio;
-                                            elementos.push(
-                                              <Badge key="contingencia" variant="destructive">{`Sí${folioShort ? ` / ${folioShort}` : ""}`}</Badge>
-                                            );
-                                          } else {
-                                            elementos.push(<span key="no">No</span>);
-                                          }
-
-                                          if (esCancelado(e)) {
-                                            elementos.push(<span key="sep-cancelado" className="text-gray-400">/</span>);
-                                            elementos.push(<Badge key="cancelado" className="bg-purple-600 text-white">Cancelado</Badge>);
-                                          }
-
-                                          return (<div className="flex items-center justify-center gap-2">{elementos}</div>);
-                                        })()}
-                                      </td>
-                                      <td className="px-2 py-1 text-center">
-                                        <div className="flex items-center gap-2">
+                                        <div className="mt-3 grid grid-cols-1 gap-3 text-sm text-gray-700">
+                                          <div>
+                                            <div className="text-xs text-gray-500">Operador</div>
+                                            <div className="font-medium">{e.operadorAsignado?.nombre || 'Sin asignar'}</div>
+                                          </div>
+                                          <div>
+                                            <div className="text-xs text-gray-500">Cliente</div>
+                                            <div className="font-medium">{e.clienteNombre}</div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                              <div className="text-xs text-gray-500">Load</div>
+                                              <div className="font-mono text-sm text-gray-900">{loadNumber || '-'}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-xs text-gray-500">Fecha</div>
+                                              <div className="text-sm text-gray-900">{fechaAsignacion || '-'}</div>
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <div className="text-xs text-gray-500">Tipo de Servicio</div>
+                                            <div className="font-medium">{e.tipoServicioNombre || 'No especificado'}</div>
+                                          </div>
+                                          <div className="grid grid-cols-2 gap-3">
+                                            <div>
+                                              <div className="text-xs text-gray-500">Pago Operador</div>
+                                              <div className="text-sm font-semibold text-gray-900">{pagoFormateado}</div>
+                                            </div>
+                                            <div>
+                                              <div className="text-xs text-gray-500">Estado</div>
+                                              <div className="text-sm text-gray-900">
+                                                {esCancelado(e) ? 'Cancelado' : (isContingencia ? 'Contingencia' : 'Activo')}
+                                              </div>
+                                            </div>
+                                          </div>
+                                        </div>
+                                        <div className="mt-3 flex flex-col gap-2">
                                           <Button
                                             variant="outline"
                                             size="sm"
                                             onClick={() => verDetallesEmbarque(e)}
-                                            aria-label="Ver detalles"
+                                            className="w-full"
                                           >
-                                            <Eye className="h-4 w-4" aria-hidden="true" />
+                                            <Eye className="mr-2 h-4 w-4" aria-hidden="true" /> Ver detalles
                                           </Button>
                                         </div>
-                                      </td>
-                                    </tr>
-                                  ));
-                                })()}
-                              </tbody>
-                            </table>
-                          </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                                <div className="hidden md:block overflow-x-auto">
+                                  <table className="min-w-full text-sm">
+                                    <thead>
+                                      <tr className="bg-gray-100">
+                                        <th className="px-2 py-1 text-left min-w-[120px]">
+                                          Folio
+                                        </th>
+                                        <th className="px-2 py-1 text-left">
+                                          Operador
+                                        </th>
+                                        <th className="px-2 py-1 text-left w-56">
+                                          Cliente
+                                        </th>
+                                        <th className="px-2 py-1 text-left">Load</th>
+                                        <th className="px-2 py-1 text-left">Fecha</th>
+                                        <th className="px-2 py-1 text-left min-w-[24px]">
+                                          Tipo Servicio
+                                        </th>
+                                        <th className="px-2 py-1 text-center w-40">
+                                          Pago Operador
+                                        </th>
+                                        <th className="px-2 py-1 text-center w-40">
+                                          Contingencia/Cancelado
+                                        </th>
+                                        <th className="px-2 py-1 text-center">
+                                          Acciones
+                                        </th>
+                                      </tr>
+                                    </thead>
+                                    <tbody>
+                                      {pageItems.map((e: any) => (
+                                        <tr
+                                          key={`${e.id}-${e.rolContingencia || 'normal'}`}
+                                          className="border-b"
+                                        >
+                                          <td className="px-2 py-1 min-w-[120px]">
+                                            <div className="flex items-center gap-2">
+                                              <span className="font-mono">{e.folio}</span>
+                                            </div>
+                                          </td>
+                                          <td className="px-2 py-1 min-w-[100px] break-words">
+                                            {e.operadorAsignado?.nombre}
+                                          </td>
+                                          <td className="px-2 py-1 w-56 truncate whitespace-nowrap">
+                                            {e.clienteNombre}
+                                          </td>
+                                          <td className="px-2 py-1 font-mono truncate">
+                                            {(e as any).load_number || (e as any).numeroLoad || ''}
+                                          </td>
+                                          <td className="px-2 py-1">
+                                            {e.fechaAsignacion
+                                              ? new Date(e.fechaAsignacion).toLocaleDateString('es-MX')
+                                              : ''}
+                                          </td>
+                                          <td className="px-2 py-1 min-w-[24px] break-words">
+                                            {e.tipoServicioNombre}
+                                          </td>
+                                          <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
+                                            {(() => {
+                                              const monto = Number(e.pago_operador ?? 0);
+                                              const seguro = Number.isFinite(monto) ? monto : 0;
+                                              return `$${seguro.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                                            })()}
+                                          </td>
+                                          <td className="px-2 py-1 text-center w-40 whitespace-nowrap">
+                                            {(() => {
+                                              const elementos: any[] = [];
+                                              if (e.modificadoPorEmergencia) {
+                                                const folio = e.folio || '';
+                                                const folioShort = folio.includes('-') ? folio.split('-').slice(1).join('-') : folio;
+                                                elementos.push(
+                                                  <Badge key="contingencia" variant="destructive">{`Sí${folioShort ? ` / ${folioShort}` : ''}`}</Badge>
+                                                );
+                                              } else {
+                                                elementos.push(<span key="no">No</span>);
+                                              }
+
+                                              if (esCancelado(e)) {
+                                                elementos.push(<span key="sep-cancelado" className="text-gray-400">/</span>);
+                                                elementos.push(<Badge key="cancelado" className="bg-purple-600 text-white">Cancelado</Badge>);
+                                              }
+
+                                              return (<div className="flex items-center justify-center gap-2">{elementos}</div>);
+                                            })()}
+                                          </td>
+                                          <td className="px-2 py-1 text-center">
+                                            <div className="flex items-center gap-2">
+                                              <Button
+                                                variant="outline"
+                                                size="sm"
+                                                onClick={() => verDetallesEmbarque(e)}
+                                                aria-label="Ver detalles"
+                                              >
+                                                <Eye className="h-4 w-4" aria-hidden="true" />
+                                              </Button>
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              </>
+                            );
+                          })()}
                           {/* Controles de paginación (Detalle) */}
                           <div className="flex items-center justify-between mt-2">
                             <div className="text-sm text-gray-600">
@@ -6497,7 +6673,7 @@ export default function FacturacionCobranzaPage() {
 
                                       {/* División de Pago compacta */}
                                       <div className="flex flex-col md:flex-row md:items-center gap-3 mt-4">
-                                        <div className="flex items-center gap-3">
+                                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                           <div className="text-xs text-gray-500">Original</div>
                                           <Input
                                             type="number"
@@ -6511,12 +6687,12 @@ export default function FacturacionCobranzaPage() {
                                                 handleContingencyPaymentChange(embarque.id, "original", valor);
                                               }
                                             }}
-                                            className="w-24 text-right text-sm"
+                                            className="w-full md:w-24 text-right text-sm"
                                           />
                                         </div>
 
                                         {embarque.operadorReemplazoNombre && (
-                                          <div className="flex items-center gap-3">
+                                          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
                                             <div className="text-xs text-gray-500">Reemplazo</div>
                                             <Input
                                               type="number"
@@ -6530,12 +6706,12 @@ export default function FacturacionCobranzaPage() {
                                                   handleContingencyPaymentChange(embarque.id, "reemplazo", valor);
                                                 }
                                               }}
-                                              className="w-24 text-right text-sm"
+                                              className="w-full md:w-24 text-right text-sm"
                                             />
                                           </div>
                                         )}
 
-                                        <div className="ml-auto text-right">
+                                        <div className="w-full md:w-auto md:ml-auto text-left md:text-right">
                                           <div className="text-sm font-medium">
                                             {(() => {
                                               const orig = operadoresContingencia[embarque.id]?.original || 0;
@@ -6549,7 +6725,7 @@ export default function FacturacionCobranzaPage() {
                                               size="sm"
                                               onClick={() => saveContingencyPayment(embarque)}
                                               disabled={(operadoresContingencia[embarque.id]?.original || 0) <= 0 && (!!embarque.operadorReemplazoNombre ? (operadoresContingencia[embarque.id]?.reemplazo || 0) <= 0 : true)}
-                                              className="bg-green-600 hover:bg-green-700 text-white"
+                                              className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white"
                                             >
                                               <Save className="h-4 w-4 mr-2" />
                                               Guardar
@@ -6807,10 +6983,10 @@ export default function FacturacionCobranzaPage() {
                                         if (embarqueTieneMultiplesDirecciones(embarque)) {
                                           return (
                                             <span 
-                                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help md:ml-2"
                                               title="Este embarque tiene múltiples direcciones de recolección o entrega"
                                             >
-                                              D. Múltiples
+                                              {badgeMultiplesLabel}
                                             </span>
                                           );
                                         }
@@ -6821,7 +6997,7 @@ export default function FacturacionCobranzaPage() {
                                         if (esFleteFalso(embarque)) {
                                           return (
                                             <span 
-                                              className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help md:ml-2"
                                               title="Este embarque está marcado como flete en falso (contingencia)"
                                             >
                                               Flete F.
@@ -6960,6 +7136,7 @@ export default function FacturacionCobranzaPage() {
                           <Button
                             onClick={exportarDesgloseOperadoresExcel}
                             variant="outline"
+                            className="hidden md:inline-flex"
                           >
                             <Download className="h-4 w-4 mr-2" />
                             Descargar Desglose Excel
@@ -7028,7 +7205,7 @@ export default function FacturacionCobranzaPage() {
             open={showArchivadosModal}
             onOpenChange={setShowArchivadosModal}
           >
-            <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="w-full max-w-full md:max-w-7xl md:w-[96vw] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Embarques Archivados</DialogTitle>
                 <DialogDescription>
@@ -7042,8 +7219,8 @@ export default function FacturacionCobranzaPage() {
                 </div>
               ) : (
                 <>
-                  <div className="mb-3 flex flex-col md:flex-row md:items-end gap-2">
-                    <div className="flex-1">
+                  <div className="mb-3 flex flex-col md:flex-row md:items-end gap-3">
+                    <div className="w-full md:flex-1">
                       <Label htmlFor="archivados-search">Buscar</Label>
                       <Input
                         id="archivados-search"
@@ -7055,8 +7232,8 @@ export default function FacturacionCobranzaPage() {
                         }}
                       />
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="flex items-center gap-2 text-sm">
+                    <div className="flex flex-col md:flex-row md:items-end gap-3 w-full md:w-auto">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2 text-sm w-full md:w-auto">
                         <span>Tamaño página</span>
                         <Select
                           value={String(archivadosPageSize)}
@@ -7065,7 +7242,7 @@ export default function FacturacionCobranzaPage() {
                             setArchivadosPage(1);
                           }}
                         >
-                          <SelectTrigger className="w-24">
+                          <SelectTrigger className="w-full md:w-24">
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -7078,10 +7255,73 @@ export default function FacturacionCobranzaPage() {
                       </div>
                       <Button
                         variant="outline"
-                        className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                        className="hidden md:inline-flex border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                         onClick={() => {
                           // Exportar a CSV (etiquetado como Excel) con columnas solicitadas
                           // Columnas: Folio, Cliente, Load, Carta Porte, Fecha Pago, Monto Flete, Divisa, Contingencia, Operador, Tractocamión, Remolque, Fecha Creación (última)
+                          let csv = "Folio,Cliente,Load,Carta Porte,Fecha Pago,Monto Flete,Divisa,Contingencia,Operador,Tractocamión,Remolque,Fecha Creación\n";
+                          archivadosFilteredSorted.forEach((e) => {
+                            const ea: any = e as any;
+                            const currency = ea.moneda_flete || ea.currency || "MXN";
+                            const rawVal =
+                              typeof ea.precioFlete === "number"
+                                ? ea.precioFlete
+                                : typeof ea.precio_flete === "string"
+                                ? Number(ea.precio_flete)
+                                : typeof ea.precio_flete === "number"
+                                ? ea.precio_flete
+                                : 0;
+                            const monto = Number.isFinite(rawVal) ? rawVal : 0;
+                            const cartaPorte = ea.carta_porte || ea.cartaPorte || "";
+                            const load = ea.load_number || ea.numeroLoad || "";
+                            const fechaCreacion = ea.fecha_creacion
+                              ? new Date(ea.fecha_creacion).toLocaleDateString()
+                              : "";
+                            const fechaPago = ea.fecha_pago
+                              ? new Date(ea.fecha_pago).toLocaleDateString()
+                              : "";
+                            const contingencia = (ea.modificadoPorEmergencia || (embarquesModificadosIds || []).includes(e.id)) ? "Sí" : "No";
+                            const operadorNombre = ea.operador
+                              ? `${ea.operador?.nombre || ""} ${ea.operador?.apellidos || ""}`.trim()
+                              : ea.operadorNombre || "";
+                            const tracto = ea.camion?.numero_economico || ea.camionAsignado?.numeroEconomico || "";
+                            const remolque = ea.remolque?.numero_economico || ea.remolque_numero_economico || "";
+                            const row = [
+                              e.folio,
+                              e.clienteNombre,
+                              load,
+                              cartaPorte,
+                              fechaPago,
+                              monto.toFixed(2),
+                              currency,
+                              contingencia,
+                              operadorNombre,
+                              tracto,
+                              remolque,
+                              fechaCreacion,
+                            ]
+                              .map((x) => `"${String(x ?? "").replaceAll('"', '""')}"`)
+                              .join(",");
+                            csv += row + "\n";
+                          });
+                          const blob = new Blob([csv], { type: "text/csv" });
+                          const url = URL.createObjectURL(blob);
+                          const a = document.createElement("a");
+                          a.href = url;
+                          const now = new Date();
+                          const pad = (n: number) => String(n).padStart(2, "0");
+                          const stamp = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}`;
+                          a.download = `embarques_archivados_facturacion_${stamp}.csv`;
+                          a.click();
+                          URL.revokeObjectURL(url);
+                        }}
+                      >
+                        Descargar Excel
+                      </Button>
+                      <Button
+                        variant="outline"
+                        className="md:hidden border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black w-full"
+                        onClick={() => {
                           let csv = "Folio,Cliente,Load,Carta Porte,Fecha Pago,Monto Flete,Divisa,Contingencia,Operador,Tractocamión,Remolque,Fecha Creación\n";
                           archivadosFilteredSorted.forEach((e) => {
                             const ea: any = e as any;
@@ -7190,8 +7430,8 @@ export default function FacturacionCobranzaPage() {
                     </Button>
                   </div>
 
-                  <div className="mb-3 text-sm text-gray-600 flex items-center gap-2">
-                    <span>
+                  <div className="mb-3 text-sm text-gray-600 flex flex-col sm:flex-row sm:items-center gap-2">
+                    <span className="text-center sm:text-left">
                       Mostrando {totalArchivados === 0 ? 0 : startIdx + 1}–{endIdx} 
                       {totalArchivadosReal !== null 
                         ? ` de ${totalArchivadosReal.toLocaleString('es-MX')}` 
@@ -7203,7 +7443,7 @@ export default function FacturacionCobranzaPage() {
                     )}
                   </div>
 
-                  <div className="border rounded-lg overflow-x-auto">
+                  <div className="hidden md:block border rounded-lg overflow-x-auto">
                     <table className="min-w-full text-sm table-fixed">
                       <thead>
                         <tr className="bg-purple-50">
@@ -7260,10 +7500,10 @@ export default function FacturacionCobranzaPage() {
                                     if (embarqueTieneMultiplesDirecciones(embarque)) {
                                       return (
                                         <span 
-                                          className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                          className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help md:ml-2"
                                           title="Este embarque tiene múltiples direcciones de recolección o entrega"
                                         >
-                                          D. Múltiples
+                                          {badgeMultiplesLabel}
                                         </span>
                                       );
                                     }
@@ -7274,7 +7514,7 @@ export default function FacturacionCobranzaPage() {
                                     if (esFleteFalso(embarque)) {
                                       return (
                                         <span 
-                                          className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                          className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help md:ml-2"
                                           title="Este embarque está marcado como flete en falso (contingencia)"
                                         >
                                           Flete F.
@@ -7360,36 +7600,164 @@ export default function FacturacionCobranzaPage() {
                         )}
                       </tbody>
                     </table>
-                    {totalArchivadosPaginas > 1 && (
-                      <div className="flex items-center justify-between p-3 text-sm">
-                        <div>
-                          Página {clampedPage} de {totalArchivadosPaginas}
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() => setArchivadosPage((p) => Math.max(1, p - 1))}
-                            disabled={clampedPage <= 1}
-                          >
-                            ◀ Anterior
-                          </Button>
-                          <Button
-                            variant="outline"
-                            size="sm"
-                            onClick={() =>
-                              setArchivadosPage((p) =>
-                                Math.min(totalArchivadosPaginas, p + 1)
-                              )
-                            }
-                            disabled={clampedPage >= totalArchivadosPaginas}
-                          >
-                            Siguiente ▶
-                          </Button>
-                        </div>
+                  </div>
+                  <div className="md:hidden space-y-3">
+                    {loadingArchivados ? (
+                      <div className="flex flex-col items-center justify-center py-10 text-sm text-gray-600">
+                        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-purple-600 mb-3"></div>
+                        <span>⚡ Cargando archivados optimizado...</span>
+                        <span className="text-xs text-gray-400 mt-1">Paginación en servidor activa</span>
                       </div>
+                    ) : paginatedArchivados.length === 0 ? (
+                      <div className="text-center py-8 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
+                        No hay embarques archivados.
+                      </div>
+                    ) : (
+                      paginatedArchivados.map((embarque) => {
+                        const currency = (embarque as any).moneda_flete || 'MXN';
+                        const raw =
+                          typeof (embarque as any).precioFlete === 'number'
+                            ? (embarque as any).precioFlete
+                            : typeof (embarque as any).precio_flete === 'string'
+                            ? Number((embarque as any).precio_flete)
+                            : typeof (embarque as any).precio_flete === 'number'
+                            ? (embarque as any).precio_flete
+                            : 0;
+                        const amount = Number.isFinite(raw) ? raw : 0;
+                        const fechaPago = embarque.fecha_pago
+                          ? new Date(embarque.fecha_pago).toLocaleDateString()
+                          : '-';
+                        const disponibleAhora = puedeEliminarArchivadoFC(embarque);
+                        const fechaStr = (embarque as any).fecha_archivado || embarque.fechaArchivado || embarque.fecha_creacion || embarque.updated_at;
+                        let deleteTitle = '';
+                        if (embarque.id === globalMasViejoArchivadoId) {
+                          deleteTitle = 'Registro más antiguo: eliminación disponible';
+                        } else {
+                          deleteTitle = 'Solo el registro más antiguo puede eliminarse';
+                        }
+
+                        return (
+                          <div
+                            key={embarque.id}
+                            className={`rounded-lg border p-4 shadow-sm ${esCancelado(embarque) ? 'border-red-200 bg-red-50' : 'border-gray-200 bg-white'}`}
+                          >
+                            <div className="flex flex-col gap-3">
+                              <div className="flex flex-col gap-2">
+                                <div className="flex items-start justify-between gap-2">
+                                  <div>
+                                    <p className="text-xs font-semibold text-gray-500 uppercase">Folio</p>
+                                    <p className="text-lg font-semibold text-purple-700 font-mono">{embarque.folio}</p>
+                                    <p className="text-sm text-gray-600">{embarque.clienteNombre}</p>
+                                  </div>
+                                  <div className="flex flex-wrap justify-end gap-2">
+                                    {esCancelado(embarque) && (
+                                      <Badge className="bg-purple-600 text-white">Cancelado</Badge>
+                                    )}
+                                    {embarqueTieneMultiplesDirecciones(embarque) && (
+                                      <Badge className="bg-blue-100 text-blue-800" title="Este embarque tiene múltiples direcciones de recolección o entrega">
+                                        {badgeMultiplesLabel}
+                                      </Badge>
+                                    )}
+                                    {esFleteFalso(embarque) && (
+                                      <Badge className="bg-orange-100 text-orange-800" title="Este embarque está marcado como flete en falso (contingencia)">
+                                        Flete F.
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </div>
+                                <div className="grid grid-cols-1 gap-2 text-sm">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-gray-500">Load</span>
+                                    <span className="font-mono text-gray-700">{(embarque as any).load_number || embarque.numeroLoad || '-'}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-gray-500">Valor Facturado</span>
+                                    <span className="font-semibold text-gray-900">
+                                      ${amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {currency}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-gray-500">Fecha Pago</span>
+                                    <span className="font-medium text-gray-700">{fechaPago}</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col sm:flex-row gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => {
+                                    setEmbarqueDetalle(embarque);
+                                    setShowDetailModal(true);
+                                  }}
+                                  title="Ver detalles"
+                                  aria-label="Ver detalles"
+                                >
+                                  Ver detalles
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className={`flex-1 border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black${
+                                    !disponibleAhora ? ' opacity-50 cursor-not-allowed' : ''
+                                  }`}
+                                  onClick={() => {
+                                    if (!disponibleAhora) return;
+                                    setEmbarqueAEliminar(embarque);
+                                    setShowConfirmDeleteDialog(true);
+                                  }}
+                                  disabled={!disponibleAhora}
+                                  title={deleteTitle}
+                                  aria-label="Eliminar embarque"
+                                >
+                                  <div className="flex items-center justify-center gap-2">
+                                    <Trash className="h-4 w-4 text-red-600" />
+                                    Eliminar
+                                  </div>
+                                </Button>
+                              </div>
+                              <div className="text-xs text-gray-400">
+                                Última actualización: {fechaStr ? new Date(fechaStr).toLocaleString() : 'Sin registro'}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
                     )}
                   </div>
+                  {totalArchivadosPaginas > 1 && (
+                    <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 text-sm">
+                      <div className="text-center sm:text-left">
+                        Página {clampedPage} de {totalArchivadosPaginas}
+                      </div>
+                      <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          onClick={() => setArchivadosPage((p) => Math.max(1, p - 1))}
+                          disabled={clampedPage <= 1}
+                        >
+                          ◀ Anterior
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full sm:w-auto"
+                          onClick={() =>
+                            setArchivadosPage((p) =>
+                              Math.min(totalArchivadosPaginas, p + 1)
+                            )
+                          }
+                          disabled={clampedPage >= totalArchivadosPaginas}
+                        >
+                          Siguiente ▶
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </DialogContent>
@@ -7431,7 +7799,7 @@ export default function FacturacionCobranzaPage() {
           </Dialog>
           {/* Botón Clientes: abre gestión de crédito de clientes */}
           <Dialog open={showClientesModal} onOpenChange={setShowClientesModal}>
-            <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
+            <DialogContent className="w-full max-w-full md:max-w-7xl md:w-[96vw] max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>Gestión de Crédito de Clientes</DialogTitle>
                 <DialogDescription>
@@ -7441,8 +7809,8 @@ export default function FacturacionCobranzaPage() {
               </DialogHeader>
 
               <div className="space-y-4">
-                <div className="flex flex-col md:flex-row md:items-center gap-3 mb-2">
-                  <div className="relative flex-1">
+                <div className="flex flex-col md:flex-row md:items-center gap-3 md:gap-4 mb-2">
+                  <div className="relative w-full md:flex-1">
                     <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
                     <Input
                       id="search-credit-client"
@@ -7452,13 +7820,13 @@ export default function FacturacionCobranzaPage() {
                       className="pl-8"
                     />
                   </div>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex flex-col gap-1 md:flex-row md:items-center md:gap-2">
                     <Label htmlFor="items-per-page-credit" className="text-sm">Registros por página:</Label>
                     <Select
                       value={String(itemsPerPageCredit)}
                       onValueChange={(value) => setItemsPerPageCredit(Number(value))}
                     >
-                      <SelectTrigger id="items-per-page-credit" className="w-20">
+                      <SelectTrigger id="items-per-page-credit" className="w-full md:w-20">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -7471,7 +7839,7 @@ export default function FacturacionCobranzaPage() {
                     </Select>
                   </div>
                   <div>
-                    <Button onClick={exportCreditDataToExcel} variant="outline">
+                    <Button onClick={exportCreditDataToExcel} variant="outline" className="hidden md:inline-flex">
                       <Download className="h-4 w-4 mr-2" />
                       Descargar Crédito Excel
                     </Button>
@@ -7494,11 +7862,12 @@ export default function FacturacionCobranzaPage() {
                     </p>
                   </div>
                 ) : (
-                  <div className="overflow-x-auto">
+                  <div>
                     <div className="mb-4 text-sm text-gray-600">
                       Mostrando {paginatedClientsCredit.length} de {filteredClients.length} registros.
                     </div>
-                    <table className="min-w-full text-sm border-collapse">
+                    <div className="hidden md:block overflow-x-auto">
+                      <table className="min-w-full text-sm border-collapse">
                       <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
                           <th className="px-4 py-2 text-left font-semibold text-gray-700">
@@ -7695,23 +8064,180 @@ export default function FacturacionCobranzaPage() {
                       </Button>
                     </div>
                   </div>
+                    <div className="md:hidden space-y-3">
+                      {paginatedClientsCredit.map((cliente) => {
+                        if (!cliente) return null;
+                        const rowState = creditRowState[cliente.id] || { locked: true, usd: String(creditLimits[cliente.id]?.usd || 0), mxn: String(creditLimits[cliente.id]?.mxn || 0) };
+
+                        const clienteEmbarquesUSD = embarquesFiltrados.filter(
+                          (e) =>
+                            e.cliente_id === cliente.id &&
+                            !e.pagado &&
+                            e.moneda_flete === "USD"
+                        );
+                        const clienteEmbarquesMXN = embarquesFiltrados.filter(
+                          (e) =>
+                            e.cliente_id === cliente.id &&
+                            !e.pagado &&
+                            (e.moneda_flete === "MXN" || !e.moneda_flete)
+                        );
+
+                        const totalPendienteUSD = clienteEmbarquesUSD.reduce((sum, e) => sum + getMontoContable(e), 0);
+                        const totalPendienteMXN = clienteEmbarquesMXN.reduce((sum, e) => sum + getMontoContable(e), 0);
+
+                        const limiteUSD = creditLimits[cliente.id]?.usd || 0;
+                        const limiteMXN = creditLimits[cliente.id]?.mxn || 0;
+
+                        const excedeUSD =
+                          totalPendienteUSD > limiteUSD && limiteUSD > 0;
+                        const excedeMXN =
+                          totalPendienteMXN > limiteMXN && limiteMXN > 0;
+
+                        const cardHighlight = excedeUSD || excedeMXN;
+
+                        return (
+                          <div
+                            key={cliente.id}
+                            className={`rounded-lg border ${cardHighlight ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"} p-4 shadow-sm`}
+                          >
+                            <div className="flex flex-col gap-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">
+                                    Cliente
+                                  </p>
+                                  <p className="text-base font-semibold text-gray-800">
+                                    {cliente.nombre}
+                                  </p>
+                                </div>
+                                {(excedeUSD || excedeMXN) ? (
+                                  <Badge
+                                    variant="outline"
+                                    className="bg-orange-100 text-orange-800 border-orange-300"
+                                  >
+                                    <AlertTriangle className="h-3 w-3 mr-1 text-orange-600" />
+                                    Excedido
+                                  </Badge>
+                                ) : (
+                                  <Badge
+                                    variant="outline"
+                                    className="border-gray-300 text-gray-700"
+                                  >
+                                    Ok
+                                  </Badge>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 gap-3">
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">
+                                    Límite USD
+                                  </span>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={rowState.usd ?? String(limiteUSD)}
+                                    onChange={(e) => setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), usd: e.target.value } }))}
+                                    readOnly={rowState.locked}
+                                    className={rowState.locked ? "w-full text-right text-sm px-3 py-2 bg-gray-50 border border-gray-200 text-gray-500 rounded" : "w-full text-right text-sm border rounded px-3 py-2 bg-white"}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">
+                                    Adeudado USD
+                                  </span>
+                                  <span className={`text-sm font-bold ${excedeUSD ? "text-red-600" : "text-gray-700"}`}>
+                                    ${totalPendienteUSD.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">
+                                    Límite MXN
+                                  </span>
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    value={rowState.mxn ?? String(limiteMXN)}
+                                    onChange={(e) => setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), mxn: e.target.value } }))}
+                                    readOnly={rowState.locked}
+                                    className={rowState.locked ? "w-full text-right text-sm px-3 py-2 bg-gray-50 border border-gray-200 text-gray-500 rounded" : "w-full text-right text-sm border rounded px-3 py-2 bg-white"}
+                                  />
+                                </div>
+                                <div className="flex flex-col gap-1">
+                                  <span className="text-xs font-semibold text-gray-500 uppercase">
+                                    Adeudado MXN
+                                  </span>
+                                  <span className={`text-sm font-bold ${excedeMXN ? "text-red-600" : "text-gray-700"}`}>
+                                    ${totalPendienteMXN.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-col gap-2">
+                                <div className="flex flex-wrap gap-2">
+                                  <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={() => setCreditRowState(prev => {
+                                      const existing = prev[cliente.id];
+                                      const usdDefault = String(limiteUSD);
+                                      const mxnDefault = String(limiteMXN);
+                                      return {
+                                        ...prev,
+                                        [cliente.id]: {
+                                          ...(existing || { usd: usdDefault, mxn: mxnDefault }),
+                                          locked: !((existing || { locked: true }).locked),
+                                        },
+                                      };
+                                    })}
+                                    title={rowState.locked ? "Desbloquear fila" : "Bloquear fila"}
+                                    className="flex-shrink-0"
+                                  >
+                                    {rowState.locked ? <Lock className="h-4 w-4" /> : <LockOpen className="h-4 w-4" />}
+                                  </Button>
+                                  <Button
+                                    size="sm"
+                                    className="bg-green-600 hover:bg-green-700 text-white flex-1"
+                                    onClick={async () => {
+                                      const vUSD = Number((creditRowState[cliente.id]?.usd) || limiteUSD) || 0;
+                                      const vMXN = Number((creditRowState[cliente.id]?.mxn) || limiteMXN) || 0;
+                                      try {
+                                        await saveCreditLimits(cliente.id, vUSD, vMXN);
+                                        setCreditRowState(prev => ({ ...prev, [cliente.id]: { ...(prev[cliente.id] || {}), usd: String(vUSD), mxn: String(vMXN), locked: true } }));
+                                        toast({ title: 'Límite de Crédito Capturado Correctamente', variant: 'success' });
+                                      } catch (e) {
+                                        console.error('Error guardando créditos fila', e);
+                                        toast({ title: 'Error al guardar crédito', variant: 'destructive' });
+                                      }
+                                    }}
+                                  >
+                                    Guardar
+                                  </Button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 )}
               </div>
             </DialogContent>
           </Dialog>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2 md:gap-4">
           {/* Nota anual para KPIs */}
-          <div className="md:col-span-6 -mb-2">
-            <p className="text-xs text-gray-500">
+          <div className="col-span-2 md:col-span-6 -mb-2">
+            <p className="text-xs text-gray-500 text-center md:text-left">
               Indicadores del año {currentYear}. El Flete Año es acumulado anual e incluye archivados. Al cambiar el año, el contador se reinicia.
             </p>
           </div>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between gap-2 text-center md:text-left">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-600">
                     Total Embarques
                   </p>
@@ -7719,14 +8245,14 @@ export default function FacturacionCobranzaPage() {
                     {embarquesFiltrados.length}
                   </p>
                 </div>
-                <Package className="h-8 w-8 text-blue-600" />
+                <Package className="hidden md:block h-8 w-8 text-blue-600 flex-shrink-0" />
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between gap-2 text-center md:text-left w-full">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-600">
                     Flete Año MXN
                   </p>
@@ -7737,10 +8263,10 @@ export default function FacturacionCobranzaPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between gap-2 text-center md:text-left w-full">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-600">
                     Flete Año USD
                   </p>
@@ -7751,10 +8277,10 @@ export default function FacturacionCobranzaPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between gap-2 text-center md:text-left">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-600">Pendientes</p>
                   <p className="text-2xl font-bold text-green-600">
                     {
@@ -7764,15 +8290,15 @@ export default function FacturacionCobranzaPage() {
                     }
                   </p>
                 </div>
-                <FileText className="h-8 w-8 text-green-600" />
+                <FileText className="hidden md:block h-8 w-8 text-green-600 flex-shrink-0" />
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-start justify-between">
-                <div className="flex items-start gap-8">
-                  <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:items-start md:justify-between gap-3 text-center md:text-left w-full">
+                <div className="flex flex-col sm:flex-row items-center sm:items-start gap-3 sm:gap-8">
+                  <div className="text-center sm:text-left">
                     <p className="text-sm font-medium text-gray-600">Facturados</p>
                     <p className="text-2xl font-bold text-yellow-600">
                       {
@@ -7782,7 +8308,7 @@ export default function FacturacionCobranzaPage() {
                       }
                     </p>
                   </div>
-                  <div>
+                  <div className="text-center sm:text-left">
                     <p className="text-sm font-medium text-gray-600">Pagados</p>
                     <p className="text-2xl font-bold text-purple-700">
                       {
@@ -7797,24 +8323,24 @@ export default function FacturacionCobranzaPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
-            <CardContent className="pt-6">
-              <div className="flex items-center justify-between">
-                <div>
+          <Card className="mx-auto w-full max-w-[220px] md:max-w-none">
+            <CardContent className="pt-4 pb-4 md:pt-6 md:pb-6 px-3 md:px-6">
+              <div className="flex flex-col md:flex-row items-center md:justify-between gap-2 text-center md:text-left">
+                <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-gray-600">Archivados</p>
                   <p className="text-2xl font-bold text-purple-700">
                     {archivadosIds.length}
                   </p>
                 </div>
-                <Package className="h-8 w-8 text-purple-600" />
+                <Package className="hidden md:block h-8 w-8 text-purple-600 flex-shrink-0" />
               </div>
             </CardContent>
           </Card>
         </div>
 
-        <div className="flex items-center justify-between gap-4 flex-wrap">
-          <div className="flex-1 max-w-xl md:max-w-2xl">
-            <div className="relative">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div className="w-full md:flex-1 md:max-w-2xl">
+            <div className="relative hidden md:block">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
               <Input
                 placeholder="Buscar por folio, cliente, load, operador..."
@@ -7823,40 +8349,98 @@ export default function FacturacionCobranzaPage() {
                 className="pl-8"
               />
             </div>
+            <Card className="mt-3 md:hidden border border-gray-200 shadow-sm">
+              <CardContent className="p-3">
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    onClick={() => setShowAnalisisOperadoresModal(true)}
+                    variant="outline"
+                    className="w-full justify-center"
+                  >
+                    <Users className="h-4 w-4 mr-2 text-green-700" />
+                    Operadores
+                  </Button>
+                  <Button
+                    onClick={() => setShowClientesModal(true)}
+                    variant="outline"
+                    className="w-full justify-center"
+                  >
+                    <Users className="h-4 w-4 mr-2" />
+                    Crédito Clientes
+                  </Button>
+                  <Button
+                    onClick={() => setShowControlClientesModal(true)}
+                    variant="outline"
+                    className="w-full justify-center"
+                  >
+                    <Users className="h-4 w-4 mr-2" />
+                    Control Clientes
+                  </Button>
+                  <Button
+                    onClick={() => setShowTiposServicioModal(true)}
+                    variant="outline"
+                    className="w-full justify-center"
+                  >
+                    <Package className="h-4 w-4 mr-2" />
+                    Servicios
+                  </Button>
+                  <Button
+                    onClick={() => setShowArchivadosModal(true)}
+                    variant="outline"
+                    className="col-span-2 w-full justify-center"
+                  >
+                    <Package className="h-4 w-4 mr-2 text-purple-600" />
+                    Archivados
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
           </div>
           {/* Pagination moved up to sit beside search */}
-          <div className="flex items-center gap-2 ml-auto">
-            <span className="text-sm text-gray-700">Página {listaPage} de {totalListaPages}</span>
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:ml-auto justify-end">
+            <div className="w-full md:hidden">
+              <div className="relative mb-2">
+                <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
+                <Input
+                  placeholder="Buscar por folio, cliente, load, operador..."
+                  value={searchTerm}
+                  onChange={(e) => { setSearchTerm(e.target.value); setListaPage(1); }}
+                  className="pl-8"
+                />
+              </div>
+            </div>
+            <span className="hidden md:inline text-sm text-gray-700">Página {listaPage} de {totalListaPages}</span>
             <div className="flex items-center gap-1">
               <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.max(1, p - 1))} disabled={listaPage <= 1}>Anterior</Button>
               <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.min(totalListaPages, p + 1))} disabled={listaPage >= totalListaPages}>Siguiente</Button>
             </div>
-            <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-700">Por página:</span>
-              <Select value={String(listaPageSize)} onValueChange={(v) => { const n = Number.parseInt(v, 10); setListaPageSize(n); setListaPage(1); }}>
-                <SelectTrigger className="w-[140px]"><SelectValue placeholder="Por página" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="6">6 por página</SelectItem>
-                  <SelectItem value="12">12 por página</SelectItem>
-                  <SelectItem value="18">18 por página</SelectItem>
-                  <SelectItem value="24">24 por página</SelectItem>
-                  <SelectItem value="48">48 por página</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-700">Estado:</span>
-              <Select value={filtroEstado} onValueChange={setFiltroEstado}>
-                <SelectTrigger className="w-[140px]"><SelectValue placeholder="Filtrar estado" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="todos">Todos los estados</SelectItem>
-                  <SelectItem value="finalizado">Finalizado</SelectItem>
-                  <SelectItem value="archivado">Archivado</SelectItem>
-                  <SelectItem value="cancelado">Cancelado</SelectItem>
-                </SelectContent>
-              </Select>
+            <div className="hidden md:flex h-5 w-px bg-gray-200 mx-1" />
+            <div className="flex w-full md:w-auto gap-2">
+              <div className="flex flex-1 md:flex-none items-center gap-2">
+                <span className="hidden md:inline text-sm text-gray-700">Por página:</span>
+                <Select value={String(listaPageSize)} onValueChange={(v) => { const n = Number.parseInt(v, 10); setListaPageSize(n); setListaPage(1); }}>
+                  <SelectTrigger className="w-full md:w-[140px]" aria-label="Embarques por página"><SelectValue placeholder="Por página" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="6">6 por página</SelectItem>
+                    <SelectItem value="12">12 por página</SelectItem>
+                    <SelectItem value="18">18 por página</SelectItem>
+                    <SelectItem value="24">24 por página</SelectItem>
+                    <SelectItem value="48">48 por página</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex flex-1 md:flex-none items-center gap-2">
+                <span className="hidden md:inline text-sm text-gray-700">Estado:</span>
+                <Select value={filtroEstado} onValueChange={setFiltroEstado}>
+                  <SelectTrigger className="w-full md:w-[140px]" aria-label="Filtro por estado"><SelectValue placeholder="Filtrar estado" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="todos">Todos los estados</SelectItem>
+                    <SelectItem value="finalizado">Finalizado</SelectItem>
+                    <SelectItem value="archivado">Archivado</SelectItem>
+                    <SelectItem value="cancelado">Cancelado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
         </div>
@@ -7872,16 +8456,16 @@ export default function FacturacionCobranzaPage() {
         />
 
         <Card>
-          <CardHeader>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
+          <CardHeader className="px-3 md:px-6">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
               <div>
                 <CardTitle>Embarques Asignados</CardTitle>
                 <CardDescription>
                   Lista detallada de todos los embarques con asignación
                 </CardDescription>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Button onClick={generarReporteExcel} variant="outline">
+              <div className="hidden md:flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+                <Button onClick={generarReporteExcel} variant="outline" className="hidden md:inline-flex">
                   <Download className="h-4 w-4 mr-2" />
                   Reportes
                 </Button>
@@ -7941,10 +8525,218 @@ export default function FacturacionCobranzaPage() {
               </div>
             ) : (
               <div className="space-y-4">
-                {embarquesPaginados.map((embarque) => (
+                {embarquesPaginados.map((embarque) => {
+                    const clienteRelacionado = clientes.find((c) => c.id === embarque.cliente_id);
+                    const clienteNombre = clienteRelacionado?.nombre || embarque.clienteNombre || embarque.cliente_id;
+                    const representanteCliente = embarque.info_representante?.nombre || embarque.representante_cliente || "";
+                    const tipoServicioNombre = (() => {
+                      if (embarque.tipo_servicio_id) {
+                        const tipoServicio = tiposServicio.find((t) => t.id === embarque.tipo_servicio_id);
+                        return tipoServicio ? tipoServicio.nombre : `ID: ${embarque.tipo_servicio_id}`;
+                      }
+                      return "No asignado";
+                    })();
+                    const operadorAsignadoNombre = embarque.operadorAsignado?.nombre || "Sin asignar";
+                    const camionAsignado = embarque.camionAsignado;
+                    const camionDescripcion = camionAsignado
+                      ? `${camionAsignado.marca || ""} ${camionAsignado.modelo || ""}`.trim()
+                      : "Sin asignar";
+                    const camionNumeroEconomico = camionAsignado?.numeroEconomico || "";
+                    const remolqueDescripcion = embarque.remolque?.numero_economico || embarque.remolque_numero_economico || "-";
+                    const direccionRecolecta = embarque.direccionRecolecta || embarque.direccion_recolecta || embarque.origen || "Sin dirección";
+                    const direccionEnganche = embarque.direccion_entrega || embarque.destino || "Sin dirección";
+                    const cartaPorte = embarque.carta_porte || "-";
+                    const loadNumber = embarque.load_number || "-";
+                    const fechaEntrega = embarque.fechaEntrega
+                      ? new Date(embarque.fechaEntrega).toLocaleDateString()
+                      : "Sin fecha";
+                    const estadoFacturacion = embarque.estado_facturacion || "pendiente_facturacion";
+                    const monedaFlete = embarque.moneda_flete || "MXN";
+                    const quickpaidActivo = Boolean(embarque.quickpaid_enabled);
+                    const quickpaidDescuento =
+                      typeof embarque.quickpaid_descuento === "number" && embarque.quickpaid_descuento > 0
+                        ? embarque.quickpaid_descuento
+                        : null;
+                    const quickpaidPrecio =
+                      typeof embarque.precio_quickpaid === "number" && embarque.precio_quickpaid > 0
+                        ? embarque.precio_quickpaid
+                        : null;
+                    const montoFleteCandidates: Array<number | undefined> = [
+                      typeof embarque.cantidad_final_facturada === "number"
+                        ? embarque.cantidad_final_facturada
+                        : typeof (embarque as any).cantidad_final_facturada === "string"
+                        ? Number((embarque as any).cantidad_final_facturada)
+                        : undefined,
+                      typeof (embarque as any).precio_flete === "string"
+                        ? Number((embarque as any).precio_flete)
+                        : typeof (embarque as any).precio_flete === "number"
+                        ? (embarque as any).precio_flete
+                        : undefined,
+                      typeof (embarque as any).montoFacturado === "string"
+                        ? Number((embarque as any).montoFacturado)
+                        : typeof (embarque as any).montoFacturado === "number"
+                        ? (embarque as any).montoFacturado
+                        : undefined,
+                      typeof (embarque as any).precioFlete === "string"
+                        ? Number((embarque as any).precioFlete)
+                        : typeof (embarque as any).precioFlete === "number"
+                        ? (embarque as any).precioFlete
+                        : undefined,
+                    ];
+                    const montoFleteBaseCandidate = montoFleteCandidates.find((v) => typeof v === "number" && !Number.isNaN(v));
+                    const montoFleteBase = typeof montoFleteBaseCandidate === "number" ? montoFleteBaseCandidate : 0;
+                    const estadoFacturacionLabel = (() => {
+                      switch (estadoFacturacion) {
+                        case "facturado":
+                          return "Facturado";
+                        case "pagado":
+                          return "Pagado";
+                        case "pendiente_facturacion":
+                        default:
+                          return "Pendiente de facturar";
+                      }
+                    })();
+                    const multiplesLabel = badgeMultiplesLabel;
+                    const actionButtonSize = isMobile ? "icon" : "sm";
+                    const mobileSections = [
+                      {
+                        key: "clientes",
+                        title: "Clientes",
+                        content: (
+                          <div className="space-y-2">
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Cliente</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{clienteNombre}</p>
+                            </div>
+                            {representanteCliente && (
+                              <div>
+                                <span className="text-xs uppercase text-gray-500">Representante</span>
+                                <p className="text-sm text-gray-700 mt-0.5">{representanteCliente}</p>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Tipo de servicio</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{tipoServicioNombre}</p>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: "operador",
+                        title: "Operador",
+                        content: (
+                          <div className="space-y-2">
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Operador asignado</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{operadorAsignadoNombre}</p>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: "recursos",
+                        title: "Recursos",
+                        content: (
+                          <div className="space-y-2">
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Tractocamión</span>
+                              <p className="text-sm text-gray-700 mt-0.5">
+                                {camionDescripcion}
+                                {camionNumeroEconomico && (
+                                  <span className="block text-xs text-gray-500">No. Económico: {camionNumeroEconomico}</span>
+                                )}
+                              </p>
+                            </div>
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Remolque</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{remolqueDescripcion}</p>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: "envio",
+                        title: "Envío",
+                        content: (
+                          <div className="space-y-2">
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Dirección recolecta</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{direccionRecolecta}</p>
+                            </div>
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Dirección enganche</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{direccionEnganche}</p>
+                            </div>
+                            <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                              <div>
+                                <span className="text-xs uppercase text-gray-500">Load</span>
+                                <p className="text-sm text-gray-700 mt-0.5">{loadNumber}</p>
+                              </div>
+                              <div>
+                                <span className="text-xs uppercase text-gray-500">Carta Porte</span>
+                                <p className="text-sm text-gray-700 mt-0.5">{cartaPorte}</p>
+                              </div>
+                            </div>
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Fecha entrega</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{fechaEntrega}</p>
+                            </div>
+                          </div>
+                        ),
+                      },
+                      {
+                        key: "financiero",
+                        title: "Financiero",
+                        content: (
+                          <div className="space-y-2">
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Monto flete</span>
+                              <p className="text-sm text-gray-700 mt-0.5">
+                                {"$"}
+                                {montoFleteBase.toLocaleString('es-MX', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })} {monedaFlete}
+                              </p>
+                            </div>
+                            {quickpaidActivo && (
+                              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                                <div>
+                                  <span className="text-xs uppercase text-gray-500">Descuento QuickPaid</span>
+                                  <p className="text-sm text-gray-700 mt-0.5">
+                                    {quickpaidDescuento
+                                      ? `-$${quickpaidDescuento.toLocaleString('es-MX', {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        })}`
+                                      : "-"} {monedaFlete}
+                                  </p>
+                                </div>
+                                <div>
+                                  <span className="text-xs uppercase text-gray-500">Precio QuickPaid</span>
+                                  <p className="text-sm text-gray-700 mt-0.5">
+                                    {quickpaidPrecio
+                                      ? `$${quickpaidPrecio.toLocaleString('es-MX', {
+                                          minimumFractionDigits: 2,
+                                          maximumFractionDigits: 2,
+                                        })} ${monedaFlete}`
+                                      : "-"}
+                                  </p>
+                                </div>
+                              </div>
+                            )}
+                            <div>
+                              <span className="text-xs uppercase text-gray-500">Estado facturación</span>
+                              <p className="text-sm text-gray-700 mt-0.5">{estadoFacturacionLabel}</p>
+                            </div>
+                          </div>
+                        ),
+                      },
+                    ];
+                    return (
                     <div
                       key={embarque.id}
-                      className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
+                      className={`border rounded-lg p-3 md:p-4 hover:bg-gray-50 transition-colors ${
                         embarquesModificadosIds.includes(embarque.id)
                           ? "border-red-500"
                           : ""
@@ -7956,17 +8748,17 @@ export default function FacturacionCobranzaPage() {
                           : ""
                       }`}
                     >
-                      <div className="flex items-center justify-between mb-3">
-                        <div className="flex items-center space-x-3">
-                          <Package className="h-8 w-8 text-blue-600" />
-                          <div>
-                            <div className="flex items-center">
-                              <div className="flex items-center">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-3">
+                        <div className="flex items-start md:items-center gap-3 w-full">
+                          <Package className="h-6 w-6 md:h-8 md:w-8 text-blue-600" />
+                          <div className="flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex items-center gap-2">
                                 <p className="font-bold text-lg text-blue-600">
                                   {embarque.folio}
                                 </p>
                                 {esCancelado(embarque) && (
-                                  <Badge className="ml-2 bg-purple-600 text-white">Cancelado</Badge>
+                                  <Badge className="md:ml-2 bg-purple-600 text-white">Cancelado</Badge>
                                 )}
                               </div>
                               {embarquesModificadosIds.includes(
@@ -7974,7 +8766,7 @@ export default function FacturacionCobranzaPage() {
                               ) && (
                                 <Badge
                                   variant="destructive"
-                                  className="ml-2 bg-red-600 text-white"
+                                  className="md:ml-2 bg-red-600 text-white"
                                 >
                                   <AlertTriangle className="h-3 w-3 mr-1" />
                                   Contingencia
@@ -7988,7 +8780,7 @@ export default function FacturacionCobranzaPage() {
                                 );
                                 return (
                                   creditCheck.exceeded && (
-                                    <span className="ml-2 inline-flex items-center rounded-full bg-orange-500 px-2 py-0.5 text-white text-xs">
+                                    <span className="inline-flex items-center rounded-full bg-orange-500 px-2 py-0.5 text-white text-xs md:ml-2">
                                       {creditCheck.message}
                                     </span>
                                   )
@@ -8003,16 +8795,16 @@ export default function FacturacionCobranzaPage() {
                           {embarque.modificadoPorEmergencia && (
                             <Badge
                               variant="destructive"
-                              className="ml-2 bg-red-600 text-white"
+                              className="md:ml-2 bg-red-600 text-white"
                             >
                               <AlertTriangle className="h-3 w-3 mr-1" />
                               MODIFICADO POR EMERGENCIA
                             </Badge>
                           )}
                         </div>
-                        <div className="flex items-center space-x-2">
+                        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:justify-end">
                           {embarque.quickpaid_enabled && (
-                            <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 flex items-center px-2 py-1 mr-2">
+                            <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 flex items-center px-2 py-1 md:mr-2">
                               <span className="mr-1">QuickPaid</span>
                               <Coins className="h-4 w-4 text-yellow-500" />
                             </Badge>
@@ -8022,10 +8814,10 @@ export default function FacturacionCobranzaPage() {
                             if (embarqueTieneMultiplesDirecciones(embarque)) {
                               return (
                                 <span 
-                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help mr-2"
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help md:mr-2"
                                   title="Este embarque tiene múltiples direcciones de recolección o entrega"
                                 >
-                                  D. Múltiples
+                                  {multiplesLabel}
                                 </span>
                               );
                             }
@@ -8036,7 +8828,7 @@ export default function FacturacionCobranzaPage() {
                             if (esFleteFalso(embarque)) {
                               return (
                                 <span 
-                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help mr-2"
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help md:mr-2"
                                   title="Este embarque está marcado como flete en falso (contingencia)"
                                 >
                                   Flete F.
@@ -8108,16 +8900,18 @@ export default function FacturacionCobranzaPage() {
                           </Select>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size={actionButtonSize}
                             onClick={() => abrirModalFacturacion(embarque)}
+                            aria-label="Abrir facturación"
+                            title="Facturación"
                           >
-                            <FileText className="h-4 w-4 mr-1" />
-                            Facturación
+                            <FileText className="h-4 w-4 md:mr-1" />
+                            <span className="hidden md:inline">Facturación</span>
                           </Button>
                           <>
                             <Button
                               variant="outline"
-                              size="sm"
+                              size={actionButtonSize}
                               onClick={() => {
                                 // Abrir prompt de justificación primero
                                 setSelectedEmbarqueForUpdate(embarque);
@@ -8125,9 +8919,10 @@ export default function FacturacionCobranzaPage() {
                                 setShowJustificacionPrompt(true);
                               }}
                               title="Actualizar precio"
+                              aria-label="Actualizar precio"
                             >
-                              <DollarSign className="h-4 w-4 mr-1" />
-                              Precio
+                              <DollarSign className="h-4 w-4 md:mr-1" />
+                              <span className="hidden md:inline">Precio</span>
                             </Button>
                             {/* Prompt pequeño que solicita justificación antes de abrir el modal principal */}
                                             <Dialog open={showJustificacionPrompt && selectedEmbarqueForUpdate?.id === embarque.id} onOpenChange={(v) => { if(!v) { setShowJustificacionPrompt(false); setSelectedEmbarqueForUpdate(null); } }}>
@@ -8164,12 +8959,13 @@ export default function FacturacionCobranzaPage() {
                           </>
                           <Button
                             variant="outline"
-                            size="sm"
+                            size={actionButtonSize}
                             onClick={() => verDetallesEmbarque(embarque)}
                             aria-label="Ver detalles"
+                            title="Detalles"
                           >
-                            <Eye className="h-4 w-4 mr-1" aria-hidden="true" />
-                            Detalles
+                            <Eye className="h-4 w-4 md:mr-1" aria-hidden="true" />
+                            <span className="hidden md:inline">Detalles</span>
                           </Button>
                           {/* Botón Modificar oculto según requerimiento */}
                           {(embarque.estado_facturacion === "pagado" ||
@@ -8178,15 +8974,17 @@ export default function FacturacionCobranzaPage() {
                             esCancelado(embarque)) && (
                             <Button
                               variant="outline"
-                              size="sm"
+                              size={actionButtonSize}
                               onClick={() => {
                                 // Open confirm dialog instead of blocking window.confirm
                                 setEmbarqueAArchivar(embarque);
                                 setShowConfirmArchivarDialog(true);
                               }}
+                              aria-label="Archivar embarque"
+                              title="Archivar"
                             >
-                              <Package className="h-4 w-4 mr-1" />
-                              Archivar
+                              <Package className="h-4 w-4 md:mr-1" />
+                              <span className="hidden md:inline">Archivar</span>
                             </Button>
                           )}
                           {/* Botón Cancelar - disponible para embarques finalizados que no estén ya cancelados */}
@@ -8211,7 +9009,43 @@ export default function FacturacionCobranzaPage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
+                        {isMobile && (
+                          <div className="md:hidden space-y-2 mt-2">
+                            {mobileSections.map((section) => {
+                              const sectionId = `facturacion-mobile-${section.key}-${embarque.id}`;
+                              const expanded = isMobileSectionExpanded(embarque.id, section.key);
+                              return (
+                                <div
+                                  key={section.key}
+                                  className="border border-gray-200 rounded-lg bg-white"
+                                >
+                                  <button
+                                    type="button"
+                                    className="flex w-full items-center justify-between px-3 py-2 text-sm font-semibold text-gray-800"
+                                    onClick={() => toggleMobileSection(embarque.id, section.key)}
+                                    aria-expanded={expanded}
+                                    aria-controls={sectionId}
+                                  >
+                                    <span>{section.title}</span>
+                                    <ChevronDown
+                                      className={`h-4 w-4 text-gray-500 transition-transform ${expanded ? "rotate-180" : ""}`}
+                                    />
+                                  </button>
+                                  <div
+                                    id={sectionId}
+                                    className={`overflow-hidden transition-[max-height] duration-200 ease-in-out ${expanded ? "max-h-[460px]" : "max-h-0"}`}
+                                  >
+                                    <div className="px-3 pb-3 text-sm text-gray-700 space-y-2">
+                                      {section.content}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+
+                          <div className="hidden md:grid md:grid-cols-2 lg:grid-cols-3 gap-4 text-sm">
                         <div>
                           <p className="font-medium text-gray-700">Cliente:</p>
                           <p className="text-gray-600">
@@ -8439,7 +9273,7 @@ export default function FacturacionCobranzaPage() {
                           </div>
                         )}
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-3">
+                      <div className="hidden md:grid md:grid-cols-2 gap-4 mt-3">
                         <div>
                           <p className="font-medium text-gray-700 text-sm">
                             Dirección de Recolecta:
@@ -8474,7 +9308,8 @@ export default function FacturacionCobranzaPage() {
                         </div>
                       )}
                     </div>
-                  ))}
+                  );
+                })}
 
                 {embarquesFiltrados.length === 0 && (
                   <div className="text-center py-8">
@@ -8496,8 +9331,8 @@ export default function FacturacionCobranzaPage() {
   {/* Modal eliminado: precio flete en falso ahora se edita desde "Gestión de Tipos de Servicio" */}
 
         {/* Control Clientes */}
-        <Dialog open={showControlClientesModal} onOpenChange={setShowControlClientesModal}>
-  <DialogContent className="max-w-[1400px] w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
+          <Dialog open={showControlClientesModal} onOpenChange={setShowControlClientesModal}>
+        <DialogContent className="w-full max-w-full md:max-w-[1400px] md:w-[95vw] max-h-[95vh] overflow-hidden flex flex-col">
             <DialogHeader className="flex-shrink-0">
               <DialogTitle>Control de Clientes</DialogTitle>
               <DialogDescription>
@@ -8506,17 +9341,17 @@ export default function FacturacionCobranzaPage() {
             </DialogHeader>
 
             <div className="space-y-4 flex-1 overflow-y-auto">
-              <div className="flex flex-wrap items-start gap-3">
+              <div className="flex flex-col gap-4">
                 <div className="flex flex-col gap-3 w-full">
                   {/* Primera fila: Cliente + Periodo + Estado + Acciones */}
-                  <div className="flex flex-wrap items-end gap-3 w-full">
-                    <div className="flex flex-col">
+                  <div className="flex flex-col md:flex-row md:flex-wrap md:items-end gap-3 w-full">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label htmlFor="control-cliente" className="text-xs text-gray-600 mb-1">Cliente</Label>
                       <Select
                         value={controlClienteSeleccionado ?? "todos"}
                         onValueChange={(value) => setControlClienteSeleccionado(value === "todos" ? null : value)}
                       >
-                        <SelectTrigger id="control-cliente" className="w-[320px]">
+                        <SelectTrigger id="control-cliente" className="w-full md:w-[320px]">
                           <SelectValue placeholder="Selecciona un cliente" />
                         </SelectTrigger>
                         <SelectContent>
@@ -8530,10 +9365,10 @@ export default function FacturacionCobranzaPage() {
                       </Select>
                     </div>
                     {/* Rango rápido */}
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label className="text-xs text-gray-600 mb-1">Periodo</Label>
                       <Select value={controlClientesRango} onValueChange={(v) => setRangoControlClientes(v)}>
-                        <SelectTrigger className="w-[200px]">
+                        <SelectTrigger className="w-full md:w-[200px]">
                           <SelectValue placeholder="Selecciona un periodo" />
                         </SelectTrigger>
                         <SelectContent>
@@ -8545,10 +9380,10 @@ export default function FacturacionCobranzaPage() {
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label htmlFor="control-estado" className="text-xs text-gray-600 mb-1">Estado</Label>
                       <Select value={controlClientesEstadoFiltro} onValueChange={setControlClientesEstadoFiltro}>
-                        <SelectTrigger id="control-estado" className="w-[240px]">
+                        <SelectTrigger id="control-estado" className="w-full md:w-[240px]">
                           <SelectValue placeholder="Estado" />
                         </SelectTrigger>
                         <SelectContent>
@@ -8564,9 +9399,9 @@ export default function FacturacionCobranzaPage() {
                     </div>
 
                     {/* Acciones en la misma fila, alineadas con Periodo */}
-                    <div className="ml-auto flex items-end gap-3">
+                    <div className="flex flex-col md:flex-row md:items-end gap-3 w-full md:w-auto md:ml-auto">
                       <Button
-                        className="bg-green-600 hover:bg-green-700 text-white"
+                        className="bg-green-600 hover:bg-green-700 text-white w-full md:w-auto"
                         onClick={async () => {
                           const desde = controlClientesPeriodo.desde;
                           const hasta = controlClientesPeriodo.hasta;
@@ -8659,6 +9494,7 @@ export default function FacturacionCobranzaPage() {
                       </Button>
                       <Button
                         variant="outline"
+                        className="hidden md:inline-flex"
                           onClick={() => {
                           const inRange = (e: any) => {
                             const fechaStr = e.fechaAsignacion || e.fecha_creacion || e.updated_at;
@@ -8791,13 +9627,13 @@ export default function FacturacionCobranzaPage() {
                   </div>
 
                   {/* Segunda fila: Periodo Desde / Hasta debajo de Cliente */}
-                  <div className="flex flex-wrap items-end gap-3">
-                    <div className="flex flex-col">
+                  <div className="flex flex-col md:flex-row md:flex-wrap md:items-end gap-3">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label htmlFor="control-desde" className="text-xs text-gray-600 mb-1">Desde</Label>
                       <Input
                         id="control-desde"
                         type="date"
-                        className="w-[160px]"
+                        className="w-full md:w-[160px]"
                         value={controlClientesPeriodo.desde || ""}
                         onChange={(e) => {
                           setControlClientesPeriodo((p) => ({ ...p, desde: e.target.value || null }));
@@ -8805,12 +9641,12 @@ export default function FacturacionCobranzaPage() {
                         }}
                       />
                     </div>
-                    <div className="flex flex-col">
+                    <div className="flex flex-col w-full md:w-auto">
                       <Label htmlFor="control-hasta" className="text-xs text-gray-600 mb-1">Hasta</Label>
                       <Input
                         id="control-hasta"
                         type="date"
-                        className="w-[160px]"
+                        className="w-full md:w-[160px]"
                         value={controlClientesPeriodo.hasta || ""}
                         onChange={(e) => {
                           setControlClientesPeriodo((p) => ({ ...p, hasta: e.target.value || null }));
@@ -8818,7 +9654,7 @@ export default function FacturacionCobranzaPage() {
                         }}
                       />
                     </div>
-                    <div className="flex items-center gap-4 ml-2">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-3 md:gap-4 md:ml-2">
                       <label className="flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -8838,42 +9674,46 @@ export default function FacturacionCobranzaPage() {
                     </div>
 
                     {/* Controles de paginación */}
-                    <div className="flex items-center gap-2 text-sm ml-auto">
-                      <Label htmlFor="items-per-page-control-act" className="text-sm">Registros por página:</Label>
-                      <Select
-                        value={String(itemsPerPageControl)}
-                        onValueChange={(v) => setItemsPerPageControl(Number(v))}
-                      >
-                        <SelectTrigger id="items-per-page-control-act" className="w-[100px]">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {[5, 10, 15, 20, 25, 50, 100].map(n => (
-                            <SelectItem key={n} value={String(n)}>{n}</SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPageControlActivos(p => Math.max(1, p - 1))}
-                        disabled={currentPageControlActivos <= 1}
-                      >
-                        Anterior
-                      </Button>
-                      <span>
-                        Página {currentPageControlActivos} de {totalPagesControlActivos}
-                      </span>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => setCurrentPageControlActivos(p => Math.min(totalPagesControlActivos, p + 1))}
-                        disabled={currentPageControlActivos >= totalPagesControlActivos}
-                      >
-                        Siguiente
-                      </Button>
+                    <div className="flex flex-col md:flex-row md:items-center md:gap-3 w-full md:w-auto md:ml-auto text-sm gap-2">
+                      <div className="flex items-center gap-2 w-full md:w-auto">
+                        <Label htmlFor="items-per-page-control-act" className="text-sm">Registros por página:</Label>
+                        <Select
+                          value={String(itemsPerPageControl)}
+                          onValueChange={(v) => setItemsPerPageControl(Number(v))}
+                        >
+                          <SelectTrigger id="items-per-page-control-act" className="w-full md:w-[100px]">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {[5, 10, 15, 20, 25, 50, 100].map(n => (
+                              <SelectItem key={n} value={String(n)}>{n}</SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="flex items-center justify-between md:justify-start gap-2 w-full md:w-auto">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full md:w-auto"
+                          onClick={() => setCurrentPageControlActivos(p => Math.max(1, p - 1))}
+                          disabled={currentPageControlActivos <= 1}
+                        >
+                          Anterior
+                        </Button>
+                        <span>
+                          Página {currentPageControlActivos} de {totalPagesControlActivos}
+                        </span>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="w-full md:w-auto"
+                          onClick={() => setCurrentPageControlActivos(p => Math.min(totalPagesControlActivos, p + 1))}
+                          disabled={currentPageControlActivos >= totalPagesControlActivos}
+                        >
+                          Siguiente
+                        </Button>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -8882,7 +9722,7 @@ export default function FacturacionCobranzaPage() {
               </div>
 
       <div>
-                    <div className="overflow-x-auto overflow-y-auto max-h-[60vh] border border-gray-200 rounded-lg">
+                    <div className="hidden md:block overflow-x-auto overflow-y-auto max-h-[60vh] border border-gray-200 rounded-lg">
                     <table className="min-w-full text-sm border-collapse divide-y divide-gray-200">
                       <thead>
                         <tr className="bg-gray-100 border-b border-gray-200">
@@ -8967,6 +9807,91 @@ export default function FacturacionCobranzaPage() {
                         ))}
                       </tbody>
                     </table>
+                  </div>
+                  <div className="md:hidden space-y-3">
+                    {(() => {
+                      const rows = controlClientesGenerado && controlClientesFetched
+                        ? controlClientesFetched.slice((currentPageControlActivos - 1) * itemsPerPageControl, (currentPageControlActivos - 1) * itemsPerPageControl + itemsPerPageControl)
+                        : paginatedControlActivos;
+
+                      if (!rows || rows.length === 0) {
+                        return (
+                          <div className="text-center py-6 text-sm text-gray-500 border border-dashed border-gray-300 rounded-lg">
+                            No hay registros para mostrar.
+                          </div>
+                        );
+                      }
+
+                      return rows.map((e: any) => {
+                        const tipoNombre = getTipoNombreFor(e as any);
+                        const currency = e.moneda_flete || "MXN";
+                        const amount = (() => {
+                          if (typeof e.precioFlete === "number") return e.precioFlete;
+                          if (typeof e.precioFlete === "string") return Number(e.precioFlete);
+                          if (typeof (e as any).montoFacturado === "number") return (e as any).montoFacturado;
+                          if (typeof (e as any).montoFacturado === "string") return Number((e as any).montoFacturado);
+                          return 0;
+                        })();
+                        const estadoFacturacion = e.estado_facturacion || "pendiente_facturacion";
+                        const cancelado = esCancelado(e);
+                        const fecha = new Date(e.fechaAsignacion || e.fecha_creacion || e.updated_at || Date.now()).toLocaleDateString();
+
+                        return (
+                          <div
+                            key={e.id}
+                            className={`rounded-lg border p-4 shadow-sm ${cancelado ? "border-red-200 bg-red-50" : "border-gray-200 bg-white"}`}
+                          >
+                            <div className="flex flex-col gap-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div>
+                                  <p className="text-xs font-semibold text-gray-500 uppercase">Folio</p>
+                                  <p className="text-lg font-semibold text-blue-700">{e.folio || "-"}</p>
+                                  <p className="text-sm text-gray-600">{(e as any).clienteNombre || "-"}</p>
+                                </div>
+                                {cancelado ? (
+                                  <Badge className="bg-red-600 text-white">Cancelado</Badge>
+                                ) : (
+                                  <Badge variant="outline" className="border-gray-300 text-gray-700">{estadoFacturacion}</Badge>
+                                )}
+                              </div>
+
+                              <div className="grid grid-cols-1 gap-2 text-sm">
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Load</span>
+                                  <span className="font-medium text-gray-700">{e.load_number || "-"}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Tipo</span>
+                                  <span className="font-medium text-gray-700" title={tipoNombre}>{tipoNombre}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Fecha</span>
+                                  <span className="font-medium text-gray-700">{fecha}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span className="text-gray-500">Monto</span>
+                                  <span className="font-semibold text-gray-800">
+                                    ${Number.isFinite(amount) ? amount.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '0.00'} {currency}
+                                  </span>
+                                </div>
+                              </div>
+
+                              <div className="flex flex-wrap gap-2">
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  className="flex-1"
+                                  onClick={() => verDetallesEmbarque(e as any)}
+                                  aria-label="Ver detalles"
+                                >
+                                  Ver detalles
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
       </div>
 
@@ -9128,7 +10053,7 @@ export default function FacturacionCobranzaPage() {
           open={showTiposServicioModal}
           onOpenChange={setShowTiposServicioModal}
         >
-          <DialogContent className="max-w-7xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="w-full max-w-full md:max-w-7xl md:w-[96vw] max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>Gestión de Tipos de Servicio</DialogTitle>
               <DialogDescription>
@@ -9138,8 +10063,8 @@ export default function FacturacionCobranzaPage() {
             </DialogHeader>
 
             <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+                <div className="flex items-center justify-between md:justify-start gap-2 w-full md:w-auto">
                   <Button
                     variant="outline"
                     size="icon"
@@ -9152,8 +10077,11 @@ export default function FacturacionCobranzaPage() {
                   <div className="text-sm text-gray-600 hidden md:block">
                     Puedes crear nuevos tipos de servicio y ajustar sus pagos.
                   </div>
+                  <div className="text-xs text-gray-500 md:hidden">
+                    Administra tipos y pagos sin dejar la vista.
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex flex-col md:flex-row md:items-center gap-3 w-full md:w-auto">
                   <div className="flex items-center gap-2">
                     <Label htmlFor="items-per-page-tipos" className="text-sm">Registros por página:</Label>
                     <Select
@@ -9163,7 +10091,7 @@ export default function FacturacionCobranzaPage() {
                         setCurrentPageTipos(1);
                       }}
                     >
-                      <SelectTrigger id="items-per-page-tipos" className="w-20">
+                      <SelectTrigger id="items-per-page-tipos" className="w-full md:w-20">
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
@@ -9178,19 +10106,20 @@ export default function FacturacionCobranzaPage() {
                   <Button
                     variant="outline"
                     onClick={() => exportarTiposServicioExcel()}
+                    className="hidden md:inline-flex"
                   >
                     <Download className="h-4 w-4 mr-2" /> Exportar
                   </Button>
                   <Button
                     variant="outline"
                     onClick={() => setShowConfigurarFleteModal(true)}
-                    className="bg-orange-600 hover:bg-orange-700 text-white"
+                    className="bg-orange-600 hover:bg-orange-700 text-white w-full md:w-auto"
                   >
                     Flete en Falso
                   </Button>
                   <Button
                     onClick={() => setShowCrearTipoModal(true)}
-                    className="bg-green-600 hover:bg-green-700 text-white"
+                    className="bg-green-600 hover:bg-green-700 text-white w-full md:w-auto"
                   >
                     + Agregar Tipo de Servicio
                   </Button>
@@ -9295,127 +10224,256 @@ export default function FacturacionCobranzaPage() {
                   </p>
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <table className="min-w-full text-sm border-collapse">
-                    <thead>
-                      <tr className="bg-gray-100 border-b border-gray-200">
-                        <th
-                          className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
-                          onClick={() => {
-                            setCurrentPageTipos(1);
-                            if (tiposSortBy === 'tipo') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-                            else { setTiposSortBy('tipo'); setTiposSortDir('asc'); }
-                          }}
-                        >
-                          Tipo{tiposSortBy === 'tipo' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </th>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700">
-                          Descripción
-                        </th>
-                        <th
-                          className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
-                          onClick={() => {
-                            setCurrentPageTipos(1);
-                            if (tiposSortBy === 'categoria') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-                            else { setTiposSortBy('categoria'); setTiposSortDir('asc'); }
-                          }}
-                        >
-                          Categoría{tiposSortBy === 'categoria' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </th>
-                        <th className="px-3 py-2 text-left font-semibold text-gray-700 w-32">
-                          Subcategoría
-                        </th>
-                        <th
-                          className="px-3 py-2 text-right font-semibold text-gray-700 cursor-pointer select-none"
-                          onClick={() => {
-                            setCurrentPageTipos(1);
-                            if (tiposSortBy === 'pago') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
-                            else { setTiposSortBy('pago'); setTiposSortDir('desc'); }
-                          }}
-                        >
-                          Pago Operador (MXN){tiposSortBy === 'pago' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
-                        </th>
-                        <th className="px-3 py-2 text-center font-semibold text-gray-700">
-                          Estado
-                        </th>
-                        <th className="px-3 py-2 text-center font-semibold text-gray-700">
-                          Detalles
-                        </th>
-                        <th className="px-3 py-2 text-center font-semibold text-gray-700 w-28">
-                          Acciones
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {paginatedTipos.map((tipo) => (
-                        <tr key={tipo.id} className="border-b border-gray-100">
-                          <td className="px-3 py-2 font-medium text-gray-800">
-                            {tipo.nombre}
-                          </td>
-                          <td className="px-3 py-2 text-gray-600 max-w-[480px]">
-                            {tipo.descripcion || "Sin descripción"}
-                          </td>
-                          <td className="px-3 py-2 text-gray-700">
-                            {tipo.categoria || "General"}
-                          </td>
-                          <td className="px-3 py-2 text-gray-700 w-32 max-w-[8rem]">
-                            <span className="block truncate" title={tipo.subcategoria || "-"}>
-                              {tipo.subcategoria || "-"}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2 text-right text-gray-800 font-medium">
-                            {(() => {
-                              const montoActivo = obtenerMontoTipoServicio(tipo);
-                              const formatted = `$${montoActivo.toLocaleString('es-MX', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}`;
-                              return (
-                                <div className="flex flex-col items-end">
-                                  <span>{formatted}</span>
-                                </div>
-                              );
-                            })()}
-                          </td>
-                          {/* Nueva columna de Estado */}
-                          <td className="px-3 py-2 text-center">
-                            <div className="flex items-center justify-center">
-                              {loadingValidation ? (
-                                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
-                              ) : tipoValidationInfo?.[tipo.id] ? (
-                                tipoValidationInfo[tipo.id].canDelete ? (
-                                  <div className="flex items-center gap-1 text-green-600" title={tipoValidationInfo[tipo.id].reason}>
-                                    <CheckCircle className="h-4 w-4" />
-                                    <span className="text-xs font-medium">Eliminar</span>
+                <div className="space-y-4">
+                  <div className="hidden md:block overflow-x-auto">
+                    <table className="min-w-full text-sm border-collapse">
+                      <thead>
+                        <tr className="bg-gray-100 border-b border-gray-200">
+                          <th
+                            className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
+                            onClick={() => {
+                              setCurrentPageTipos(1);
+                              if (tiposSortBy === 'tipo') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                              else { setTiposSortBy('tipo'); setTiposSortDir('asc'); }
+                            }}
+                          >
+                            Tipo{tiposSortBy === 'tipo' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          </th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-700">
+                            Descripción
+                          </th>
+                          <th
+                            className="px-3 py-2 text-left font-semibold text-gray-700 cursor-pointer select-none"
+                            onClick={() => {
+                              setCurrentPageTipos(1);
+                              if (tiposSortBy === 'categoria') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                              else { setTiposSortBy('categoria'); setTiposSortDir('asc'); }
+                            }}
+                          >
+                            Categoría{tiposSortBy === 'categoria' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          </th>
+                          <th className="px-3 py-2 text-left font-semibold text-gray-700 w-32">
+                            Subcategoría
+                          </th>
+                          <th
+                            className="px-3 py-2 text-right font-semibold text-gray-700 cursor-pointer select-none"
+                            onClick={() => {
+                              setCurrentPageTipos(1);
+                              if (tiposSortBy === 'pago') setTiposSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+                              else { setTiposSortBy('pago'); setTiposSortDir('desc'); }
+                            }}
+                          >
+                            Pago Operador (MXN){tiposSortBy === 'pago' ? (tiposSortDir === 'asc' ? ' ▲' : ' ▼') : ''}
+                          </th>
+                          <th className="px-3 py-2 text-center font-semibold text-gray-700">
+                            Estado
+                          </th>
+                          <th className="px-3 py-2 text-center font-semibold text-gray-700">
+                            Detalles
+                          </th>
+                          <th className="px-3 py-2 text-center font-semibold text-gray-700 w-28">
+                            Acciones
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {paginatedTipos.map((tipo) => (
+                          <tr key={tipo.id} className="border-b border-gray-100">
+                            <td className="px-3 py-2 font-medium text-gray-800">
+                              {tipo.nombre}
+                            </td>
+                            <td className="px-3 py-2 text-gray-600 max-w-[480px]">
+                              {tipo.descripcion || "Sin descripción"}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700">
+                              {tipo.categoria || "General"}
+                            </td>
+                            <td className="px-3 py-2 text-gray-700 w-32 max-w-[8rem]">
+                              <span className="block truncate" title={tipo.subcategoria || "-"}>
+                                {tipo.subcategoria || "-"}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2 text-right text-gray-800 font-medium">
+                              {(() => {
+                                const montoActivo = obtenerMontoTipoServicio(tipo);
+                                const formatted = `$${montoActivo.toLocaleString('es-MX', {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}`;
+                                return (
+                                  <div className="flex flex-col items-end">
+                                    <span>{formatted}</span>
+                                  </div>
+                                );
+                              })()}
+                            </td>
+                            {/* Nueva columna de Estado */}
+                            <td className="px-3 py-2 text-center">
+                              <div className="flex items-center justify-center">
+                                {loadingValidation ? (
+                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-gray-400"></div>
+                                ) : tipoValidationInfo?.[tipo.id] ? (
+                                  tipoValidationInfo[tipo.id].canDelete ? (
+                                    <div className="flex items-center gap-1 text-green-600" title={tipoValidationInfo[tipo.id].reason}>
+                                      <CheckCircle className="h-4 w-4" />
+                                      <span className="text-xs font-medium">Eliminar</span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-1 text-red-600" title={tipoValidationInfo[tipo.id].reason}>
+                                      <XCircle className="h-4 w-4" />
+                                      <span className="text-xs font-medium">
+                                        {tipoValidationInfo[tipo.id].embarquesCount > 0 && `${tipoValidationInfo[tipo.id].embarquesCount} refs`}
+                                      </span>
+                                    </div>
+                                  )
+                                ) : (
+                                  <div className="text-gray-400 text-xs">-</div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-2">
+                              {/* Detalles column: lock + edit + save */}
+                              <DetallesTipoRow
+                                tipo={tipo}
+                                onSave={(nuevoMonto: number) => {
+                                  guardarTipoServicio(tipo.id, nuevoMonto);
+                                }}
+                              />
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              <div className="flex items-center justify-center gap-1">
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                                  onClick={() => cargarUsosTipo(tipo)}
+                                  title="Ver usos"
+                                  aria-label="Ver usos"
+                                >
+                                  <Eye className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => abrirEditarTipo(tipo)}
+                                  title="Editar nombre y datos"
+                                  aria-label="Editar"
+                                  className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                                >
+                                  <Edit className="h-4 w-4" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="icon"
+                                  onClick={() => eliminarTipoServicio(tipo)}
+                                  title={
+                                    tipoValidationInfo?.[tipo.id]
+                                      ? tipoValidationInfo[tipo.id].canDelete
+                                        ? "Eliminar tipo de servicio"
+                                        : `No se puede eliminar: ${tipoValidationInfo[tipo.id].reason}`
+                                      : loadingValidation
+                                      ? "Validando..."
+                                      : "Eliminar"
+                                  }
+                                  aria-label="Eliminar"
+                                  disabled={
+                                    loadingValidation || 
+                                    (tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete)
+                                  }
+                                  className={`border-red-300 ${
+                                    tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete
+                                      ? "text-red-300 bg-red-50 cursor-not-allowed opacity-50"
+                                      : "text-red-600 hover:text-red-700 hover:bg-red-50"
+                                  }`}
+                                >
+                                  {loadingValidation ? (
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-red-400"></div>
+                                  ) : (
+                                    <Trash className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="md:hidden space-y-3">
+                    {paginatedTipos.map((tipo) => {
+                      const montoActivo = obtenerMontoTipoServicio(tipo);
+                      const formattedMonto = `$${montoActivo.toLocaleString('es-MX', {
+                        minimumFractionDigits: 2,
+                        maximumFractionDigits: 2,
+                      })}`;
+                      const estadoInfo = tipoValidationInfo?.[tipo.id];
+                      const badgeContent = loadingValidation
+                        ? 'Validando...'
+                        : estadoInfo
+                        ? estadoInfo.canDelete
+                          ? 'Eliminar'
+                          : `${estadoInfo.embarquesCount > 0 ? `${estadoInfo.embarquesCount} refs` : 'Protegido'}`
+                        : '—';
+                      const badgeStyle = loadingValidation
+                        ? 'bg-gray-100 text-gray-600 border-gray-300'
+                        : estadoInfo
+                        ? estadoInfo.canDelete
+                          ? 'bg-green-100 text-green-700 border-green-300'
+                          : 'bg-red-100 text-red-700 border-red-300'
+                        : 'border-gray-300 text-gray-600';
+
+                      return (
+                        <div key={tipo.id} className="rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+                          <div className="flex flex-col gap-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <p className="text-xs font-semibold uppercase text-gray-500">Tipo</p>
+                                <p className="text-base font-semibold text-gray-900">{tipo.nombre}</p>
+                                <p className="text-xs text-gray-500 mt-1">{tipo.categoria || 'General'} · {tipo.subcategoria || 'Sin subcategoría'}</p>
+                              </div>
+                              <Badge variant="outline" className={badgeStyle}>
+                                {loadingValidation ? (
+                                  <div className="flex items-center gap-1">
+                                    <div className="h-3 w-3 animate-spin rounded-full border-b border-gray-500"></div>
+                                    <span className="text-xs font-medium">Validando</span>
                                   </div>
                                 ) : (
-                                  <div className="flex items-center gap-1 text-red-600" title={tipoValidationInfo[tipo.id].reason}>
-                                    <XCircle className="h-4 w-4" />
-                                    <span className="text-xs font-medium">
-                                      {tipoValidationInfo[tipo.id].embarquesCount > 0 && `${tipoValidationInfo[tipo.id].embarquesCount} refs`}
-                                    </span>
-                                  </div>
-                                )
-                              ) : (
-                                <div className="text-gray-400 text-xs">-</div>
-                              )}
+                                  <span className="text-xs font-medium">{badgeContent}</span>
+                                )}
+                              </Badge>
                             </div>
-                          </td>
-                          <td className="px-3 py-2">
-                            {/* Detalles column: lock + edit + save */}
-                            <DetallesTipoRow
-                              tipo={tipo}
-                              onSave={(nuevoMonto: number) => {
-                                guardarTipoServicio(tipo.id, nuevoMonto);
-                              }}
-                            />
-                          </td>
-                          <td className="px-3 py-2 text-center">
-                            <div className="flex items-center justify-center gap-1">
+
+                            <div className="text-sm text-gray-600">
+                              {tipo.descripcion || 'Sin descripción registrada.'}
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-2 text-sm">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500">Pago Operador</span>
+                                <span className="font-semibold text-gray-900">{formattedMonto}</span>
+                              </div>
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-500">Estado</span>
+                                <span className={`font-medium ${tipo.activo ? 'text-green-700' : 'text-red-600'}`}>
+                                  {tipo.activo ? 'Activo' : 'Inactivo'}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="border-t border-gray-200 pt-3">
+                              <DetallesTipoRow
+                                tipo={tipo}
+                                onSave={(nuevoMonto: number) => {
+                                  guardarTipoServicio(tipo.id, nuevoMonto);
+                                }}
+                              />
+                            </div>
+
+                            <div className="flex flex-wrap gap-2">
                               <Button
                                 variant="outline"
                                 size="icon"
-                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100 flex-1 min-w-[48px]"
                                 onClick={() => cargarUsosTipo(tipo)}
                                 title="Ver usos"
                                 aria-label="Ver usos"
@@ -9428,7 +10486,7 @@ export default function FacturacionCobranzaPage() {
                                 onClick={() => abrirEditarTipo(tipo)}
                                 title="Editar nombre y datos"
                                 aria-label="Editar"
-                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100"
+                                className="border-gray-300 text-gray-700 bg-white hover:bg-gray-100 flex-1 min-w-[48px]"
                               >
                                 <Edit className="h-4 w-4" />
                               </Button>
@@ -9437,23 +10495,22 @@ export default function FacturacionCobranzaPage() {
                                 size="icon"
                                 onClick={() => eliminarTipoServicio(tipo)}
                                 title={
-                                  tipoValidationInfo?.[tipo.id]
-                                    ? tipoValidationInfo[tipo.id].canDelete
+                                  estadoInfo
+                                    ? estadoInfo.canDelete
                                       ? "Eliminar tipo de servicio"
-                                      : `No se puede eliminar: ${tipoValidationInfo[tipo.id].reason}`
+                                      : `No se puede eliminar: ${estadoInfo.reason}`
                                     : loadingValidation
                                     ? "Validando..."
                                     : "Eliminar"
                                 }
                                 aria-label="Eliminar"
                                 disabled={
-                                  loadingValidation || 
-                                  (tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete)
+                                  loadingValidation || (estadoInfo && !estadoInfo.canDelete)
                                 }
-                                className={`border-red-300 ${
-                                  tipoValidationInfo?.[tipo.id] && !tipoValidationInfo[tipo.id].canDelete
-                                    ? "text-red-300 bg-red-50 cursor-not-allowed opacity-50"
-                                    : "text-red-600 hover:text-red-700 hover:bg-red-50"
+                                className={`flex-1 min-w-[48px] border-red-300 ${
+                                  estadoInfo && !estadoInfo.canDelete
+                                    ? 'text-red-300 bg-red-50 cursor-not-allowed opacity-50'
+                                    : 'text-red-600 hover:text-red-700 hover:bg-red-50'
                                 }`}
                               >
                                 {loadingValidation ? (
@@ -9463,33 +10520,39 @@ export default function FacturacionCobranzaPage() {
                                 )}
                               </Button>
                             </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
                   {totalPagesTipos > 1 && (
-                    <div className="flex justify-center items-center space-x-2 mt-4">
+                    <div className="flex flex-col md:flex-row md:items-center md:justify-center gap-2 mt-2">
                       <Button
                         variant="outline"
                         size="sm"
+                        className="w-full md:w-auto"
                         onClick={() => setCurrentPageTipos((p) => Math.max(1, p - 1))}
                         disabled={currentPageTipos === 1}
                       >
-                        <ChevronLeft className="h-4 w-4" />
-                        Anterior
+                        <span className="flex items-center justify-center gap-1">
+                          <ChevronLeft className="h-4 w-4" />
+                          Anterior
+                        </span>
                       </Button>
-                      <span className="text-sm text-gray-700">
+                      <span className="text-sm text-gray-700 text-center">
                         Página {currentPageTipos} de {totalPagesTipos}
                       </span>
                       <Button
                         variant="outline"
                         size="sm"
+                        className="w-full md:w-auto"
                         onClick={() => setCurrentPageTipos((p) => Math.min(totalPagesTipos, p + 1))}
                         disabled={currentPageTipos === totalPagesTipos}
                       >
-                        Siguiente
-                        <ChevronRight className="h-4 w-4" />
+                        <span className="flex items-center justify-center gap-1">
+                          Siguiente
+                          <ChevronRight className="h-4 w-4" />
+                        </span>
                       </Button>
                     </div>
                   )}
@@ -10646,24 +11709,26 @@ export default function FacturacionCobranzaPage() {
 
             {/* Controles de generación aleatoria removidos */}
 
-            <div className="space-y-3">
-              <div className="hidden md:grid md:grid-cols-4 gap-2 text-xs text-gray-600">
+            <div className="space-y-4">
+              <div className="hidden md:grid md:grid-cols-4 gap-3 text-xs font-semibold text-gray-600">
                 <div>Folio</div>
                 <div>Fecha envío</div>
                 <div>Fecha pago</div>
                 <div>Referencia</div>
               </div>
 
-              {/* Rows dinámicas basadas en el array de facturas */}
               {facturacionData.facturas.map((factura, index) => (
-                <div key={index} className="grid grid-cols-1 md:grid-cols-4 gap-2 items-center">
+                <div
+                  key={`factura-${index}`}
+                  className="grid grid-cols-1 md:grid-cols-4 gap-3"
+                >
                   <div>
                     <Label className="md:hidden" htmlFor={`numeroFactura${index + 1}`}>
-                      Número Factura {index + 1}
+                      Número factura {index + 1}
                     </Label>
                     <Input
                       id={`numeroFactura${index + 1}`}
-                      value={factura.numero}
+                      value={factura.numero || ""}
                       onChange={(e) => {
                         const nuevasFacturas = [...facturacionData.facturas];
                         nuevasFacturas[index] = { ...factura, numero: e.target.value };
@@ -10729,9 +11794,6 @@ export default function FacturacionCobranzaPage() {
                   </div>
                 </div>
               ))}
-
-
-
 
               <div>
                 <Label htmlFor="observacionesFacturacion">Observaciones</Label>
