@@ -530,3 +530,380 @@ export async function eliminarArchivoOperador(opts: { id?: string; pathname?: st
   }
 }
 
+// ================= Helpers para documentos de remolques =================
+
+export async function subirDocumentoRemolque(
+  remolqueId: string,
+  file: File,
+  tipoDocumento: string = 'documento_general',
+  numeroDocumento?: string,
+): Promise<{ url: string; pathname: string }> {
+  try {
+    console.log("Subiendo documento de remolque:", { remolqueId, tipoDocumento, fileName: file.name })
+
+    if (!file) {
+      throw new Error("No se proporcionó archivo")
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("El archivo es muy grande. Tamaño máximo: 10MB")
+    }
+
+    const tiposPermitidos = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/bmp",
+      "image/webp",
+      "application/pdf",
+    ]
+
+    if (!tiposPermitidos.includes(file.type)) {
+      throw new Error("Tipo de archivo no permitido. Solo se permiten imágenes (JPG, PNG, GIF, BMP, WebP) y PDFs")
+    }
+
+    const timestamp = Date.now()
+    const extension = file.name.split(".").pop()
+
+    let subfolder = "general"
+    if (tipoDocumento === "poliza_seguro") subfolder = "seguros"
+    else if (tipoDocumento === "verificacion") subfolder = "verificaciones"
+    else if (tipoDocumento === "tarjeta_circulacion") subfolder = "circulacion"
+    else if (tipoDocumento === "inspeccion") subfolder = "inspecciones"
+    else if (tipoDocumento === "mantenimiento") subfolder = "mantenimiento"
+    else if (tipoDocumento === "factura") subfolder = "facturas"
+    else if (tipoDocumento === "manual") subfolder = "manuales"
+
+    const nombreBase = `${tipoDocumento}_${timestamp}.${extension}`
+    const nombreArchivo = `remolques/${remolqueId}/${subfolder}/${nombreBase}`
+
+    console.log("Nombre de archivo generado:", nombreArchivo)
+
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("fileName", nombreArchivo)
+
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      let errorText = await response.text()
+      console.error("Error en respuesta del servidor:", errorText)
+      try {
+        const parsed = JSON.parse(errorText)
+        if (parsed?.code === "BLOB_QUOTA_EXCEEDED" || response.status === 507) {
+          throw new Error(
+            parsed?.error ||
+              "El almacenamiento de imágenes está lleno. Contacta al administrador para liberar espacio o ampliar el plan."
+          )
+        }
+        throw new Error(parsed?.error || `Error del servidor: ${response.status}`)
+      } catch {
+        if (response.status === 507 || /quota|storage|insufficient/i.test(errorText)) {
+          throw new Error("El almacenamiento de imágenes está lleno. Contacta al administrador para liberar espacio o ampliar el plan.")
+        }
+        throw new Error(`Error del servidor: ${response.status} - ${errorText}`)
+      }
+    }
+
+    const result = await response.json()
+    console.log("Documento de remolque subido exitosamente:", result)
+
+    return {
+      url: result.url,
+      pathname: result.pathname,
+    }
+  } catch (error) {
+    console.error("Error al subir documento de remolque:", error)
+    throw new Error(`Error al subir el documento: ${error instanceof Error ? error.message : "Error desconocido"}`)
+  }
+}
+
+export async function eliminarDocumentoRemolque(target: string): Promise<void> {
+  try {
+    console.log("Eliminando documento de remolque:", target)
+
+    let documentoRemolque: any
+
+    if (target.includes('/')) {
+      const { data, error } = await supabase
+        .from('documentos_remolques')
+        .select('*')
+        .eq('pathname', target)
+        .eq('activo', true)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        throw new Error(`Error buscando documento por pathname: ${error.message}`)
+      }
+      documentoRemolque = data
+    } else {
+      const { data, error } = await supabase
+        .from('documentos_remolques')
+        .select('*')
+        .eq('id', target)
+        .eq('activo', true)
+        .single()
+
+      if (error && error.code !== 'PGRST116') {
+        throw new Error(`Error buscando documento por ID: ${error.message}`)
+      }
+      documentoRemolque = data
+    }
+
+    if (!documentoRemolque) {
+      console.warn('Documento de remolque no encontrado:', target)
+      return
+    }
+
+    try {
+      const response = await fetch(`/api/delete-blob?pathname=${encodeURIComponent(documentoRemolque.pathname)}`, {
+        method: 'DELETE',
+      })
+
+      if (!response.ok) {
+        console.warn(`Error eliminando blob (${response.status}):`, await response.text())
+      }
+    } catch (e) {
+      console.warn('Fallo al eliminar blob para documento remolque:', e)
+    }
+
+    const { error: updateError } = await supabase
+      .from('documentos_remolques')
+      .update({
+        activo: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', documentoRemolque.id)
+
+    if (updateError) {
+      throw new Error(`Error marcando documento como inactivo: ${updateError.message}`)
+    }
+
+    console.log("Documento de remolque eliminado exitosamente")
+  } catch (error) {
+    console.error("Error eliminando documento de remolque:", error)
+    throw error
+  }
+}
+
+export async function listarDocumentosRemolque(remolqueId: string) {
+  try {
+    const { data, error } = await supabase
+      .from('documentos_remolques')
+      .select('*')
+      .eq('remolque_id', remolqueId)
+      .eq('activo', true)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      throw new Error(`Error listando documentos de remolque: ${error.message}`)
+    }
+
+    return data || []
+  } catch (error) {
+    console.error("Error listando documentos de remolque:", error)
+    throw error
+  }
+}
+
+// ===== FUNCIONES PARA DOCUMENTOS DE EMBARQUES =====
+
+export async function subirDocumentoEmbarque(
+  embarqueId: string,
+  file: File,
+): Promise<{ url: string; pathname: string }> {
+  try {
+    console.log("Subiendo documento de embarque:", { embarqueId, fileName: file.name })
+
+    if (!file) {
+      throw new Error("No se proporcionó archivo")
+    }
+
+    if (file.size > 10 * 1024 * 1024) {
+      throw new Error("El archivo es muy grande. Tamaño máximo: 10MB")
+    }
+
+    const tiposPermitidos = [
+      "image/jpeg",
+      "image/jpg",
+      "image/png",
+      "image/gif",
+      "image/bmp",
+      "image/webp",
+      "application/pdf",
+    ]
+    if (!tiposPermitidos.includes(file.type)) {
+      throw new Error("Tipo de archivo no permitido. Solo se permiten imágenes (JPG, PNG, GIF, BMP, WebP) y PDFs")
+    }
+
+    const timestamp = Date.now()
+    const extension = file.name.split(".").pop()
+    const nombreArchivo = `embarques/${embarqueId}/documentos/${timestamp}.${extension}`
+
+    const formData = new FormData()
+    formData.append("file", file)
+    formData.append("fileName", nombreArchivo)
+
+    const response = await fetch("/api/upload", {
+      method: "POST",
+      body: formData,
+    })
+
+    if (!response.ok) {
+      const raw = await response.text()
+      try {
+        const errorData = JSON.parse(raw)
+        if (errorData?.code === "BLOB_QUOTA_EXCEEDED" || response.status === 507) {
+          throw new Error(
+            errorData?.error ||
+              "El almacenamiento está lleno. Avise al administrador para liberar espacio."
+          )
+        }
+        throw new Error(errorData?.error || "Error al subir archivo")
+      } catch {
+        throw new Error("Error al subir archivo")
+      }
+    }
+
+    const result = await response.json()
+    console.log("Documento de embarque subido exitosamente:", result.url)
+
+    return {
+      url: result.url,
+      pathname: result.pathname,
+    }
+  } catch (error: any) {
+    console.error("❌ [subirDocumentoEmbarque] Error subiendo documento de embarque:", {
+      error,
+      message: error?.message,
+      stack: error?.stack,
+      embarqueId,
+      fileName: file?.name,
+      fileSize: file?.size,
+      fileType: file?.type,
+    })
+
+    const errorMessage =
+      error?.message ||
+      error?.error_description ||
+      error?.details ||
+      (typeof error === 'string' ? error : 'Error desconocido al subir documento de embarque')
+    throw new Error(errorMessage)
+  }
+}
+
+export async function eliminarDocumentoEmbarque(pathname: string): Promise<void> {
+  try {
+    console.log("Eliminando documento de embarque:", pathname)
+
+    const response = await fetch(`/api/delete-blob?pathname=${encodeURIComponent(pathname)}`, {
+      method: 'DELETE',
+    })
+
+    if (!response.ok) {
+      console.warn(`Error eliminando blob (${response.status}):`, await response.text())
+    }
+
+    console.log("Documento de embarque eliminado exitosamente")
+  } catch (error) {
+    console.error("Error eliminando documento de embarque:", error)
+    throw error
+  }
+}
+
+export async function eliminarDocumentoEmbarqueCompleto(documentoId: string): Promise<void> {
+  try {
+    console.log("🗑️ [eliminarDocumentoEmbarqueCompleto] Eliminando documento ID:", documentoId)
+
+    const { data: documento, error: fetchError } = await supabase
+      .from('documentos_embarques')
+      .select('*')
+      .eq('id', documentoId)
+      .single()
+
+    if (fetchError) {
+      console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error obteniendo documento:", fetchError)
+      throw new Error(`Error obteniendo documento: ${fetchError.message}`)
+    }
+
+    if (!documento) {
+      throw new Error("Documento no encontrado")
+    }
+
+    console.log("📄 [eliminarDocumentoEmbarqueCompleto] Documento encontrado:", {
+      id: documento.id,
+      nombre_archivo: documento.nombre_archivo,
+      pathname: documento.pathname,
+    })
+
+    if (documento.pathname) {
+      try {
+        await eliminarDocumentoEmbarque(documento.pathname)
+        console.log("✅ [eliminarDocumentoEmbarqueCompleto] Archivo eliminar de Vercel Blob")
+      } catch (blobError) {
+        console.warn("⚠️ [eliminarDocumentoEmbarqueCompleto] Error eliminando de blob (continuando):", blobError)
+      }
+    }
+
+    const { error: deleteError } = await supabase
+      .from('documentos_embarques')
+      .delete()
+      .eq('id', documentoId)
+
+    if (deleteError) {
+      console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error eliminando de base de datos:", deleteError)
+      throw new Error(`Error eliminando documento de base de datos: ${deleteError.message}`)
+    }
+
+    console.log("✅ [eliminarDocumentoEmbarqueCompleto] Documento eliminado completamente")
+  } catch (error) {
+    console.error("❌ [eliminarDocumentoEmbarqueCompleto] Error general:", error)
+    throw error
+  }
+}
+
+export async function listarDocumentosEmbarque(embarqueId: string) {
+  try {
+    console.log("📂 [listarDocumentosEmbarque] Iniciando consulta para embarque:", embarqueId)
+    console.log("📂 [listarDocumentosEmbarque] Tipo de embarqueId:", typeof embarqueId)
+    const { data, error } = await supabase
+      .from('documentos_embarques')
+      .select('*')
+      .eq('embarque_id', embarqueId)
+      .order('created_at', { ascending: false })
+
+    if (error) {
+      console.error("❌ [listarDocumentosEmbarque] Error de Supabase:", error)
+      throw new Error(`Error listando documentos de embarque: ${error.message}`)
+    }
+
+    console.log("✅ [listarDocumentosEmbarque] Documentos encontrados:", {
+      cantidad: data?.length || 0,
+      embarqueId: embarqueId,
+      documentos: data,
+    })
+
+    if (data && data.length > 0) {
+      data.forEach((doc, index) => {
+        console.log(`📄 [listarDocumentosEmbarque] Documento ${index + 1}:`, {
+          id: doc.id,
+          nombre_archivo: doc.nombre_archivo,
+          url: doc.url,
+          pathname: doc.pathname,
+          embarque_id: doc.embarque_id,
+          created_at: doc.created_at,
+        })
+      })
+    }
+
+    return data || []
+  } catch (error) {
+    console.error("❌ [listarDocumentosEmbarque] Error general:", error)
+    throw error
+  }
+}
+
