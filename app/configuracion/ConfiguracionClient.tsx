@@ -12,8 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import LoginBackgroundManager from "@/components/configuracion/login-background-manager";
-import { Settings, Shield, Bell, FileText, User, Trash2, Download, Filter, AlertTriangle, Edit2, Save } from "lucide-react";
-import { getCurrentUser, verifyAuditPassword, listUsers, listActiveUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser, deleteUser } from "@/lib/auth";
+import { Settings, Shield, Bell, FileText, User, Trash2, Download, Filter, AlertTriangle, Edit2, Save, ChevronLeft, ChevronRight } from "lucide-react";
+import { getCurrentUser, listUsers, listActiveUsers, createUser, resetPassword, getSecuritySettings, setSecuritySettings, verifyCurrentUserPassword, deactivateUser, deleteUser } from "@/lib/auth";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { supabase } from "@/lib/supabase";
@@ -51,10 +51,34 @@ interface ConfiguracionGeneral {
     formatoFecha: string;
 }
 
+const CONFIG_TABS = [
+    { value: "general", label: "General" },
+    { value: "branding", label: "Branding" },
+    { value: "backup", label: "Backup" },
+    { value: "seguridad", label: "Usuarios" },
+    { value: "alertas", label: "Alertas" },
+    { value: "auditlog", label: "Audit Log" },
+    { value: "limpieza", label: "Limpieza" },
+] as const;
+
+const MOBILE_TAB_EXCLUSIONS = new Set(["branding", "alertas"]);
+const MOBILE_CONFIG_TABS = CONFIG_TABS.filter((tab) => !MOBILE_TAB_EXCLUSIONS.has(tab.value));
+
+const MOBILE_TABS_WINDOW = 3;
+
+const getMobileStartForTab = (tabValue: string): number => {
+    const pool = MOBILE_CONFIG_TABS.length > 0 ? MOBILE_CONFIG_TABS : CONFIG_TABS;
+    const idx = pool.findIndex((tab) => tab.value === tabValue);
+    if (idx === -1 || idx < MOBILE_TABS_WINDOW) return 0;
+    const maxStart = Math.max(0, pool.length - MOBILE_TABS_WINDOW);
+    return Math.min(idx - (MOBILE_TABS_WINDOW - 1), maxStart);
+};
+
 export default function ConfiguracionPage() {
     const searchParams = useSearchParams();
     const initialTab = (searchParams?.get('tab') || 'general');
     const [activeTab, setActiveTab] = useState(initialTab);
+    const [mobileTabStart, setMobileTabStart] = useState(() => getMobileStartForTab(initialTab));
     const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
     const [filtroModulo, setFiltroModulo] = useState("todos");
     const [filtroAccion, setFiltroAccion] = useState("todas");
@@ -106,17 +130,6 @@ export default function ConfiguracionPage() {
     const [retencionNextRun, setRetencionNextRun] = useState<string | null>(null)
     const [retencionWarning, setRetencionWarning] = useState<string | null>(null)
     // Limpieza total: dialogs y estados
-    const [auditLimpiezaDialogOpen, setAuditLimpiezaDialogOpen] = useState(false)
-    const [auditLimpiezaRunning, setAuditLimpiezaRunning] = useState(false)
-    const [auditLimpiezaResult, setAuditLimpiezaResult] = useState<string | null>(null)
-    const [auditLimpiezaError, setAuditLimpiezaError] = useState<string | null>(null)
-    const [auditStats, setAuditStats] = useState<{ totalRegistros: number; registrosAntiguos: number; registrosActivos: number } | null>(null)
-    // Doble confirmación y contraseña para limpieza de Audit Logs
-    const [auditDialog1Open, setAuditDialog1Open] = useState(false)
-    const [auditDialog2Open, setAuditDialog2Open] = useState(false)
-    const [auditPwd1, setAuditPwd1] = useState("")
-    const [auditPwd2, setAuditPwd2] = useState("")
-    const [auditErr, setAuditErr] = useState<string | null>(null)
     const [limpiezaFinalOpen, setLimpiezaFinalOpen] = useState(false)
     const [limpiezaRunning, setLimpiezaRunning] = useState(false)
     const [limpiezaMsg, setLimpiezaMsg] = useState<string | null>(null)
@@ -141,6 +154,21 @@ export default function ConfiguracionPage() {
     const [zipStart, setZipStart] = useState<string>("")
     const [zipEnd, setZipEnd] = useState<string>("")
     const [zipDownloading, setZipDownloading] = useState(false)
+
+    useEffect(() => {
+        setMobileTabStart((prev) => {
+            const pool = MOBILE_CONFIG_TABS.length > 0 ? MOBILE_CONFIG_TABS : CONFIG_TABS;
+            const tabIndex = pool.findIndex((tab) => tab.value === activeTab);
+            const maxStart = Math.max(0, pool.length - MOBILE_TABS_WINDOW);
+            const normalizedPrev = Math.min(prev, maxStart);
+            if (tabIndex === -1) return normalizedPrev;
+            if (tabIndex < normalizedPrev) return tabIndex;
+            if (tabIndex > normalizedPrev + MOBILE_TABS_WINDOW - 1) {
+                return Math.min(tabIndex - (MOBILE_TABS_WINDOW - 1), maxStart);
+            }
+            return normalizedPrev;
+        });
+    }, [activeTab]);
 
     // Cargar umbrales de alerta desde Supabase
     const cargarAlertThresholds = async () => {
@@ -640,6 +668,12 @@ export default function ConfiguracionPage() {
         }
     }
 
+    const mobileTabsPool = MOBILE_CONFIG_TABS.length > 0 ? MOBILE_CONFIG_TABS : CONFIG_TABS
+    const maxMobileTabStart = Math.max(0, mobileTabsPool.length - MOBILE_TABS_WINDOW)
+    const visibleMobileTabs = mobileTabsPool.slice(mobileTabStart, mobileTabStart + MOBILE_TABS_WINDOW)
+    const canSlidePrev = mobileTabStart > 0
+    const canSlideNext = mobileTabStart < maxMobileTabStart
+
     return (
         <MainLayout>
             <div className="space-y-6">
@@ -649,16 +683,53 @@ export default function ConfiguracionPage() {
                 </div>
 
                 <Tabs value={activeTab} onValueChange={setActiveTab}>
-                    <TabsList className="grid w-full grid-cols-7">
-                        <TabsTrigger value="general">General</TabsTrigger>
-                        <TabsTrigger value="branding">Branding</TabsTrigger>
-                        <TabsTrigger value="backup">Backup</TabsTrigger>
-                        <TabsTrigger value="seguridad">Usuarios</TabsTrigger>
-                        <TabsTrigger value="alertas">Alertas</TabsTrigger>
-                        <TabsTrigger value="auditlog">Audit Log</TabsTrigger>
-                        <TabsTrigger value="limpieza">Limpieza</TabsTrigger>
+                    <div className="md:hidden flex items-center gap-2">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setMobileTabStart((prev) => Math.max(0, prev - 1))}
+                            disabled={!canSlidePrev}
+                            aria-label="Pestañas anteriores"
+                        >
+                            <ChevronLeft className="h-4 w-4" />
+                        </Button>
+                        <TabsList className="grid w-full grid-cols-3 gap-2">
+                            {visibleMobileTabs.map((tab) => (
+                                <TabsTrigger
+                                    key={`mobile-${tab.value}`}
+                                    value={tab.value}
+                                    className="px-2 py-2 text-xs whitespace-nowrap"
+                                >
+                                    {tab.label}
+                                </TabsTrigger>
+                            ))}
+                        </TabsList>
+                        <Button
+                            type="button"
+                            variant="outline"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => setMobileTabStart((prev) => Math.min(maxMobileTabStart, prev + 1))}
+                            disabled={!canSlideNext}
+                            aria-label="Pestañas siguientes"
+                        >
+                            <ChevronRight className="h-4 w-4" />
+                        </Button>
+                    </div>
+                    <TabsList className="hidden md:grid w-full md:grid-cols-7">
+                        {CONFIG_TABS.map((tab) => (
+                            <TabsTrigger
+                                key={tab.value}
+                                value={tab.value}
+                                className="px-2 py-2 text-xs md:px-3 md:py-2 md:text-sm"
+                            >
+                                {tab.label}
+                            </TabsTrigger>
+                        ))}
                     </TabsList>
-                    <TabsContent value="alertas" className="space-y-4">
+                    <TabsContent value="alertas" className="space-y-4 hidden md:block">
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center space-x-2">
@@ -674,7 +745,7 @@ export default function ConfiguracionPage() {
                                     <div className="text-center text-gray-500 py-8">Cargando umbrales...</div>
                                 ) : (
                                     <div className="overflow-x-auto">
-                                        <table className="min-w-full text-sm border">
+                                        <table className="min-w-full text-xs md:text-sm border">
                                             <thead>
                                                 <tr className="bg-gray-100">
                                                     <th className="px-2 py-1 border">Módulo</th>
@@ -768,9 +839,9 @@ export default function ConfiguracionPage() {
                                             <div className="font-medium">Aviso de retención</div>
                                             <div>{retencionWarning}</div>
                                             <div className="text-xs text-gray-700 mt-1">Siguiente ejecución programada: {retencionNextRun ? new Date(retencionNextRun).toLocaleString() : 'no programada'}</div>
-                                            <div className="mt-2 flex gap-2">
-                                                <Button size="sm" className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={startRetentionFlow}>Ejecutar ahora</Button>
-                                                <Button size="sm" variant="outline" onClick={cancelRetentionAndSnooze}>Cancelar y reiniciar conteo</Button>
+                                            <div className="mt-2 flex flex-col gap-2 md:flex-row">
+                                                <Button size="sm" className="w-full bg-green-600 hover:bg-green-700 text-white border-green-700 md:w-auto" onClick={startRetentionFlow}>Ejecutar ahora</Button>
+                                                <Button size="sm" variant="outline" className="w-full md:w-auto" onClick={cancelRetentionAndSnooze}>Cancelar y reiniciar conteo</Button>
                                             </div>
                                         </div>
                                     </div>
@@ -844,11 +915,11 @@ export default function ConfiguracionPage() {
                         </Card>
                     </TabsContent>
 
-                    <TabsContent value="branding" className="space-y-4">
+                    <TabsContent value="branding" className="hidden md:block space-y-4">
                         <LoginBackgroundManager />
                     </TabsContent>
 
-                    <TabsContent value="backup" className="space-y-4">
+                    <TabsContent value="backup" className="space-y-4 md:space-y-6 max-w-full md:max-w-none">
                         {/* Respaldo en Excel (todas las tablas) */}
                         <Card>
                             <CardHeader>
@@ -858,10 +929,10 @@ export default function ConfiguracionPage() {
                                 </CardTitle>
                                 <CardDescription>Descarga un archivo Excel con varias hojas: Operadores, Embarques, Clientes y Créditos de Clientes (estado actual)</CardDescription>
                             </CardHeader>
-                            <CardContent className="space-y-2">
-                                <div className="flex flex-wrap gap-2 items-center">
+                            <CardContent className="space-y-3 text-sm md:text-base">
+                                <div className="flex flex-col md:flex-wrap md:flex-row gap-2 items-stretch md:items-center w-full">
                                     <Button
-                                        className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                        className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
                                         onClick={async () => {
                                             try {
                                                 const res = await fetch('/api/export-all-xlsx', { method: 'GET' })
@@ -890,7 +961,7 @@ export default function ConfiguracionPage() {
                                     >
                                         Descargar respaldo Excel
                                     </Button>
-                                    <p className="text-xs text-gray-500">Incluye todas las tablas clave en hojas separadas para respaldo rápido.</p>
+                                    <p className="text-xs text-gray-500 md:text-sm md:text-left text-center w-full">Incluye todas las tablas clave en hojas separadas para respaldo rápido.</p>
                                 </div>
                             </CardContent>
                         </Card>
@@ -904,7 +975,7 @@ export default function ConfiguracionPage() {
                                 </CardTitle>
                                 <CardDescription>Descarga masiva de imágenes por rango de fechas</CardDescription>
                             </CardHeader>
-                            <CardContent className="space-y-4">
+                            <CardContent className="space-y-4 text-sm md:text-base">
                                 {/* Descargar fotografías (ZIP) */}
                                 <div className="space-y-2">
                                     <Label className="block">Descargar fotografías (ZIP) — opcional rango de fechas</Label>
@@ -920,9 +991,9 @@ export default function ConfiguracionPage() {
                                         <div className="space-y-1 md:col-span-2">
                                             {/* ✅ Label "Acción" eliminado - Botón alineado con inputs de fecha */}
                                             <Label className="invisible">Acción</Label>
-                                            <div className="flex flex-wrap gap-2 items-center">
+                                            <div className="flex flex-col md:flex-row md:flex-wrap gap-2 items-stretch md:items-center">
                                                 <Button
-                                                    className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                    className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
                                                     disabled={zipDownloading}
                                                     onClick={async () => {
                                                         try {
@@ -977,11 +1048,11 @@ export default function ConfiguracionPage() {
                                 </CardTitle>
                                 <CardDescription>Controles para exportar datos, programar respaldos y previsualizar imports</CardDescription>
                             </CardHeader>
-                            <CardContent className="space-y-4">
+                            <CardContent className="space-y-4 text-sm md:text-base">
                                 <div className="text-xs text-gray-600">Próxima ejecución de retención: {retencionNextRun ? new Date(retencionNextRun).toLocaleString() : 'no programada'}</div>
-                                <div className="flex gap-2">
-                                    <Button variant="outline" onClick={() => scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))}>Reprogramar siguiente ejecución</Button>
-                                    <Button className="bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={() => {
+                                <div className="flex flex-col md:flex-row gap-2">
+                                    <Button variant="outline" className="w-full md:w-auto" onClick={() => scheduleNextRun(Math.max(0, Number(configuracion.retencionDatos) || 12))}>Reprogramar siguiente ejecución</Button>
+                                    <Button className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white border-green-700" onClick={() => {
                                         if (!currentUser || currentUser.role !== 'admin') { 
                                             toast({
                                                 title: "Sin permisos",
@@ -996,7 +1067,7 @@ export default function ConfiguracionPage() {
                                     {currentUser?.role === 'admin' && (
                                         <>
                                             <Button
-                                                className="bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
+                                                className="w-full md:w-auto bg-blue-600 hover:bg-blue-700 text-white border-blue-700"
                                                 onClick={async () => {
                                                     try {
                                                         const res = await fetch('/api/export-full')
@@ -1027,14 +1098,14 @@ export default function ConfiguracionPage() {
                                                 Exportar datos ahora
                                             </Button>
 
-                                            <div className="ml-2">
+                                            <div className="flex flex-col gap-2 w-full md:w-auto md:flex-row md:items-center md:ml-2">
                                                 {/* ✅ Input file estilizado como botón similar a "Exportar datos ahora" */}
-                                                <label htmlFor="importFile" className="inline-flex items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-blue-600 hover:bg-blue-700 text-white border-blue-700 h-10 px-4 py-2 cursor-pointer">
+                                                <label htmlFor="importFile" className="inline-flex w-full items-center justify-center rounded-md text-sm font-medium ring-offset-background transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:pointer-events-none disabled:opacity-50 bg-blue-600 hover:bg-blue-700 text-white border-blue-700 h-10 px-4 py-2 cursor-pointer md:w-auto">
                                                     Seleccionar archivos
                                                 </label>
                                                 <input id="importFile" type="file" accept="application/json,application/gzip,application/octet-stream" className="hidden" />
                                                 <Button
-                                                    className="ml-2 bg-green-600 hover:bg-green-700 text-white border-green-700"
+                                                    className="w-full bg-green-600 hover:bg-green-700 text-white border-green-700 md:w-auto md:ml-2"
                                                     onClick={async () => {
                                                         const input = document.getElementById('importFile') as HTMLInputElement | null
                                                         if (!input || !input.files || input.files.length === 0) { 
@@ -1124,11 +1195,11 @@ export default function ConfiguracionPage() {
                                                 )}
                                             </div>
                                         </div>
-                                        <div className="mt-2 flex gap-2">
-                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 75 })}>Marcar 75%</Button>
-                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 85 })}>Marcar 85%</Button>
-                                            <Button size="sm" variant="outline" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 95 })}>Marcar 95%</Button>
-                                            <Button size="sm" variant="ghost" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 0 })}>Reset</Button>
+                                        <div className="mt-2 flex flex-col gap-2 md:flex-row md:flex-wrap">
+                                            <Button size="sm" variant="outline" className="w-full md:w-auto" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 75 })}>Marcar 75%</Button>
+                                            <Button size="sm" variant="outline" className="w-full md:w-auto" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 85 })}>Marcar 85%</Button>
+                                            <Button size="sm" variant="outline" className="w-full md:w-auto" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 95 })}>Marcar 95%</Button>
+                                            <Button size="sm" variant="ghost" className="w-full md:w-auto" onClick={() => setConfiguracion({ ...configuracion, blobStorageUsagePercent: 0 })}>Reset</Button>
                                         </div>
                     <p className="text-xs text-gray-500 mt-1">Valor informativo. Para limpieza real, usa la pestaña Limpieza.</p>
                     <input type="number" value={configuracion.blobStorageUsagePercent ?? 0} onChange={(e) => setConfiguracion({ ...configuracion, blobStorageUsagePercent: Math.max(0, Math.min(100, Number(e.target.value))) })} className="hidden" />
@@ -1157,9 +1228,9 @@ export default function ConfiguracionPage() {
                                         <Input placeholder="Nombre" value={newUser.nombre} onChange={e => setNewUser(v => ({ ...v, nombre: e.target.value }))} />
                                         <Input placeholder="Contraseña" type="password" value={newUser.password} onChange={e => setNewUser(v => ({ ...v, password: e.target.value }))} />
                                     </div>
-                                    <div className="mt-2">
+                                    <div className="mt-2 flex flex-col gap-2 md:flex-row">
                                         <Button
-                                            className="bg-green-600 hover:bg-green-700 text-white border-green-700"
+                                            className="w-full bg-green-600 hover:bg-green-700 text-white border-green-700 md:w-auto"
                                             onClick={() => {
                                                 if (!newUser.username || !newUser.nombre || !newUser.password) {
                                                     toast({
@@ -1179,7 +1250,62 @@ export default function ConfiguracionPage() {
                                     </div>
 
 
-                                    <div className="overflow-x-auto mt-4">
+                                    <div className="space-y-3 mt-4 md:hidden">
+                                        {loadingUsers ? (
+                                            <div className="text-sm text-gray-500">Cargando...</div>
+                                        ) : users.length === 0 ? (
+                                            <div className="text-sm text-gray-500 text-center">Sin usuarios activos</div>
+                                        ) : (
+                                            users.map((u) => (
+                                                <div key={u.id} className="border rounded-md p-3 text-sm space-y-2 bg-white">
+                                                    <div className="flex justify-between items-start gap-2">
+                                                        <div>
+                                                            <div className="font-semibold text-gray-800">{u.username}</div>
+                                                            <div className="text-gray-600 text-xs">{u.nombre}</div>
+                                                        </div>
+                                                        <span className="px-2 py-1 rounded text-xs bg-green-100 text-green-800">Activo</span>
+                                                    </div>
+                                                    <div className="flex flex-col gap-1 text-xs text-gray-700">
+                                                        <div className="flex justify-between">
+                                                            <span className="font-medium">Intentos</span>
+                                                            <span>{u.failed_attempts || 0}</span>
+                                                        </div>
+                                                        <div>
+                                                            <span className="font-medium">Bloqueado hasta: </span>
+                                                            <span>{u.locked_until ? new Date(u.locked_until).toLocaleString() : '-'}</span>
+                                                        </div>
+                                                    </div>
+                                                    <div className="flex flex-col gap-2">
+                                                        <Button size="sm" variant="outline" className="w-full" onClick={() => {
+                                                            setResetUser({ id: u.id, username: u.username })
+                                                            setResetPwd1("")
+                                                            setResetPwd2("")
+                                                            setResetDialogOpen(true)
+                                                        }}>Resetear contraseña</Button>
+                                                        <Button
+                                                            size="sm"
+                                                            variant="destructive"
+                                                            className="w-full"
+                                                            onClick={() => {
+                                                                setUserToDelete({
+                                                                    id: u.id,
+                                                                    username: u.username,
+                                                                    nombre: u.nombre || u.username
+                                                                });
+                                                                setDeleteUserOpen(true);
+                                                            }}
+                                                            disabled={!currentUser || currentUser.role !== 'admin'}
+                                                        >
+                                                            <Trash2 className="h-4 w-4 mr-1" />
+                                                            Eliminar
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))
+                                        )}
+                                    </div>
+
+                                    <div className="hidden md:block overflow-x-auto mt-4">
                                         <table className="min-w-full text-sm border">
                                             <thead>
                                                 <tr className="bg-gray-100">
@@ -1194,7 +1320,7 @@ export default function ConfiguracionPage() {
                                             </thead>
                                             <tbody>
                                                 {loadingUsers ? (
-                                                    <tr><td className="px-2 py-2" colSpan={6}>Cargando...</td></tr>
+                                                    <tr><td className="px-2 py-2" colSpan={7}>Cargando...</td></tr>
                                                 ) : users.length === 0 ? (
                                                     <tr><td className="px-2 py-6 text-center text-gray-500" colSpan={7}>Sin usuarios activos</td></tr>
                                                 ) : users.map((u) => (
@@ -1386,9 +1512,9 @@ export default function ConfiguracionPage() {
                                             <Input type="number" min={5} value={secSettings.session_timeout_minutes} onChange={e => setSecSettings(s => ({ ...s, session_timeout_minutes: Number(e.target.value) }))} />
                                         </div>
                                     </div>
-                                    <div className="mt-3">
+                                    <div className="mt-3 flex flex-col gap-2 md:flex-row">
                                         <Button
-                                            className="bg-green-600 hover:bg-green-700 text-white border-green-700"
+                                            className="w-full bg-green-600 hover:bg-green-700 text-white border-green-700 md:w-auto"
                                             disabled={savingSec}
                                             onClick={() => { setSecAdminPassword(""); setSecConfirmOpen(true) }}
                                         >
@@ -1487,11 +1613,11 @@ export default function ConfiguracionPage() {
                             </CardHeader>
                             <CardContent>
                                 {/* Controles de filtro */}
-                                <div className="flex flex-wrap gap-4 mb-4">
-                                    <div className="flex items-center space-x-2">
+                                <div className="flex flex-col gap-3 mb-4 md:flex-row md:flex-wrap md:items-center md:gap-4">
+                                    <div className="flex items-center gap-2 w-full md:w-auto">
                                         <Filter className="h-4 w-4" />
                                         <Select value={filtroModulo} onValueChange={setFiltroModulo}>
-                                            <SelectTrigger className="w-40">
+                                            <SelectTrigger className="w-full md:w-40">
                                                 <SelectValue placeholder="Filtrar módulo" />
                                             </SelectTrigger>
                                             <SelectContent>
@@ -1505,21 +1631,23 @@ export default function ConfiguracionPage() {
                                         </Select>
                                     </div>
 
-                                    <Select value={filtroAccion} onValueChange={setFiltroAccion}>
-                                        <SelectTrigger className="w-40">
-                                            <SelectValue placeholder="Filtrar acción" />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            <SelectItem value="todas">Todas las acciones</SelectItem>
-                                            <SelectItem value="CREAR">Crear</SelectItem>
-                                            <SelectItem value="ACTUALIZAR">Actualizar</SelectItem>
-                                            <SelectItem value="ELIMINAR">Eliminar</SelectItem>
-                                            <SelectItem value="EXPORTAR">Exportar</SelectItem>
-                                        </SelectContent>
-                                    </Select>
+                                    <div className="w-full md:w-auto">
+                                        <Select value={filtroAccion} onValueChange={setFiltroAccion}>
+                                            <SelectTrigger className="w-full md:w-40">
+                                                <SelectValue placeholder="Filtrar acción" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="todas">Todas las acciones</SelectItem>
+                                                <SelectItem value="CREAR">Crear</SelectItem>
+                                                <SelectItem value="ACTUALIZAR">Actualizar</SelectItem>
+                                                <SelectItem value="ELIMINAR">Eliminar</SelectItem>
+                                                <SelectItem value="EXPORTAR">Exportar</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
 
-                                    <div className="flex space-x-2 ml-auto">
-                                        <Button variant="outline" size="sm" onClick={exportarAuditLogs}>
+                                    <div className="flex w-full md:w-auto justify-start md:justify-end md:ml-auto">
+                                        <Button variant="outline" size="sm" className="w-full md:w-auto" onClick={exportarAuditLogs}>
                                             <Download className="h-4 w-4 mr-2" />
                                             Exportar
                                         </Button>
@@ -1528,45 +1656,74 @@ export default function ConfiguracionPage() {
 
                                 {/* Lista de logs (compacta en filas) */}
                                 <div className="border rounded-md overflow-hidden">
-                                    <div className="max-h-96 overflow-auto">
-                                        {logsFiltrados.length === 0 ? (
-                                            <div className="text-center py-8 text-gray-500">
-                                                <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                                                <p>No hay registros de auditoría</p>
-                                                <p className="text-sm">Las actividades aparecerán aquí</p>
+                                    {logsFiltrados.length === 0 ? (
+                                        <div className="text-center py-8 text-gray-500">
+                                            <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                                            <p>No hay registros de auditoría</p>
+                                            <p className="text-sm">Las actividades aparecerán aquí</p>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="md:hidden max-h-96 overflow-y-auto divide-y">
+                                                {logsPaginados.map((log) => (
+                                                    <div key={log.id} className="p-3 text-xs space-y-2 bg-white">
+                                                        <div className="flex justify-between gap-2">
+                                                            <span className="font-semibold text-gray-800">{log.usuario}</span>
+                                                            <span className={`px-2 py-0.5 rounded ${getAccionColor(log.accion)}`}>{log.accion}</span>
+                                                        </div>
+                                                        <div className="text-gray-600">{new Date(log.timestamp).toLocaleString()}</div>
+                                                        <div className="flex flex-col gap-1 text-gray-700">
+                                                            <div className="font-medium">Módulo</div>
+                                                            <div>{log.modulo}</div>
+                                                        </div>
+                                                        <div className="flex flex-col gap-1 text-gray-700">
+                                                            <div className="font-medium">Detalles</div>
+                                                            <div className="whitespace-pre-wrap break-words">{log.detalles}</div>
+                                                        </div>
+                                                        {log.ip && (
+                                                            <div className="flex flex-col gap-1 text-gray-700">
+                                                                <div className="font-medium">IP</div>
+                                                                <div>{log.ip}</div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                ))}
                                             </div>
-                                        ) : (
-                                            <table className="min-w-full text-xs">
-                                                <thead className="bg-gray-100 sticky top-0">
-                                                    <tr>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">Fecha</th>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">Usuario</th>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">Acción</th>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">Módulo</th>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">Detalles</th>
-                                                        <th className="px-2 py-2 text-left font-medium text-gray-700">IP</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody>
-                                                    {logsPaginados.map((log) => (
-                                                        <tr key={log.id} className="border-t">
-                                                            <td className="px-2 py-2 whitespace-nowrap text-gray-700">{new Date(log.timestamp).toLocaleString()}</td>
-                                                            <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.usuario}</td>
-                                                            <td className="px-2 py-2 whitespace-nowrap">
-                                                                <span className={`px-2 py-0.5 rounded ${getAccionColor(log.accion)}`}>{log.accion}</span>
-                                                            </td>
-                                                            <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.modulo}</td>
-                                                            <td className="px-2 py-2 max-w-[400px] truncate text-gray-700" title={log.detalles}>{log.detalles}</td>
-                                                            <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.ip || ""}</td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
-                                        )}
-                                    </div>
+                                            <div className="hidden md:block">
+                                                <div className="max-h-96 overflow-auto overflow-x-auto">
+                                                    <table className="min-w-[640px] text-xs md:text-sm">
+                                                        <thead className="bg-gray-100 sticky top-0">
+                                                            <tr>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">Fecha</th>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">Usuario</th>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">Acción</th>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">Módulo</th>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">Detalles</th>
+                                                                <th className="px-2 py-2 text-left font-medium text-gray-700">IP</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {logsPaginados.map((log) => (
+                                                                <tr key={log.id} className="border-t">
+                                                                    <td className="px-2 py-2 whitespace-nowrap text-gray-700">{new Date(log.timestamp).toLocaleString()}</td>
+                                                                    <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.usuario}</td>
+                                                                    <td className="px-2 py-2 whitespace-nowrap">
+                                                                        <span className={`px-2 py-0.5 rounded ${getAccionColor(log.accion)}`}>{log.accion}</span>
+                                                                    </td>
+                                                                    <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.modulo}</td>
+                                                                    <td className="px-2 py-2 max-w-[400px] truncate text-gray-700" title={log.detalles}>{log.detalles}</td>
+                                                                    <td className="px-2 py-2 whitespace-nowrap text-gray-700">{log.ip || ""}</td>
+                                                                </tr>
+                                                            ))}
+                                                        </tbody>
+                                                    </table>
+                                                </div>
+                                            </div>
+                                        </>
+                                    )}
                                     {/* Paginador */}
                                     {logsFiltrados.length > 0 && (
-                                        <div className="flex items-center justify-between p-2 border-t bg-white text-xs">
+                                        <div className="flex flex-col gap-2 p-2 border-t bg-white text-xs md:flex-row md:items-center md:justify-between">
                                             <div className="flex items-center gap-2">
                                                 <span>Página {pageLog} de {totalPagesLog}</span>
                                                 <span className="text-gray-500">•</span>
@@ -1574,7 +1731,7 @@ export default function ConfiguracionPage() {
                                                     Mostrando {startIdx + 1}-{Math.min(endIdx, logsFiltrados.length)} de {logsFiltrados.length}
                                                 </span>
                                             </div>
-                                            <div className="flex items-center gap-2">
+                                            <div className="flex flex-col gap-2 md:flex-row md:items-center">
                                                 <select
                                                     className="border rounded px-2 py-1"
                                                     value={pageSizeLog}
@@ -1584,22 +1741,24 @@ export default function ConfiguracionPage() {
                                                     <option value={50}>50</option>
                                                     <option value={100}>100</option>
                                                 </select>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => setPageLog((p) => Math.max(1, p - 1))}
-                                                    disabled={pageLog <= 1}
-                                                >
-                                                    Anterior
-                                                </Button>
-                                                <Button
-                                                    size="sm"
-                                                    variant="outline"
-                                                    onClick={() => setPageLog((p) => Math.min(totalPagesLog, p + 1))}
-                                                    disabled={pageLog >= totalPagesLog}
-                                                >
-                                                    Siguiente
-                                                </Button>
+                                                <div className="flex gap-2">
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => setPageLog((p) => Math.max(1, p - 1))}
+                                                        disabled={pageLog <= 1}
+                                                    >
+                                                        Anterior
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        onClick={() => setPageLog((p) => Math.min(totalPagesLog, p + 1))}
+                                                        disabled={pageLog >= totalPagesLog}
+                                                    >
+                                                        Siguiente
+                                                    </Button>
+                                                </div>
                                             </div>
                                         </div>
                                     )}
@@ -1610,155 +1769,7 @@ export default function ConfiguracionPage() {
                     </TabsContent>
 
                     <TabsContent value="limpieza" className="space-y-4">
-                        {/* 1) Limpieza automática de Audit Logs */}
-                        <Card>
-                            <CardHeader>
-                                <CardTitle className="flex items-center space-x-2">
-                                    <Trash2 className="h-5 w-5 text-orange-600" />
-                                    <span>Limpieza automática de Audit Logs</span>
-                                </CardTitle>
-                                <CardDescription>
-                                    Elimina registros de auditoría antiguos (más de 6 meses) para mantener el rendimiento del sistema.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-4">
-                                <div className="p-3 border border-orange-300 bg-orange-50 text-orange-900 rounded text-sm">
-                                    <div className="font-semibold">Información</div>
-                                    <div>Esta operación eliminará automáticamente todos los registros de auditoría con más de 6 meses de antigüedad.</div>
-                                </div>
-                                {auditLimpiezaResult && (
-                                    <div className="p-2 rounded border border-green-300 bg-green-50 text-green-800 text-sm whitespace-pre-wrap">{auditLimpiezaResult}</div>
-                                )}
-                                {auditLimpiezaError && (
-                                    <div className="p-2 rounded border border-red-300 bg-red-50 text-red-800 text-sm">{auditLimpiezaError}</div>
-                                )}
-                                <Button
-                                    className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700"
-                                    disabled={auditLimpiezaRunning}
-                                    onClick={() => {
-                                        if (!currentUser || currentUser.role !== 'admin') {
-                                            setAuditLimpiezaError('Solo el administrador puede ejecutar esta limpieza.');
-                                            return;
-                                        }
-                                        setAuditLimpiezaError(null);
-                                        setAuditLimpiezaResult(null);
-                                        setAuditErr(null);
-                                        setAuditPwd1("");
-                                        setAuditDialog1Open(true);
-                                    }}
-                                >
-                                    {auditLimpiezaRunning ? 'Ejecutando limpieza...' : 'Limpiar Audit Logs antiguos (>6 meses)'}
-                                </Button>
-                            </CardContent>
-                        </Card>
-
-                        {/* Limpieza de Audit Logs — Confirmación 1/2 con contraseña */}
-                        <Dialog open={auditDialog1Open} onOpenChange={setAuditDialog1Open}>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle className="text-orange-700 flex items-center gap-2">
-                                        <AlertTriangle className="h-4 w-4" />
-                                        Confirmar identidad de administrador (1/2)
-                                    </DialogTitle>
-                                </DialogHeader>
-                                <div className="space-y-3 text-sm">
-                                    <div className="p-2 border border-orange-200 bg-orange-50 text-orange-800 rounded text-xs">
-                                        Esta acción eliminará todos los registros de auditoría con más de 6 meses de antigüedad. Verifica tu identidad para continuar.
-                                    </div>
-                                    <Label>Contraseña administrador</Label>
-                                    <Input type="password" value={auditPwd1} onChange={e => setAuditPwd1(e.target.value)} placeholder="••••••••" />
-                                    {auditErr && <div className="text-orange-700 bg-orange-50 border border-orange-200 rounded p-2">{auditErr}</div>}
-                                </div>
-                                <DialogFooter>
-                                    <Button variant="outline" onClick={() => setAuditDialog1Open(false)}>Cancelar</Button>
-                                    <Button className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700" onClick={async () => {
-                                        setAuditErr(null)
-                                        if (!auditPwd1) { setAuditErr('Ingresa tu contraseña.'); return }
-                                        const ok = await verifyCurrentUserPassword(auditPwd1)
-                                        if (!ok) { setAuditErr('Contraseña incorrecta.'); return }
-                                        setAuditDialog1Open(false)
-                                        setAuditPwd2("")
-                                        setAuditDialog2Open(true)
-                                    }}>Continuar</Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
-
-                        {/* Limpieza de Audit Logs — Confirmación 2/2 con contraseña */}
-                        <Dialog open={auditDialog2Open} onOpenChange={setAuditDialog2Open}>
-                            <DialogContent>
-                                <DialogHeader>
-                                    <DialogTitle className="text-orange-700 flex items-center gap-2">
-                                        <AlertTriangle className="h-4 w-4" />
-                                        Confirmar nuevamente (2/2)
-                                    </DialogTitle>
-                                </DialogHeader>
-                                <div className="space-y-3 text-sm">
-                                    <div className="p-2 border border-orange-200 bg-orange-50 text-orange-800 rounded text-xs">
-                                        Por seguridad, ingresa nuevamente tu contraseña de administrador para confirmar la eliminación de audit logs antiguos.
-                                    </div>
-                                    <Label>Contraseña administrador</Label>
-                                    <Input type="password" value={auditPwd2} onChange={e => setAuditPwd2(e.target.value)} placeholder="••••••••" />
-                                    {auditErr && <div className="text-orange-700 bg-orange-50 border border-orange-200 rounded p-2">{auditErr}</div>}
-                                </div>
-                                <DialogFooter>
-                                    <Button variant="outline" onClick={() => setAuditDialog2Open(false)}>Cancelar</Button>
-                                    <Button className="bg-orange-600 hover:bg-orange-700 text-white border-orange-700" 
-                                        disabled={auditLimpiezaRunning}
-                                        onClick={async () => {
-                                            setAuditErr(null)
-                                            if (!auditPwd2) { setAuditErr('Ingresa tu contraseña.'); return }
-                                            const ok = await verifyCurrentUserPassword(auditPwd2)
-                                            if (!ok) { setAuditErr('Contraseña incorrecta.'); return }
-                                            
-                                            setAuditDialog2Open(false)
-                                            setAuditLimpiezaRunning(true)
-                                            
-                                            console.log('🧹 Iniciando limpieza de audit logs...')
-                                            
-                                            try {
-                                                const response = await fetch('/api/limpiar-audit-logs', {
-                                                    method: 'POST',
-                                                    headers: { 'Content-Type': 'application/json' },
-                                                    body: JSON.stringify({ confirm: true })
-                                                })
-                                                
-                                                console.log('📡 Respuesta del servidor:', response.status, response.statusText)
-                                                
-                                                let data
-                                                try {
-                                                    data = await response.json()
-                                                    console.log('📋 Datos de respuesta:', data)
-                                                } catch (parseError) {
-                                                    console.error('❌ Error parseando JSON:', parseError)
-                                                    throw new Error(`Error de comunicación con el servidor (Status: ${response.status})`)
-                                                }
-                                                
-                                                if (!response.ok || data.error) {
-                                                    const errorMsg = data.error || `Error HTTP ${response.status}: ${response.statusText}`
-                                                    console.error('❌ Error del servidor:', errorMsg)
-                                                    throw new Error(errorMsg)
-                                                }
-                                                
-                                                console.log('✅ Limpieza completada exitosamente')
-                                                setAuditLimpiezaResult(`Limpieza completada exitosamente:\n• Registros eliminados: ${data.eliminados || 0}\n• Registros restantes: ${data.registrosRestantes || 'N/A'}\n• Período: ${data.mesesRetencion || 6} meses`)
-                                                
-                                                // Recargar los logs después de la limpieza
-                                                await cargarAuditLogs()
-                                            } catch (error: any) {
-                                                setAuditLimpiezaError(error.message || 'Error desconocido')
-                                            } finally {
-                                                setAuditLimpiezaRunning(false)
-                                            }
-                                        }}
-                                    >
-                                        {auditLimpiezaRunning ? 'Ejecutando limpieza...' : 'Confirmar limpieza'}
-                                    </Button>
-                                </DialogFooter>
-                            </DialogContent>
-                        </Dialog>
-
-                        {/* 2) Limpieza manual de archivos en Blob */}
+                        {/* Limpieza manual de archivos en Blob */}
                         <Card>
                             <CardHeader>
                                 <CardTitle className="flex items-center space-x-2">
@@ -1834,7 +1845,7 @@ export default function ConfiguracionPage() {
                                     <div className="p-2 rounded border border-red-300 bg-red-50 text-red-800 text-sm">{limpiezaErr}</div>
                                 )}
                                 <Button
-                                    className="bg-red-600 hover:bg-red-700 text-white border-red-700"
+                                    className="w-full bg-red-600 hover:bg-red-700 text-white border-red-700 md:w-auto"
                                     onClick={() => {
                                         setLimpiezaErr(null); setLimpiezaMsg(null);
                                         if (!currentUser || currentUser.role !== 'admin') { setLimpiezaErr('Solo el administrador puede ejecutar la limpieza.'); return }

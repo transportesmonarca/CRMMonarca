@@ -61,6 +61,7 @@ import {
   RefreshCw,
   X,
   Info,
+  Wand2,
 } from "lucide-react";
 import type { Camion, MarcaCamion, VerificacionCamion } from "@/lib/supabase";
 
@@ -3121,9 +3122,7 @@ export default function CamionesPage() {
                           onClick={() => generarDatosAleatoriosCamion(setFormData, toast)}
                           className="flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
                         >
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-                          </svg>
+                          <Wand2 className="h-4 w-4" />
                           Auto-completar
                         </Button>
                       )}

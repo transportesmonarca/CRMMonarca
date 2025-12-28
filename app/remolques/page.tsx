@@ -56,6 +56,7 @@ import {
   ExternalLink,
   ChevronLeft,
   ChevronRight,
+  Wand2,
 } from "lucide-react";
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { supabase, type Remolque, type MarcaRemolque, type DocumentoRemolque } from "@/lib/supabase";
@@ -406,6 +407,64 @@ export default function RemolquesPage() {
     // Limpiar documentos seleccionados
     setDocumentosSeleccionados([]);
     setDocumentosRemolque([]);
+  };
+
+  const generarDatosAleatoriosRemolque = () => {
+    const tipos = [
+      { value: "caja-seca", label: "Caja Seca" },
+      { value: "plataforma", label: "Plataforma" },
+      { value: "refrigerado", label: "Refrigerado" },
+      { value: "tanque", label: "Tanque" },
+      { value: "tolva", label: "Tolva" },
+      { value: "lowboy", label: "Lowboy" },
+      { value: "otro", label: "Otro" },
+    ];
+    const marcasDisponibles = marcas.map((m) => m.nombre).filter(Boolean);
+    const marcasEjemplo = ["Utility", "Great Dane", "Hyundai Translead", "Wabash", "Stoughton"];
+    const tipoRandom = tipos[Math.floor(Math.random() * tipos.length)];
+    const marcaAleatoria = marcasDisponibles.length
+      ? marcasDisponibles[Math.floor(Math.random() * marcasDisponibles.length)]
+      : marcasEjemplo[Math.floor(Math.random() * marcasEjemplo.length)];
+    const marcaParaFormulario = marcasDisponibles.length ? marcaAleatoria : "";
+
+    const añoRandom = 2015 + Math.floor(Math.random() * 10);
+    const numeroEconomico = `REM-${Math.floor(Math.random() * 900) + 100}`;
+    const numeroSerie = `RM${Math.random().toString(36).slice(2, 10).toUpperCase()}`;
+    const capacidad = (Math.random() * 15 + 20).toFixed(1);
+    const letras = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const placas = `${Array.from({ length: 3 }, () => letras[Math.floor(Math.random() * letras.length)]).join("")}-${Math.floor(Math.random() * 9000 + 1000)}`;
+
+    const hoy = new Date();
+    const ultima = new Date(hoy);
+    ultima.setMonth(hoy.getMonth() - (Math.floor(Math.random() * 4) + 1));
+    const proxima = new Date(hoy);
+    proxima.setMonth(hoy.getMonth() + (Math.floor(Math.random() * 4) + 2));
+    const vigencia = new Date(hoy);
+    vigencia.setMonth(hoy.getMonth() + (Math.floor(Math.random() * 6) + 6));
+
+    const formatear = (fecha: Date) => fecha.toISOString().split("T")[0];
+
+    setFormData({
+      numeroEconomico,
+      tipo: tipoRandom.value,
+      marca: marcaParaFormulario,
+      modelo: `${marcaAleatoria.split(" ")[0] || "Serie"} ${añoRandom}`,
+      año: String(añoRandom),
+      numeroSerie,
+      capacidad,
+      placas,
+      fechaUltimaInspeccion: formatear(ultima),
+      proximaInspeccion: formatear(proxima),
+      polizaSeguro: `POL-RM-${Math.floor(Math.random() * 900000) + 100000}`,
+      vigenciaSeguro: formatear(vigencia),
+      estado: "disponible",
+      comentarios: `Remolque ${tipoRandom.label} generado automáticamente (${numeroEconomico}).`,
+    });
+
+    toast({
+      title: "Datos generados",
+      description: `Remolque ${numeroEconomico} listo para guardar.`,
+    });
   };
 
   
@@ -1644,12 +1703,28 @@ export default function RemolquesPage() {
             }}>
               <DialogContent className="w-full max-w-[86vw] sm:max-w-4xl max-h-[90vh] overflow-y-auto px-4 sm:px-6">
                 <DialogHeader className="text-left">
-                  <DialogTitle className="text-left">
-                    {editingRemolque ? "Modificar Remolque" : "Nuevo Remolque"}
-                  </DialogTitle>
-                  <DialogDescription>
-                    Completa la información del remolque
-                  </DialogDescription>
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <DialogTitle className="text-left">
+                        {editingRemolque ? "Modificar Remolque" : "Nuevo Remolque"}
+                      </DialogTitle>
+                      <DialogDescription>
+                        Completa la información del remolque
+                      </DialogDescription>
+                    </div>
+                    {!editingRemolque && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={generarDatosAleatoriosRemolque}
+                        className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
+                      >
+                        <Wand2 className="h-4 w-4" />
+                        Auto-completar
+                      </Button>
+                    )}
+                  </div>
                 </DialogHeader>
 
 

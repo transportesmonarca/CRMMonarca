@@ -393,14 +393,14 @@ export default function ConsultasPage() {
             <h1 className="text-3xl font-bold text-gray-900">Estadísticas y Reportes</h1>
             <p className="text-gray-600 mt-2">Análisis detallado del rendimiento operativo</p>
           </div>
-          <Button onClick={imprimirReporte} className="bg-green-600 hover:bg-green-700 text-white border-green-700 print:hidden">
+          <Button onClick={imprimirReporte} className="hidden md:inline-flex bg-green-600 hover:bg-green-700 text-white border-green-700 print:hidden">
             <Printer className="h-4 w-4 mr-2" />
             Imprimir
           </Button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <Card className="min-w-0">
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
                 <Package className="h-8 w-8 text-blue-600 flex-shrink-0" />
@@ -411,7 +411,7 @@ export default function ConsultasPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0">
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
                 <Users className="h-8 w-8 text-green-600 flex-shrink-0" />
@@ -422,7 +422,7 @@ export default function ConsultasPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0">
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
                 <Truck className="h-8 w-8 text-orange-600 flex-shrink-0" />
@@ -433,7 +433,7 @@ export default function ConsultasPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0">
             <CardContent className="pt-6">
               <div className="flex items-center gap-4">
                 <Users className="h-8 w-8 text-purple-600 flex-shrink-0" />
@@ -647,8 +647,44 @@ export default function ConsultasPage() {
               <CardDescription>Estados actuales de embarques</CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="flex items-center justify-center p-6">
-                {/* Convert estados data to pie slices */}
+              <div className="space-y-3 md:hidden">
+                {embarquesPorEstado.map((s: any, i: number) => {
+                  const key = String(s.estado || '').toLowerCase()
+                  let label = s.estado || `Estado ${i + 1}`
+                  switch (key) {
+                    case 'entregado':
+                      label = 'Finalizados'
+                      break
+                    case 'asignado':
+                      label = 'Asignados'
+                      break
+                    case 'creado':
+                      label = 'Creados'
+                      break
+                    case 'listo-para-asignar':
+                      label = 'Listos para asignar'
+                      break
+                    case 'en-transito':
+                      label = 'En tránsito'
+                      break
+                    case 'cancelado':
+                      label = 'Cancelados'
+                      break
+                    default:
+                      if (!label.endsWith('s')) label = `${label}s`
+                  }
+                  return (
+                    <div key={`${label}-${i}`} className="flex items-center justify-between rounded-lg border border-gray-200 bg-white px-3 py-2">
+                      <span className="text-sm font-medium text-gray-700">{label}</span>
+                      <span className="text-sm font-semibold text-gray-900">{Number(s.cantidad || 0)}</span>
+                    </div>
+                  )
+                })}
+                {embarquesPorEstado.length === 0 && (
+                  <p className="text-center text-sm text-gray-500 py-3">Sin datos disponibles</p>
+                )}
+              </div>
+              <div className="hidden md:flex items-center justify-center p-6">
                 <PieChart
                   data={embarquesPorEstado.map((s: any, i: number) => {
                     const key = String(s.estado || '').toLowerCase()
@@ -657,11 +693,11 @@ export default function ConsultasPage() {
                     switch (key) {
                       case 'entregado':
                         label = 'Finalizados'
-                        color = '#7c3aed' // morado para finalizados
+                        color = '#7c3aed'
                         break
                       case 'asignado':
                         label = 'Asignados'
-                        color = '#10b981' // verde para asignados
+                        color = '#10b981'
                         break
                       case 'creado':
                         label = 'Creados'
@@ -678,7 +714,6 @@ export default function ConsultasPage() {
                         color = '#ef4444'
                         break
                       default:
-                        // ensure plural: add 's' if simple single-word
                         if (!label.endsWith('s')) label = `${label}s`
                     }
                     return {

@@ -48,6 +48,10 @@ import {
   FileText,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  AlertTriangle,
+  HelpCircle,
+  Circle,
 } from "lucide-react";
 import { useState, useEffect, useRef } from "react";
 import {
@@ -73,6 +77,13 @@ interface FormaFacturacion {
   descripcion: string;
 }
 
+const CLIENTE_INDICADORES = [
+  { icon: null, color: "", label: "Sin indicador" },
+  { icon: ChevronUp, color: "text-blue-500", label: "Prioridad" },
+  { icon: AlertTriangle, color: "text-amber-500", label: "Atención" },
+  { icon: HelpCircle, color: "text-purple-500", label: "Seguimiento" },
+] as const;
+
 export default function ClientesPage() {
   const [showForm, setShowForm] = useState(false);
   const [showFacturacionConfig, setShowFacturacionConfig] = useState(false);
@@ -90,6 +101,7 @@ export default function ClientesPage() {
   const [selectedClientContacts, setSelectedClientContacts] = useState<
     ContactoCliente[]
   >([]); // Nuevo estado para contactos del cliente seleccionado
+  const [clienteIndicadores, setClienteIndicadores] = useState<Record<string, number>>({});
 
   // Estado del formulario principal
   const [formData, setFormData] = useState({
@@ -179,6 +191,14 @@ export default function ClientesPage() {
       fin: Math.min(fin, selectedClientContacts.length),
       total: selectedClientContacts.length
     };
+  };
+
+  const toggleIndicadorCliente = (id: string) => {
+    setClienteIndicadores((prev) => {
+      const current = prev[id] ?? 0;
+      const next = (current + 1) % CLIENTE_INDICADORES.length;
+      return { ...prev, [id]: next };
+    });
   };
 
   // Generador simple de UUID v4 (sin dependencias)
@@ -1648,6 +1668,18 @@ export default function ClientesPage() {
                         <X className="h-4 w-4" />
                       </Button>
                     </div>
+                    {!editingClient && (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={rellenarDatosEjemplo}
+                        className="mt-3 w-full flex items-center justify-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
+                      >
+                        <FileText className="h-4 w-4" />
+                        Rellenar datos de ejemplo
+                      </Button>
+                    )}
                   </div>
 
                   {/* Desktop header: keep original header for md+ */}
@@ -2386,74 +2418,101 @@ export default function ClientesPage() {
         </Card>
 
         {/* Lista de clientes (paginada) */}
-  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-h-[40vh] md:max-h-none overflow-y-auto md:overflow-visible" style={{ WebkitOverflowScrolling: 'touch' }}>
-          {clientesPaginados.map((cliente) => (
-            <Card key={cliente.id}>
-              <CardHeader>
-                <div className="flex justify-between items-start">
-                  <div>
-                    <CardTitle className="text-lg">{cliente.nombre}</CardTitle>
-                  </div>
-                  <div className="flex space-x-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => verDetallesCliente(cliente)}
-                      className="gap-1"
-                    >
-                      <Eye className="h-4 w-4" />
-                      <span className="sr-only md:hidden">Ver detalles</span>
-                      <span className="hidden md:inline">Ver detalles</span>
-                    </Button>
-                    <Button
-                      variant={
-                        cliente.estado === "activo" ? "outline" : "default"
-                      }
-                      size="sm"
-                      onClick={() =>
-                        cambiarEstadoCliente(
-                          cliente.id,
-                          cliente.estado === "activo" ? "inactivo" : "activo"
-                        )
-                      }
-                      className={
-                        cliente.estado === "inactivo"
-                          ? "bg-orange-500 hover:bg-orange-600 text-white"
-                          : ""
-                      }
-                      className="gap-1"
-                    >
-                      {cliente.estado === "activo" ? (
-                        <>
-                          <UserX className="h-4 w-4" />
-                          <span className="sr-only md:hidden">Desactivar</span>
-                          <span className="hidden md:inline">Desactivar</span>
-                        </>
-                      ) : (
-                        <>
-                          <UserCheck className="h-4 w-4" />
-                          <span className="sr-only md:hidden">Activar</span>
-                          <span className="hidden md:inline">Activar</span>
-                        </>
-                      )}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => confirmDeleteCliente(cliente.id)}
-                      disabled={deleteLoading}
-                    >
-                      {deleteLoading ? (
-                        <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full"></div>
-                      ) : (
-                        <Trash2 className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                </div>
-              </CardHeader>
+        <div
+          className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-h-[40vh] md:max-h-none overflow-y-auto md:overflow-visible"
+          style={{ WebkitOverflowScrolling: "touch" }}
+        >
+          {clientesPaginados.map((cliente) => {
+            const indicadorIndex = clienteIndicadores[cliente.id] ?? 0;
+            const indicadorConfig = CLIENTE_INDICADORES[indicadorIndex];
+            const IndicadorIcon = indicadorConfig.icon;
+            const IndicatorButtonIcon = IndicadorIcon ?? Circle;
+            const indicatorColorClass = IndicadorIcon ? indicadorConfig.color : "text-gray-300";
+            const estadoToggleClasses = [
+              "gap-1",
+              cliente.estado === "inactivo" ? "bg-orange-500 hover:bg-orange-600 text-white" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
 
-              <CardContent className="space-y-4">
+            return (
+              <Card key={cliente.id}>
+                <CardHeader>
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        {IndicadorIcon && (
+                          <span className="relative inline-flex items-center">
+                            <IndicadorIcon className={`h-4 w-4 ${indicadorConfig.color}`} aria-hidden="true" />
+                            <span className="sr-only">Indicador {indicadorConfig.label}</span>
+                          </span>
+                        )}
+                        <span>{cliente.nombre}</span>
+                      </CardTitle>
+                    </div>
+                    <div className="flex space-x-1">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => toggleIndicadorCliente(cliente.id)}
+                        className="hidden md:inline-flex"
+                        aria-label={`Alternar indicador para ${cliente.nombre}`}
+                        title="Alternar indicador"
+                      >
+                        <IndicatorButtonIcon className={`h-4 w-4 ${indicatorColorClass}`} />
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => verDetallesCliente(cliente)}
+                        className="gap-1"
+                      >
+                        <Eye className="h-4 w-4" />
+                        <span className="sr-only md:hidden">Detalles</span>
+                        <span className="hidden md:inline">Detalles</span>
+                      </Button>
+                      <Button
+                        variant={cliente.estado === "activo" ? "outline" : "default"}
+                        size="sm"
+                        onClick={() =>
+                          cambiarEstadoCliente(
+                            cliente.id,
+                            cliente.estado === "activo" ? "inactivo" : "activo"
+                          )
+                        }
+                        className={estadoToggleClasses}
+                      >
+                        {cliente.estado === "activo" ? (
+                          <>
+                            <UserX className="h-4 w-4" />
+                            <span className="sr-only md:hidden">Desactivar</span>
+                            <span className="hidden md:inline">Desactivar</span>
+                          </>
+                        ) : (
+                          <>
+                            <UserCheck className="h-4 w-4" />
+                            <span className="sr-only md:hidden">Activar</span>
+                            <span className="hidden md:inline">Activar</span>
+                          </>
+                        )}
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => confirmDeleteCliente(cliente.id)}
+                        disabled={deleteLoading}
+                      >
+                        {deleteLoading ? (
+                          <div className="animate-spin h-4 w-4 border-2 border-gray-300 border-t-gray-600 rounded-full"></div>
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                </CardHeader>
+
+                <CardContent className="space-y-4">
                 {/* Información Principal */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="space-y-3">
@@ -2675,7 +2734,8 @@ export default function ClientesPage() {
                 </div>
               </CardContent>
             </Card>
-          ))}
+            );
+          })}
         </div>
 
         {/* Controles de paginación inferior */}

@@ -44,11 +44,18 @@ import {
   FileText,
   FolderOpen,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  Pencil,
+  Check,
+  X,
+  Loader2,
 } from "lucide-react";
 import { Trash2 } from "lucide-react";
 import { useState, useEffect, useMemo, useCallback, Fragment } from "react";
 import type { ReactNode } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { useIsMobile } from "@/hooks/use-mobile";
 import ModalUbicacionOperador from "@/components/ModalUbicacionOperador";
 import { obtenerUltimaUbicacionOperador, UbicacionConOperador } from "@/lib/ubicacion";
 import { useSearchParams } from "next/navigation";
@@ -406,6 +413,14 @@ export default function AsignarOperadoresPage() {
     null
   );
   const [activeTab, setActiveTab] = useState("general");
+  const [isEditingFolio, setIsEditingFolio] = useState(false);
+  const [folioDraft, setFolioDraft] = useState("");
+  const [folioError, setFolioError] = useState<string | null>(null);
+  const [savingFolio, setSavingFolio] = useState(false);
+  const [isEditingModifyFolio, setIsEditingModifyFolio] = useState(false);
+  const [modifyFolioDraft, setModifyFolioDraft] = useState("");
+  const [modifyFolioError, setModifyFolioError] = useState<string | null>(null);
+  const [savingModifyFolio, setSavingModifyFolio] = useState(false);
   
   // Estados para funcionalidad de ubicación
   const [showUbicacionModal, setShowUbicacionModal] = useState(false);
@@ -831,6 +846,231 @@ export default function AsignarOperadoresPage() {
   const [embarqueAFinalizar, setEmbarqueAFinalizar] = useState<Embarque | null>(null);
   const { toast } = useToast();
 
+  const sanitizeFolio = useCallback((valor: string) => {
+    return valor.replace(/\s+/g, " ").trim().toUpperCase();
+  }, []);
+
+  const validarFolioDisponible = useCallback(
+    async (folio: string, excluirId?: string) => {
+      const candidato = sanitizeFolio(folio);
+      if (!candidato) {
+        return "Ingresa un folio válido";
+      }
+
+      try {
+        let builder = supabase
+          .from("embarques")
+          .select("id", { count: "exact", head: true })
+          .eq("folio", candidato);
+
+        if (excluirId) {
+          builder = builder.neq("id", excluirId);
+        }
+
+        const { count, error } = await builder;
+        if (error) {
+          console.error("Error validando folio duplicado:", error);
+          return "No se pudo validar el folio. Intenta de nuevo.";
+        }
+
+        if ((count || 0) > 0) {
+          return "Este folio ya está en uso.";
+        }
+
+        return null;
+      } catch (err) {
+        console.error("Error verificando folio:", err);
+        return "Ocurrió un error al validar el folio.";
+      }
+    },
+    [sanitizeFolio]
+  );
+
+  const actualizarFolioEnMemoria = useCallback(
+    (embarqueId: string, nuevoFolio: string) => {
+      setEmbarques((prev) =>
+        prev.map((embarque) =>
+          embarque.id === embarqueId ? { ...embarque, folio: nuevoFolio } : embarque
+        )
+      );
+      setEmbarquesFinalizados((prev) =>
+        prev.map((embarque) =>
+          embarque.id === embarqueId ? { ...embarque, folio: nuevoFolio } : embarque
+        )
+      );
+      setEmbarqueDetalle((prev) =>
+        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
+      );
+      setEmbarqueAModificar((prev) =>
+        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
+      );
+      setPendingAsignacion((prev) =>
+        prev && prev.embarqueId === embarqueId
+          ? { ...prev, embarqueFolio: nuevoFolio }
+          : prev
+      );
+    },
+    []
+  );
+
+  const guardarNuevoFolio = useCallback(
+    async (embarqueId: string, folioPropuesto: string) => {
+      const candidato = sanitizeFolio(folioPropuesto);
+      const errorMensaje = await validarFolioDisponible(candidato, embarqueId);
+      if (errorMensaje) {
+        return { ok: false as const, error: errorMensaje };
+      }
+
+      const { error } = await supabase
+        .from("embarques")
+        .update({ folio: candidato, updated_at: new Date().toISOString() })
+        .eq("id", embarqueId);
+
+      if (error) {
+        console.error("Error actualizando folio:", error);
+        return { ok: false as const, error: "No se pudo guardar el folio." };
+      }
+
+      actualizarFolioEnMemoria(embarqueId, candidato);
+
+      try {
+        await agregarAuditLog(
+          "ACTUALIZAR",
+          "Asignación → Folio manual",
+          `Embarque: ${candidato} (${embarqueId}) | Usuario: ${getCurrentUser()?.nombre || ""}`
+        );
+      } catch (auditError) {
+        console.warn("No se pudo registrar audit log de folio:", auditError);
+      }
+
+      toast({
+        title: "Folio actualizado",
+        description: `Nuevo folio: ${candidato}`,
+      });
+
+      return { ok: true as const };
+    },
+    [actualizarFolioEnMemoria, sanitizeFolio, toast, validarFolioDisponible]
+  );
+
+  useEffect(() => {
+    if (!showDetailsModal) {
+      setIsEditingFolio(false);
+      setFolioDraft("");
+      setFolioError(null);
+      setSavingFolio(false);
+      return;
+    }
+
+    if (embarqueDetalle) {
+      setFolioDraft(embarqueDetalle.folio || "");
+      setFolioError(null);
+    }
+  }, [showDetailsModal, embarqueDetalle?.folio]);
+
+  useEffect(() => {
+    if (!showModifyModal) {
+      setIsEditingModifyFolio(false);
+      setModifyFolioDraft("");
+      setModifyFolioError(null);
+      setSavingModifyFolio(false);
+      return;
+    }
+
+    if (embarqueAModificar) {
+      setModifyFolioDraft(embarqueAModificar.folio || "");
+      setModifyFolioError(null);
+    }
+  }, [showModifyModal, embarqueAModificar?.folio]);
+
+  const confirmarFolioDetalle = useCallback(async () => {
+    if (!embarqueDetalle) {
+      return;
+    }
+
+    const folioActual = sanitizeFolio(embarqueDetalle.folio || "");
+    const folioNuevo = sanitizeFolio(folioDraft);
+
+    if (!folioNuevo) {
+      setFolioError("Ingresa un folio válido");
+      return;
+    }
+
+    if (folioNuevo === folioActual) {
+      setIsEditingFolio(false);
+      setFolioError(null);
+      setFolioDraft(embarqueDetalle.folio || "");
+      return;
+    }
+
+    try {
+      setSavingFolio(true);
+      const resultado = await guardarNuevoFolio(embarqueDetalle.id, folioDraft);
+      if (!resultado.ok) {
+        setFolioError(resultado.error);
+        toast({ title: "No se pudo actualizar", description: resultado.error, variant: "destructive" });
+        return;
+      }
+      setFolioError(null);
+      setIsEditingFolio(false);
+    } finally {
+      setSavingFolio(false);
+    }
+  }, [embarqueDetalle, folioDraft, guardarNuevoFolio, sanitizeFolio, toast]);
+
+  const cancelarEdicionFolioDetalle = useCallback(() => {
+    if (!embarqueDetalle) {
+      return;
+    }
+    setIsEditingFolio(false);
+    setFolioDraft(embarqueDetalle.folio || "");
+    setFolioError(null);
+  }, [embarqueDetalle]);
+
+  const confirmarFolioModificacion = useCallback(async () => {
+    if (!embarqueAModificar) {
+      return;
+    }
+
+    const folioActual = sanitizeFolio(embarqueAModificar.folio || "");
+    const folioNuevo = sanitizeFolio(modifyFolioDraft);
+
+    if (!folioNuevo) {
+      setModifyFolioError("Ingresa un folio válido");
+      return;
+    }
+
+    if (folioNuevo === folioActual) {
+      setIsEditingModifyFolio(false);
+      setModifyFolioError(null);
+      setModifyFolioDraft(embarqueAModificar.folio || "");
+      return;
+    }
+
+    try {
+      setSavingModifyFolio(true);
+      const resultado = await guardarNuevoFolio(embarqueAModificar.id, modifyFolioDraft);
+      if (!resultado.ok) {
+        setModifyFolioError(resultado.error);
+        toast({ title: "No se pudo actualizar", description: resultado.error, variant: "destructive" });
+        return;
+      }
+      setModifyFolioError(null);
+      setIsEditingModifyFolio(false);
+    } finally {
+      setSavingModifyFolio(false);
+    }
+  }, [embarqueAModificar, guardarNuevoFolio, modifyFolioDraft, sanitizeFolio, toast]);
+
+  const cancelarEdicionFolioModificacion = useCallback(() => {
+    if (!embarqueAModificar) {
+      return;
+    }
+    setIsEditingModifyFolio(false);
+    setModifyFolioDraft(embarqueAModificar.folio || "");
+    setModifyFolioError(null);
+  }, [embarqueAModificar]);
+
   // Interface para documentos del embarque (adjuntos subidos al crear el embarque)
   interface DocumentoEmbarque {
     id?: string;
@@ -847,6 +1087,91 @@ export default function AsignarOperadoresPage() {
   // Estados para documentos del embarque
   const [documentosEmbarque, setDocumentosEmbarque] = useState<DocumentoEmbarque[]>([]);
   const [loadingDocumentos, setLoadingDocumentos] = useState(false);
+  const isMobile = useIsMobile();
+  const detalleTabsConfig = useMemo(() => {
+    const tabs: Array<{ value: string; label: string; tone?: "alert" }> = [
+      { value: "general", label: "Información General" },
+      { value: "ubicaciones", label: "Ubicaciones" },
+      { value: "recursos", label: "Recursos" },
+      { value: "financiero", label: "Financiero" },
+      { value: "contacto-cliente", label: "Contacto del Cliente" },
+      {
+        value: "adjuntos",
+        label: `Adjuntos (${documentosEmbarque.length})`,
+      },
+    ];
+
+    if (embarqueDetalle?.modificado) {
+      tabs.push({ value: "modificaciones", label: "Modificaciones", tone: "alert" });
+    }
+
+    tabs.push({
+      value: "fotos",
+      label: `Fotos de Evidencia (${fotosEmbarque.length})`,
+    });
+
+    return tabs;
+  }, [documentosEmbarque.length, fotosEmbarque.length, embarqueDetalle?.modificado]);
+
+  const [detalleTabWindowStart, setDetalleTabWindowStart] = useState(0);
+  const detalleTabsWindowSize = Math.max(
+    1,
+    Math.min(
+      isMobile ? 3 : detalleTabsConfig.length,
+      detalleTabsConfig.length || 1
+    )
+  );
+  const detalleVisibleTabs = useMemo(
+    () =>
+      detalleTabsConfig.slice(
+        detalleTabWindowStart,
+        detalleTabWindowStart + detalleTabsWindowSize
+      ),
+    [detalleTabWindowStart, detalleTabsWindowSize, detalleTabsConfig]
+  );
+  const canSlideDetalleTabsLeft = detalleTabWindowStart > 0;
+  const canSlideDetalleTabsRight =
+    detalleTabWindowStart + detalleTabsWindowSize < detalleTabsConfig.length;
+
+  const shiftDetalleTabWindow = useCallback(
+    (direction: "left" | "right") => {
+      if (direction === "left") {
+        setDetalleTabWindowStart((prev) => Math.max(0, prev - 1));
+      } else {
+        setDetalleTabWindowStart((prev) =>
+          Math.min(
+            Math.max(0, detalleTabsConfig.length - detalleTabsWindowSize),
+            prev + 1
+          )
+        );
+      }
+    },
+    [detalleTabsConfig.length, detalleTabsWindowSize]
+  );
+
+  useEffect(() => {
+    setDetalleTabWindowStart((current) =>
+      Math.min(
+        current,
+        Math.max(0, detalleTabsConfig.length - detalleTabsWindowSize)
+      )
+    );
+  }, [detalleTabsConfig.length, detalleTabsWindowSize]);
+
+  useEffect(() => {
+    if (!isMobile) return;
+    const currentIndex = detalleTabsConfig.findIndex(
+      (tab) => tab.value === activeTab
+    );
+    if (currentIndex === -1) return;
+    setDetalleTabWindowStart((current) => {
+      if (currentIndex < current) return currentIndex;
+      if (currentIndex >= current + detalleTabsWindowSize) {
+        return Math.max(0, currentIndex - detalleTabsWindowSize + 1);
+      }
+      return current;
+    });
+  }, [activeTab, detalleTabsConfig, detalleTabsWindowSize, isMobile]);
 
   // Kilometraje (reutiliza lógica de Camiones en forma simplificada)
   const [registrosKilometrajeTableExists, setRegistrosKilometrajeTableExists] = useState<boolean>(false);
@@ -3561,6 +3886,11 @@ export default function AsignarOperadoresPage() {
             const contenidoTexto = embarque.contenido || "No especificado";
             const loadNumber = embarque.load_number || "N/A";
             const cartaPorte = embarque.carta_porte || "Sin asignar";
+            const estadoBadge = getEstadoBadge(embarque.estado);
+            const asignarBadgeDesktop = embarque.estado?.startsWith("listo-para-asignar")
+              ? getEstadoBadge(embarque.estado)
+              : null;
+            const esFinalizadoDesktop = (embarque.estado || "").startsWith("finalizado");
             const mobileSections = [
               {
                 key: "precio",
@@ -3707,7 +4037,7 @@ export default function AsignarOperadoresPage() {
               },
             ];
             const mobileBadgeElements = [
-              getEstadoBadge(embarque.estado),
+              estadoBadge,
               buildDireccionesMultiplesBadge(embarque),
               buildContingenciaBadge(embarque),
             ].filter((badge): badge is ReactNode => Boolean(badge));
@@ -3890,38 +4220,40 @@ export default function AsignarOperadoresPage() {
                     </DialogContent>
                   </Dialog>
                     <CardTitle>
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="inline-flex items-center text-blue-600 text-xl">
-                          <Package className="h-5 w-5 text-blue-600 mr-1" />
-                          {embarque.folio}
-                        </span>
+                      <div className="flex flex-col gap-y-1">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="inline-flex items-center text-blue-600 text-xl">
+                            <Package className="h-5 w-5 text-blue-600 mr-1" />
+                            {embarque.folio}
+                          </span>
+                          {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
+                          {(() => {
+                            const analisis = analizarContingencia(embarque.estado || '');
+                            if (analisis.esContingencia && !analisis.esFleteFalso) {
+                              return (
+                                <span
+                                  className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold align-middle bg-red-100 text-red-800 border border-red-200"
+                                  title="Modificado por contingencia"
+                                >
+                                  🔴 CONTINGENCIA
+                                </span>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
+                            <span
+                              className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
+                              title="Este embarque fue asignado con QuickPaid"
+                            >
+                              QuickPaid
+                              <Coins className="h-3.5 w-3.5 text-yellow-700 ml-1" />
+                            </span>
+                          )}
+                        </div>
                         {embarque.load_number && (
                           <span className="text-sm font-semibold text-gray-600">
                             Load: {embarque.load_number}
-                          </span>
-                        )}
-                        {/* Indicador de Contingencia - Solo mostrar si es contingencia general (no FF) */}
-                        {(() => {
-                          const analisis = analizarContingencia(embarque.estado || '');
-                          if (analisis.esContingencia && !analisis.esFleteFalso) {
-                            return (
-                              <span
-                                className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-semibold align-middle bg-red-100 text-red-800 border border-red-200"
-                                title="Modificado por contingencia"
-                              >
-                                🔴 CONTINGENCIA
-                              </span>
-                            );
-                          }
-                          return null;
-                        })()}
-                        {typeof (embarque as any).precio_quickpaid === "number" && (embarque as any).precio_quickpaid > 0 && (
-                          <span
-                            className="hidden md:inline-flex items-center px-2 py-0.5 rounded-full bg-yellow-400 text-yellow-900 text-xs font-semibold align-middle"
-                            title="Este embarque fue asignado con QuickPaid"
-                          >
-                            QuickPaid
-                            <Coins className="h-3.5 w-3.5 text-yellow-700 ml-1" />
                           </span>
                         )}
                       </div>
@@ -3958,7 +4290,6 @@ export default function AsignarOperadoresPage() {
                   </div>
                   {/* Badges - Solo desktop */}
                   <div className="hidden md:flex items-center space-x-2">
-                    {getEstadoBadge(embarque.estado)}
                     <div className="flex space-x-1 items-center">
                       {buildDireccionesMultiplesBadge(embarque)}
                     </div>
@@ -3972,11 +4303,12 @@ export default function AsignarOperadoresPage() {
                     }`}
                   >
                       {/* Botón Detalles - order-1 */}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="order-1"
-                        onClick={() => {
+                      <div className="flex items-center gap-2 order-1">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="order-1"
+                          onClick={() => {
                           // Normalize date-only or midnight timestamps to avoid TZ shifts
                           const normalized = {
                             ...embarque,
@@ -4043,12 +4375,16 @@ export default function AsignarOperadoresPage() {
                           cargarFotosEmbarque(embarque.id);
                           cargarDocumentosEmbarque(embarque.id);
                           contarFotosEmbarque(embarque.id);
-                        }}
-                      >
-                        {/* Solo icono en móvil, icono+texto en desktop */}
-                        <Eye className="h-4 w-4 md:mr-1" />
-                        <span className="hidden md:inline">Detalles</span>
-                      </Button>
+                          }}
+                        >
+                          {/* Solo icono en móvil, icono+texto en desktop */}
+                          <Eye className="h-4 w-4 md:mr-1" />
+                          <span className="hidden md:inline">Detalles</span>
+                        </Button>
+                        {esFinalizadoDesktop && estadoBadge && (
+                          <div className="hidden md:flex">{estadoBadge}</div>
+                        )}
+                      </div>
                       {(embarque.estado?.startsWith("listo-para-asignar") ||
                         embarque.estado?.startsWith("asignado") ||
                         embarque.estado?.startsWith("en-transito")) && (
@@ -4147,16 +4483,21 @@ export default function AsignarOperadoresPage() {
                       {(embarque.estado?.startsWith("asignado") || 
                         embarque.estado?.startsWith("en-transito") || 
                         embarque.estado?.startsWith("listo-para-asignar")) && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleMostrarUbicacion(embarque)}
-                          disabled={loadingUbicacion}
-                          className="hidden md:flex"
-                        >
-                          <MapPin className="h-4 w-4 mr-1" />
-                          {loadingUbicacion ? "Cargando..." : "Ubicación"}
-                        </Button>
+                        <div className="hidden md:flex items-center gap-2">
+                          {asignarBadgeDesktop && (
+                            <span className="inline-flex">{asignarBadgeDesktop}</span>
+                          )}
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            disabled
+                            className="md:inline-flex cursor-not-allowed opacity-60"
+                            title="Ubicación disponible próximamente"
+                          >
+                            <MapPin className="h-4 w-4 mr-1" />
+                            Ubicación
+                          </Button>
+                        </div>
                       )}
                       {/* Botón Modificar - order-2 móvil */}
                       {embarque.estado?.startsWith("asignado") && (
@@ -5251,114 +5592,114 @@ export default function AsignarOperadoresPage() {
 
       {/* Modal de Detalles con Pestañas */}
       {showDetailsModal && embarqueDetalle && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
-          <div className={`bg-white rounded-lg shadow-xl max-w-6xl w-full ${activeTab === 'financiero' || activeTab === 'ubicaciones' ? 'max-h-[99vh]' : 'max-h-[97vh]'} overflow-hidden transition-all duration-300 ease-in-out`}>
-            <div className="flex justify-between items-center p-6 border-b">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  Detalles del Embarque
-                </h2>
-                <p className="text-sm text-gray-600">
-                  Folio: {embarqueDetalle.folio}
-                </p>
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-2 sm:p-4">
+          <div className={`bg-white rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-6xl ${activeTab === 'financiero' || activeTab === 'ubicaciones' ? 'max-h-[99vh]' : 'max-h-[97vh]'} overflow-hidden transition-all duration-300 ease-in-out`}>
+            <div className="px-4 py-4 sm:px-6 sm:py-6 border-b">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div className="flex-1">
+                  <div className="flex items-center justify-between gap-2 sm:justify-start">
+                    <h2 className="text-xl font-bold text-gray-900">
+                      Detalles del Embarque
+                    </h2>
+                    <Button
+                      onClick={() => setShowDetailsModal(false)}
+                      variant="outline"
+                      size="icon"
+                      className="sm:hidden h-8 w-8 p-0 border-gray-300 text-gray-600 hover:text-gray-900 hover:bg-gray-100"
+                      aria-label="Cerrar detalles del embarque"
+                    >
+                      ✕
+                    </Button>
+                  </div>
+                  <p className="text-sm text-gray-600">
+                    Folio: {embarqueDetalle.folio}
+                  </p>
+                </div>
+                <Button
+                  onClick={() => setShowDetailsModal(false)}
+                  variant="outline"
+                  size="sm"
+                  className="hidden sm:inline-flex"
+                >
+                  ✕
+                </Button>
               </div>
-              <Button
-                onClick={() => setShowDetailsModal(false)}
-                variant="outline"
-                size="sm"
-              >
-                ✕
-              </Button>
             </div>
 
             <div className={`overflow-y-auto ${activeTab === 'financiero' || activeTab === 'ubicaciones' ? 'max-h-[calc(99vh-120px)]' : 'max-h-[calc(97vh-120px)]'} transition-all duration-300 ease-in-out`}>
-              <div className="p-6">
+              <div className="px-4 py-6 sm:p-6">
                 {/* Tab Navigation */}
                 <div className="border-b border-gray-200 mb-6">
-                  <nav className="flex space-x-8" aria-label="Tabs">
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "general"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("general")}
+                  <div className="flex items-center gap-2 md:hidden">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => shiftDetalleTabWindow("left")}
+                      disabled={!canSlideDetalleTabsLeft}
+                      aria-label="Ver pestañas anteriores"
                     >
-                      Información General
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "ubicaciones"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("ubicaciones")}
+                      <ChevronLeft className="h-4 w-4" />
+                    </Button>
+                    <div className="flex-1 overflow-hidden">
+                      <div className="flex gap-2">
+                        {detalleVisibleTabs.map((tab) => {
+                          const isActive = activeTab === tab.value;
+                          const baseClasses = tab.tone === "alert"
+                            ? `flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${isActive ? "border-red-500 bg-red-50 text-red-600" : "border-red-300 text-red-600"}`
+                            : `flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium ${isActive ? "border-blue-500 bg-blue-600 text-white" : "border-gray-200 text-gray-600"}`;
+                          return (
+                            <button
+                              key={tab.value}
+                              type="button"
+                              className={baseClasses}
+                              onClick={() => setActiveTab(tab.value)}
+                            >
+                              {tab.tone === "alert" && <AlertTriangle className="inline h-3.5 w-3.5 mr-1 align-middle" />}
+                              {tab.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      onClick={() => shiftDetalleTabWindow("right")}
+                      disabled={!canSlideDetalleTabsRight}
+                      aria-label="Ver pestañas siguientes"
                     >
-                      Ubicaciones
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "recursos"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("recursos")}
-                    >
-                      Recursos
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "financiero"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("financiero")}
-                    >
-                      Financiero
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "contacto-cliente"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("contacto-cliente")}
-                    >
-                      Contacto del Cliente
-                    </button>
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "adjuntos"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("adjuntos")}
-                    >
-                      Adjuntos ({documentosEmbarque.length})
-                    </button>
-                    {embarqueDetalle?.modificado && (
-                      <button
-                        className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                          activeTab === "modificaciones"
-                            ? "border-red-500 text-red-600"
-                            : "border-transparent text-red-500 hover:text-red-700"
-                        }`}
-                        onClick={() => setActiveTab("modificaciones")}
-                      >
-                        <AlertTriangle className="h-4 w-4 inline mr-1" />
-                        Modificaciones
-                      </button>
-                    )}
-                    <button
-                      className={`border-b-2 py-2 px-1 text-sm font-medium ${
-                        activeTab === "fotos"
-                          ? "border-blue-500 text-blue-600"
-                          : "border-transparent text-gray-500 hover:text-gray-700"
-                      }`}
-                      onClick={() => setActiveTab("fotos")}
-                    >
-                      Fotos de Evidencia ({fotosEmbarque.length})
-                    </button>
+                      <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <nav className="hidden md:flex space-x-8" aria-label="Tabs">
+                    {detalleTabsConfig.map((tab) => {
+                      const isActive = activeTab === tab.value;
+                      const desktopClasses = tab.tone === "alert"
+                        ? `border-b-2 py-2 px-1 text-sm font-medium ${
+                            isActive
+                              ? "border-red-500 text-red-600"
+                              : "border-transparent text-red-500 hover:text-red-700"
+                          }`
+                        : `border-b-2 py-2 px-1 text-sm font-medium ${
+                            isActive
+                              ? "border-blue-500 text-blue-600"
+                              : "border-transparent text-gray-500 hover:text-gray-700"
+                          }`;
+                      return (
+                        <button
+                          key={tab.value}
+                          className={desktopClasses}
+                          onClick={() => setActiveTab(tab.value)}
+                        >
+                          {tab.tone === "alert" && (
+                            <AlertTriangle className="h-4 w-4 inline mr-1" />
+                          )}
+                          {tab.label}
+                        </button>
+                      );
+                    })}
                   </nav>
                 </div>
 
@@ -5461,9 +5802,66 @@ export default function AsignarOperadoresPage() {
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
                               Folio
                             </label>
-                            <p className="text-sm font-mono font-medium text-gray-900">
-                              {embarqueDetalle.folio}
-                            </p>
+                            <div className="flex flex-wrap items-center gap-2">
+                              {isEditingFolio ? (
+                                <>
+                                  <Input
+                                    value={folioDraft}
+                                    onChange={(event) => {
+                                      setFolioDraft(event.target.value);
+                                      setFolioError(null);
+                                    }}
+                                    className="font-mono"
+                                    autoFocus
+                                    maxLength={40}
+                                    disabled={savingFolio}
+                                  />
+                                  <Button
+                                    variant="outline"
+                                    size="icon"
+                                    onClick={confirmarFolioDetalle}
+                                    disabled={savingFolio}
+                                    aria-label="Guardar folio"
+                                  >
+                                    {savingFolio ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Check className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={cancelarEdicionFolioDetalle}
+                                    disabled={savingFolio}
+                                    aria-label="Cancelar edición de folio"
+                                  >
+                                    <X className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              ) : (
+                                <>
+                                  <span className="text-sm font-mono font-medium text-gray-900">
+                                    {embarqueDetalle.folio}
+                                  </span>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    onClick={() => {
+                                      setIsEditingFolio(true);
+                                      setFolioDraft(embarqueDetalle.folio || "");
+                                      setFolioError(null);
+                                    }}
+                                    aria-label="Editar folio"
+                                  >
+                                    <Pencil className="h-4 w-4" />
+                                  </Button>
+                                </>
+                              )}
+                            </div>
+                            {folioError && (
+                              <p className="text-xs text-red-600">{folioError}</p>
+                            )}
                           </div>
                           <div className="space-y-1">
                             <label className="text-xs font-medium text-gray-500 uppercase tracking-wide">
@@ -6304,8 +6702,8 @@ export default function AsignarOperadoresPage() {
 
                 {/* Action Buttons */}
                 <div className="border-t pt-4 mt-6">
-                  <div className="flex items-center justify-between">
-                    <div className="flex justify-start space-x-4">
+                  <div className="flex items-center justify-end sm:justify-between">
+                    <div className="hidden sm:flex justify-start space-x-4">
                       <Button
                         onClick={descargarExcel}
                         variant="outline"
@@ -6348,10 +6746,69 @@ export default function AsignarOperadoresPage() {
                 <h2 className="text-xl font-bold text-red-800">
                   Modificar Embarque
                 </h2>
-                <p className="text-sm text-red-600">
-                  Folio: {embarqueAModificar.folio} - Solo para situaciones de
-                  emergencia
+                <div className="flex flex-wrap items-center gap-2 text-sm text-red-700 mt-1">
+                  <span className="font-semibold">Folio:</span>
+                  {isEditingModifyFolio ? (
+                    <>
+                      <Input
+                        value={modifyFolioDraft}
+                        onChange={(event) => {
+                          setModifyFolioDraft(event.target.value);
+                          setModifyFolioError(null);
+                        }}
+                        className="font-mono h-9"
+                        disabled={savingModifyFolio}
+                        maxLength={40}
+                      />
+                      <Button
+                        variant="outline"
+                        size="icon"
+                        onClick={confirmarFolioModificacion}
+                        disabled={savingModifyFolio}
+                        aria-label="Guardar folio"
+                      >
+                        {savingModifyFolio ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Check className="h-4 w-4" />
+                        )}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={cancelarEdicionFolioModificacion}
+                        disabled={savingModifyFolio}
+                        aria-label="Cancelar edición de folio"
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-mono font-semibold text-red-700">
+                        {embarqueAModificar.folio}
+                      </span>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => {
+                          setIsEditingModifyFolio(true);
+                          setModifyFolioDraft(embarqueAModificar.folio || "");
+                          setModifyFolioError(null);
+                        }}
+                        aria-label="Editar folio"
+                      >
+                        <Pencil className="h-4 w-4" />
+                      </Button>
+                    </>
+                  )}
+                </div>
+                <p className="text-xs text-red-500 mt-1">
+                  Solo para situaciones de emergencia
                 </p>
+                {modifyFolioError && (
+                  <p className="text-xs text-red-600 mt-1">{modifyFolioError}</p>
+                )}
               </div>
               <Button
                 onClick={() => setShowModifyModal(false)}

@@ -518,31 +518,31 @@ export default function RecordatoriosPage() {
   return (
     <MainLayout>
       <div className="space-y-6">
-        <div className="flex justify-between items-center">
+        <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-3">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Recordatorios</h1>
             <p className="text-gray-600 mt-2">
               Gestionar recordatorios y tareas pendientes
             </p>
           </div>
-          <div className="flex space-x-2">
+          <div className="flex flex-wrap items-start gap-2">
             <Button
               variant="outline"
               onClick={descargarExcel}
               disabled={recordatorios.length === 0}
-              className="border-green-600 text-green-700 hover:bg-green-50"
+              className="hidden md:inline-flex border-green-600 text-green-700 hover:bg-green-50"
             >
               <Download className="h-4 w-4 mr-2" />
               Descargar Excel
             </Button>
             <Dialog open={showForm} onOpenChange={setShowForm}>
               <DialogTrigger asChild>
-                <Button onClick={() => limpiarFormulario()} className="bg-green-600 hover:bg-green-700 text-white">
+                <Button onClick={() => limpiarFormulario()} className="bg-green-600 hover:bg-green-700 text-white self-start md:self-auto">
                   <Plus className="h-4 w-4 mr-2" />
                   Nuevo Recordatorio
                 </Button>
               </DialogTrigger>
-              <DialogContent className="max-w-2xl">
+              <DialogContent className="w-full max-w-[calc(100vw-2rem)] sm:max-w-xl md:max-w-2xl">
                 <DialogHeader>
                   <DialogTitle>
                     {editingRecordatorio
@@ -681,10 +681,10 @@ export default function RecordatoriosPage() {
           </div>
         </div>
   {/* success toast will be shown on update */}
-
+        
         {/* Estadísticas rápidas */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 justify-between">
+          <Card className="min-w-0 max-w-[160px] md:max-w-none">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -695,7 +695,7 @@ export default function RecordatoriosPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0 max-w-[160px] md:max-w-none">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -713,7 +713,7 @@ export default function RecordatoriosPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0 max-w-[160px] md:max-w-none">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -731,7 +731,7 @@ export default function RecordatoriosPage() {
               </div>
             </CardContent>
           </Card>
-          <Card>
+          <Card className="min-w-0 max-w-[160px] md:max-w-none">
             <CardContent className="pt-6">
               <div className="flex items-center justify-between">
                 <div>
@@ -836,24 +836,26 @@ export default function RecordatoriosPage() {
                 </div>
               </div>
             </div>
-            <div className={"grid grid-cols-1 gap-4 " + (
-              cardsPerRow === 2 ? 'sm:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-2' :
-              cardsPerRow === 3 ? 'sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-3' :
-              cardsPerRow === 4 ? 'sm:grid-cols-2 lg:grid-cols-4 2xl:grid-cols-4' :
-              cardsPerRow === 5 ? 'sm:grid-cols-2 lg:grid-cols-5 2xl:grid-cols-5' :
-              'sm:grid-cols-2 lg:grid-cols-6 2xl:grid-cols-6'
+              <div className={"grid grid-cols-1 gap-3 " + (
+              cardsPerRow === 2 ? 'md:grid-cols-2 lg:grid-cols-2 2xl:grid-cols-2' :
+              cardsPerRow === 3 ? 'md:grid-cols-3 lg:grid-cols-3 2xl:grid-cols-3' :
+              cardsPerRow === 4 ? 'md:grid-cols-4 lg:grid-cols-4 2xl:grid-cols-4' :
+              cardsPerRow === 5 ? 'md:grid-cols-5 lg:grid-cols-5 2xl:grid-cols-5' :
+              'md:grid-cols-6 lg:grid-cols-6 2xl:grid-cols-6'
             )}>
               {paginatedRecordatorios.map((recordatorio: Recordatorio) => (
                 <Card
                   key={recordatorio.id}
                   className={
-                    (esVencido(recordatorio.fecha_vencimiento) && recordatorio.estado !== 'completado')
-                      ? "border-red-200 bg-red-50"
-                      : recordatorio.prioridad === 'alta'
-                      ? 'border-red-100'
-                      : recordatorio.prioridad === 'media'
-                      ? 'border-yellow-100'
-                      : ''
+                    "min-w-0 " + (
+                      (esVencido(recordatorio.fecha_vencimiento) && recordatorio.estado !== 'completado')
+                        ? "border-red-200 bg-red-50"
+                        : recordatorio.prioridad === 'alta'
+                        ? 'border-red-100'
+                        : recordatorio.prioridad === 'media'
+                        ? 'border-yellow-100'
+                        : ''
+                    )
                   }
                 >
                   <CardHeader className="pb-2">

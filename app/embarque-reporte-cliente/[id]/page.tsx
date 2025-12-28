@@ -219,23 +219,23 @@ export default function EmbarqueReporteClientePage() {
       <main className="pt-24 p-6 max-w-6xl mx-auto">
         <Card>
           <CardHeader className="pb-8">
-            <div className="flex items-center justify-between w-full">
-              <div className="w-1/3" />
-            <div className="flex flex-col items-center w-1/3">
-              <CardTitle className="flex flex-col items-center">
-                <img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto" />
-                <div className="mt-3 text-xl md:text-2xl font-semibold text-gray-900 capitalize truncate">transportes internacionales monarca</div>
-                <span className="mt-2 text-lg font-semibold">Información del Embarque</span>
-              </CardTitle>
-              <CardDescription className="mt-1">Vista de Reporte Cliente</CardDescription>
-            </div>
-              <div className="w-1/3 text-right">
+            <div className="flex flex-col md:flex-row items-center md:items-start md:justify-between w-full gap-4">
+              <div className="hidden md:block md:w-1/3" />
+              <div className="flex flex-col items-center w-full md:w-1/3">
+                <CardTitle className="flex flex-col items-center">
+                  <img src="/monarca-logo.png" alt="Monarca" className="h-12 w-auto" />
+                  <div className="mt-3 text-xl md:text-2xl font-semibold text-gray-900 capitalize truncate">transportes internacionales monarca</div>
+                  <span className="mt-2 text-lg font-semibold">Información del Embarque</span>
+                </CardTitle>
+                <CardDescription className="mt-1 text-center">Vista de Reporte Cliente</CardDescription>
+              </div>
+              <div className="w-full md:w-1/3 text-center md:text-right">
                 <div className="text-sm text-gray-600">Fecha creación</div>
-                <div className="text-sm text-gray-700">{(embarque?.fecha_creacion || embarque?.created_at) ? formatDateMatamoros(embarque?.fecha_creacion || embarque?.created_at) : '—'}</div>
+                <div className="text-sm text-gray-700 mt-1 md:mt-0">{(embarque?.fecha_creacion || embarque?.created_at) ? formatDateMatamoros(embarque?.fecha_creacion || embarque?.created_at) : '—'}</div>
               </div>
             </div>
             <div>
-              <div className="mt-10 text-center text-2xl font-semibold text-gray-900">{embarque?.cliente?.nombre || '—'}</div>
+              <div className="mt-6 md:mt-10 text-center text-2xl font-semibold text-gray-900">{embarque?.cliente?.nombre || '—'}</div>
             </div>
           </CardHeader>
           <CardContent>

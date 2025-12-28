@@ -8459,20 +8459,12 @@ export default function FacturacionCobranzaPage() {
                     <Package className="h-4 w-4 mr-2" />
                     Servicios
                   </Button>
-                  <Button
-                    onClick={() => setShowArchivadosModal(true)}
-                    variant="outline"
-                    className="col-span-2 w-full justify-center"
-                  >
-                    <Package className="h-4 w-4 mr-2 text-purple-600" />
-                    Archivados
-                  </Button>
                 </div>
               </CardContent>
             </Card>
           </div>
           {/* Pagination moved up to sit beside search */}
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:ml-auto justify-end">
+          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:ml-auto justify-center md:justify-end">
             <div className="w-full md:hidden">
               <div className="relative mb-2">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
@@ -8485,7 +8477,7 @@ export default function FacturacionCobranzaPage() {
               </div>
             </div>
             <span className="hidden md:inline text-sm text-gray-700">Página {listaPage} de {totalListaPages}</span>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 mx-auto md:mx-0">
               <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.max(1, p - 1))} disabled={listaPage <= 1}>Anterior</Button>
               <Button variant="outline" size="sm" onClick={() => setListaPage(p => Math.min(totalListaPages, p + 1))} disabled={listaPage >= totalListaPages}>Siguiente</Button>
             </div>
@@ -8877,7 +8869,7 @@ export default function FacturacionCobranzaPage() {
                             </Badge>
                           )}
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:justify-end">
+                        <div className="flex flex-wrap items-center gap-2 w-full md:w-auto md:justify-end md:flex-nowrap">
                           {embarque.quickpaid_enabled && (
                             <Badge className="bg-yellow-100 text-yellow-800 border-yellow-300 flex items-center px-2 py-1 md:mr-2">
                               <span className="mr-1">QuickPaid</span>
@@ -8983,65 +8975,37 @@ export default function FacturacionCobranzaPage() {
                             <FileText className="h-4 w-4 md:mr-1" />
                             <span className="hidden md:inline">Facturación</span>
                           </Button>
-                          <>
+                          <div className="flex flex-wrap items-center gap-1 md:flex-nowrap md:items-center md:gap-2 md:ml-2">
+                            {/* Botón Precio oculto en Facturación y Cobranza por requerimiento */}
                             <Button
                               variant="outline"
                               size={actionButtonSize}
-                              onClick={() => {
-                                // Abrir prompt de justificación primero
-                                setSelectedEmbarqueForUpdate(embarque);
-                                setJustificacionDraft('');
-                                setShowJustificacionPrompt(true);
-                              }}
-                              title="Actualizar precio"
-                              aria-label="Actualizar precio"
+                              onClick={() => verDetallesEmbarque(embarque)}
+                              aria-label="Ver detalles"
+                              title="Detalles"
                             >
-                              <DollarSign className="h-4 w-4 md:mr-1" />
-                              <span className="hidden md:inline">Precio</span>
+                              <Eye className="h-4 w-4 md:mr-1" aria-hidden="true" />
+                              <span className="hidden md:inline">Detalles</span>
                             </Button>
-                            {/* Prompt pequeño que solicita justificación antes de abrir el modal principal */}
-                                            <Dialog open={showJustificacionPrompt && selectedEmbarqueForUpdate?.id === embarque.id} onOpenChange={(v) => { if(!v) { setShowJustificacionPrompt(false); setSelectedEmbarqueForUpdate(null); } }}>
-                              <DialogContent className="max-w-lg bg-red-50 border border-red-300">
-                                <DialogHeader>
-                                  <DialogTitle className="text-red-800">Confirmar actualización de precio</DialogTitle>
-                                  <DialogDescription className="text-red-700">
-                                    Estás a punto de cambiar el precio del embarque {embarque.folio || embarque.id}. Por favor ingresa una justificación breve antes de continuar.
-                                  </DialogDescription>
-                                </DialogHeader>
-                                <div className="space-y-3">
-                                  <div>
-                                    <Label>Justificación</Label>
-                                    <Textarea value={justificacionDraft} onChange={(ev) => setJustificacionDraft(ev.target.value)} placeholder="Explica brevemente por qué se actualizará el precio" />
-                                  </div>
-                                </div>
-                                <DialogFooter>
-                                  <Button variant="outline" onClick={() => { setShowJustificacionPrompt(false); setSelectedEmbarqueForUpdate(null); }}>Cancelar</Button>
-                                  <Button variant="destructive" onClick={() => {
-                                    if (!justificacionDraft || justificacionDraft.trim().length < 3) {
-                                      toast({ title: 'Ingresa una justificación (mínimo 3 caracteres)', variant: 'destructive' });
-                                      return;
-                                    }
-                                    // Abrir modal principal para editar precio, pasando la justificación inicial
-                                    setInitialRazonForModal(justificacionDraft.trim());
-                                    setShowJustificacionPrompt(false);
-                                    setShowUpdatePriceModal(true);
-                                  }}>
-                                    Aceptar
-                                  </Button>
-                                </DialogFooter>
-                              </DialogContent>
-                            </Dialog>
-                          </>
-                          <Button
-                            variant="outline"
-                            size={actionButtonSize}
-                            onClick={() => verDetallesEmbarque(embarque)}
-                            aria-label="Ver detalles"
-                            title="Detalles"
-                          >
-                            <Eye className="h-4 w-4 md:mr-1" aria-hidden="true" />
-                            <span className="hidden md:inline">Detalles</span>
-                          </Button>
+                            {(embarque.estado?.startsWith("finalizado") || 
+                              embarque.estado === "asignado" || 
+                              embarque.estado === "en-transito") && 
+                              !esCancelado(embarque) && (
+                              <Button
+                                variant="outline"
+                                size={actionButtonSize}
+                                onClick={() => {
+                                  setEmbarqueACancelar(embarque);
+                                  setCancelReason(""); // Limpiar el campo de justificación
+                                  setShowConfirmCancelarDialog(true);
+                                }}
+                                disabled={cancelingEmbarque}
+                              >
+                                <X className="h-4 w-4 mr-1" />
+                                Cancelar
+                              </Button>
+                            )}
+                          </div>
                           {/* Botón Modificar oculto según requerimiento */}
                           {(embarque.estado_facturacion === "pagado" ||
                             (embarque.pagado &&
@@ -9060,25 +9024,6 @@ export default function FacturacionCobranzaPage() {
                             >
                               <Package className="h-4 w-4 md:mr-1" />
                               <span className="hidden md:inline">Archivar</span>
-                            </Button>
-                          )}
-                          {/* Botón Cancelar - disponible para embarques finalizados que no estén ya cancelados */}
-                          {(embarque.estado?.startsWith("finalizado") || 
-                            embarque.estado === "asignado" || 
-                            embarque.estado === "en-transito") && 
-                            !esCancelado(embarque) && (
-                            <Button
-                              variant="outline"
-                              size="sm"
-                              onClick={() => {
-                                setEmbarqueACancelar(embarque);
-                                setCancelReason(""); // Limpiar el campo de justificación
-                                setShowConfirmCancelarDialog(true);
-                              }}
-                              disabled={cancelingEmbarque}
-                            >
-                              <X className="h-4 w-4 mr-1" />
-                              Cancelar
                             </Button>
                           )}
                         </div>

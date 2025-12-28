@@ -152,6 +152,25 @@ export default function OperadoresPage() {
   }
   const [comentarios, setComentarios] = useState<ComentarioOperador[]>([]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!showDetailsModal) return;
+
+    const isMobile = window.matchMedia("(max-width: 767px)").matches;
+    if (!isMobile) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const previousTouchAction = document.body.style.touchAction;
+
+    document.body.style.overflow = "hidden";
+    document.body.style.touchAction = "none";
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      document.body.style.touchAction = previousTouchAction;
+    };
+  }, [showDetailsModal]);
+
   const abrirDetallesCompletos = (operador: Operador) => {
     setOperadorDetalle(operador);
     setActiveTab('general');
@@ -238,7 +257,6 @@ export default function OperadoresPage() {
       { value: "personal", label: "Personal", shortLabel: "Datos", icon: User },
       { value: "detalles", label: "Detalles", shortLabel: "Detalles", icon: FileText },
       { value: "fotografia", label: "Fotografía", shortLabel: "Foto", icon: ImageIcon },
-      { value: "documentos", label: "Documentos", shortLabel: "Docs", icon: IdCard },
       { value: "licencias", label: "Licencias", shortLabel: "Lic.", icon: Shield },
       { value: "emergencia", label: "Emergencia", shortLabel: "Emerg.", icon: Contact },
       { value: "observaciones", label: "Observaciones", shortLabel: "Notas", icon: MessageSquare },
@@ -1355,7 +1373,7 @@ export default function OperadoresPage() {
     await persistirComentarios(lista);
     if (showToast) {
       try {
-        toast({ title: 'Comentario eliminado', description: 'Se eliminó la observación. Revisa la pestaña "Documentos" para NSS / RFC / CURP.', variant: 'destructive' });
+        toast({ title: 'Comentario eliminado', description: 'Se eliminó la observación. Revisa la pestaña "Detalles" para NSS / RFC / CURP.', variant: 'destructive' });
       } catch (e) {
         // ignore toast failures
       }
@@ -1405,6 +1423,13 @@ export default function OperadoresPage() {
     setDocumentosBasicosUrls([]);
     setUploadingFoto(false);
     setUploadingDocumentos(false);
+  };
+
+  const openNuevoOperadorModal = () => {
+    resetForm();
+    setOperadorFormTab("personal");
+    setOperadorTabWindowStart(0);
+    setShowModal(true);
   };
 
   const resetDocumentForm = () => {
@@ -2436,6 +2461,13 @@ export default function OperadoresPage() {
           </div>
           <div className="flex gap-2">
             <Button
+              onClick={openNuevoOperadorModal}
+              className="hidden md:inline-flex items-center bg-[#16A34A] hover:bg-[#12813a] text-white"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Operador
+            </Button>
+            <Button
               type="button"
               variant="outline"
               onClick={() => {
@@ -2597,6 +2629,20 @@ export default function OperadoresPage() {
             <AlertDescription>{success}</AlertDescription>
           </Alert>
         )}
+
+        {/* Acciones rápidas - Solo móvil */}
+        <Card className="md:hidden border border-dashed border-gray-200">
+          <CardContent className="pt-4 space-y-3">
+            <p className="text-sm font-semibold text-gray-700">Acciones rápidas</p>
+            <Button 
+              className="w-full" 
+              onClick={openNuevoOperadorModal}
+            >
+              <Plus className="mr-2 h-4 w-4" />
+              Nuevo Operador
+            </Button>
+          </CardContent>
+        </Card>
 
         {/* Filtros + paginación superior */}
         <Card>
@@ -3351,6 +3397,24 @@ export default function OperadoresPage() {
                         </Select>
                       </div>
                       <div className="space-y-2">
+                        <Label htmlFor="rfc">RFC</Label>
+                        <Input
+                          id="rfc"
+                          value={formData.rfc}
+                          onChange={(e) => setFormData({ ...formData, rfc: e.target.value })}
+                          placeholder="RFC (opcional)"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="nss">NSS</Label>
+                        <Input
+                          id="nss"
+                          value={formData.nss}
+                          onChange={(e) => setFormData({ ...formData, nss: e.target.value })}
+                          placeholder="NSS (opcional)"
+                        />
+                      </div>
+                      <div className="space-y-2">
                         <Label htmlFor="estado">Estado</Label>
                         <Select
                           value={formData.estado}
@@ -3442,25 +3506,7 @@ export default function OperadoresPage() {
                           </p>
                         </div>
 
-                        <div className="space-y-4">
-                          <div className="space-y-2">
-                            <Label htmlFor="rfc">RFC</Label>
-                            <Input
-                              id="rfc"
-                              value={formData.rfc}
-                              onChange={(e) => setFormData({ ...formData, rfc: e.target.value })}
-                              placeholder="RFC (opcional)"
-                            />
-                          </div>
-                          <div className="space-y-2">
-                            <Label htmlFor="nss">NSS</Label>
-                            <Input
-                              id="nss"
-                              value={formData.nss}
-                              onChange={(e) => setFormData({ ...formData, nss: e.target.value })}
-                              placeholder="NSS (opcional)"
-                            />
-                          </div>
+                        <div className="space-y-4 max-h-[52vh] overflow-y-auto pr-1">
                           <div className="space-y-2">
                             <Label>Documentos adicionales</Label>
                             <div className="flex flex-col sm:flex-row gap-2">
@@ -3509,27 +3555,39 @@ export default function OperadoresPage() {
                               <p className="text-xs font-medium text-gray-600">
                                 Documentos listos para subir:
                               </p>
-                              <ul className="space-y-2">
-                                {documentosBasicos.map((doc, index) => (
-                                  <li
-                                    key={`${doc.name}-${index}`}
-                                    className="flex items-center justify-between rounded border px-3 py-2 text-xs bg-gray-50"
-                                  >
-                                    <span className="truncate pr-3">
-                                      {doc.name} ({Math.ceil(doc.size / 1024)} KB)
-                                    </span>
-                                    <Button
-                                      type="button"
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => eliminarDocumentoBasico(index)}
+                              <div className="grid grid-cols-1 gap-2">
+                                {documentosBasicos.map((doc, index) => {
+                                  const previewUrl = documentosBasicosUrls[index];
+                                  const isImage = doc.type.startsWith("image/");
+                                  return (
+                                    <div
+                                      key={`${doc.name}-${index}`}
+                                      className="flex items-center gap-3 rounded border px-3 py-2 text-xs bg-gray-50"
                                     >
-                                      <Trash2 className="h-3.5 w-3.5 mr-1" />
-                                      Quitar
-                                    </Button>
-                                  </li>
-                                ))}
-                              </ul>
+                                      <div className="h-12 w-12 flex items-center justify-center overflow-hidden rounded border bg-white">
+                                        {isImage && previewUrl ? (
+                                          <img src={previewUrl} alt={doc.name} className="h-full w-full object-cover" />
+                                        ) : (
+                                          <FileText className="h-5 w-5 text-slate-500" />
+                                        )}
+                                      </div>
+                                      <div className="flex-1 min-w-0">
+                                        <p className="truncate font-medium text-slate-700">{doc.name}</p>
+                                        <p className="text-[11px] text-slate-500">{Math.ceil(doc.size / 1024)} KB</p>
+                                      </div>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={() => eliminarDocumentoBasico(index)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5 mr-1" />
+                                        Quitar
+                                      </Button>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             </div>
                           )}
                         </div>
@@ -3862,14 +3920,23 @@ export default function OperadoresPage() {
                 </Tabs>
 
                 <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 pt-6 border-t mt-6">
-                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => setShowModal(false)}
+                    className="w-full sm:w-auto"
+                  >
+                    Cancelar
+                  </Button>
+                  <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto sm:ml-auto">
                     <Button
                       type="button"
                       variant="outline"
-                      onClick={() => setShowModal(false)}
-                      className="w-full sm:w-auto"
+                      onClick={() => exportOperadoresToExcel(operadores)}
+                      className="w-full sm:w-auto hidden md:inline-flex items-center"
                     >
-                      Cancelar
+                      <FileSpreadsheet className="h-4 w-4 mr-2" />
+                      Descargar Excel
                     </Button>
                     <Button
                       type="submit"
@@ -3889,15 +3956,6 @@ export default function OperadoresPage() {
                       )}
                     </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => exportOperadoresToExcel(operadores)}
-                    className="hidden md:inline-flex items-center"
-                  >
-                    <FileSpreadsheet className="h-4 w-4 mr-2" />
-                    Descargar Excel
-                  </Button>
                 </div>
               </form>
             </div>

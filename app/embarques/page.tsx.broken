@@ -57,27 +57,24 @@ import {
   ImageIcon,
   ExternalLink,
   Copy,
-  Pencil,
-  FileText,
-  ChevronLeft,
-  ChevronRight,
-  Archive,
-  Trash2,
-  ChevronDown,
-  ChevronUp,
+  Wand2,
   User,
   Star,
   Phone,
   Mail,
+  FileText,
   FolderOpen,
+  Trash2,
+  ChevronLeft,
+  ChevronRight,
 } from "lucide-react";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useToast } from "@/hooks/use-toast";
 import * as XLSX from "xlsx";
 import { getCurrentUser } from "@/lib/auth";
 import { agregarAuditLog } from "@/lib/audit";
-import { formatDateMatamoros } from "@/lib/date-utils";
-import { normalizeDate } from "@/lib/date-utils";
+import { formatDateMatamoros } from '@/lib/date-utils';
+import { normalizeDate } from '@/lib/date-utils';
 import { useRouter } from "next/navigation";
 import {
   supabase,
@@ -86,185 +83,158 @@ import {
   type Operador,
   type Camion,
   type Remolque,
-  type ContactoCliente,
-  type TipoServicio,
-  type FotoEmbarque,
-  obtenerContactosCliente,
-  obtenerContactosClienteTabla,
-  obtenerFotosEmbarque,
-} from "@/lib/supabase";
-import {
-  subirDocumentoEmbarque,
-  eliminarDocumentoEmbarque,
-  eliminarDocumentoEmbarqueCompleto,
-  listarDocumentosEmbarque,
-} from "@/lib/blob";
+  const loadEmbarques = async () => {
+            // 🔧 PRIORIDAD 3: Si no hay info en tabla normalizada, usar estado legacy
+            // PERO con lógica inteligente para mantener funcionalidad del botón
+            if (embarque.estado) {
+              // Normalizar distintos formatos que puedan venir (array, objeto, string)
+              try {
+                // Caso: arquitectura normalizada embebe un array en `embarque.estado`
+                if (Array.isArray(embarque.estado) && embarque.estado[0]) {
+                  const posible = (embarque.estado[0] as any).estado || (embarque.estado[0] as any).nombre || null;
+                  if (posible === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' desde array → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  if (typeof posible === 'string' && posible) {
+                    console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy desde array '${posible}'`);
+                    return posible;
+                  }
+                }
 
-const esTipoServicioFleteFalso = (tipo?: Partial<TipoServicio> | null): boolean => {
-  if (!tipo) return false;
-  if (typeof (tipo as any)?.es_flete_falso === "boolean") {
-    return Boolean((tipo as any).es_flete_falso);
-  }
-  if (typeof (tipo as any)?.flete_en_falso === "boolean") {
-    return Boolean((tipo as any).flete_en_falso);
-  }
-  const slug = String((tipo as any)?.slug || "").toLowerCase();
-  const nombre = String((tipo as any)?.nombre || "").toLowerCase();
-  return slug === "flete-en-falso" || nombre === "flete en falso";
-};
+                // Caso: puede venir como objeto con campo `estado`
+                if (typeof embarque.estado === 'object' && embarque.estado !== null) {
+                  const posibleObj = (embarque.estado as any).estado || (embarque.estado as any).nombre || null;
+                  if (posibleObj === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' desde objeto → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  if (typeof posibleObj === 'string' && posibleObj) {
+                    console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy desde objeto '${posibleObj}'`);
+                    return posibleObj;
+                  }
+                }
 
-const parseMonto = (valor: any): number | undefined => {
-  if (typeof valor === "number") {
-    return Number.isFinite(valor) ? valor : 0;
-  }
-  if (typeof valor === "string") {
-    const trimmed = valor.trim();
-    if (!trimmed) return undefined;
-    const parsed = Number(trimmed);
-    return Number.isFinite(parsed) ? parsed : undefined;
-  }
-  return undefined;
-};
+                // Caso: valor primitivo (string)
+                if (typeof embarque.estado === 'string') {
+                  if (embarque.estado === 'creado') {
+                    console.log(`🔧 [MAPEO] ${folio}: Conservando 'creado' → BOTÓN VISIBLE`);
+                    return 'creado';
+                  }
+                  console.log(`🔧 [MAPEO] ${folio}: Usando estado legacy '${embarque.estado}'`);
+                  return embarque.estado;
+                }
+              } catch (e) {
+                console.warn(`⚠️ [MAPEO] ${folio}: Error normalizando estado legacy`, e);
+              }
+            }
+            
+            // 🔧 FALLBACK: Estado por defecto para nuevos embarques
+            console.log(`🔧 [MAPEO] ${folio}: Usando estado por defecto 'creado'`);
+            return 'creado';
+          })(),
+          estado_facturacion: estado.estado_facturacion || 'pendiente_facturacion',
+          pagado: estado.pagado || false,
+          fecha_creacion: estado.fecha_creacion || embarque.created_at,
+          
+          // Mapear documentos
+          carta_porte: documento.carta_porte,
+          
+          // Mapear campos adicionales
+          dueno_mercancia: adicional.dueno_mercancia,
+          representante_cliente: adicional.representante_cliente,
+          info_representante: adicional.info_representante,
+          observaciones: adicional.observaciones,
+          
+          // Marcar como normalizado para distinguir
+          _fuente: 'normalizado'
+        };
+      });
 
-const obtenerMontoTipoServicio = (tipo?: Partial<TipoServicio> | null, precioGlobalFleteFalso: number = 800, embarque?: any): number => {
-  if (!tipo) return 0;
-  
-  // Solo usar precio global si el EMBARQUE específico está marcado como flete falso
-  if (embarque?.flete_falso === true) {
-    return precioGlobalFleteFalso;
-  }
+      // 4. Combinar ambas fuentes
+      const embarquesCombinados = [
+        ...(embarquesNormalizadosCompatibles || []),
+        ...(embarquesLegacy || []).map((e: any) => ({ ...e, _fuente: 'legacy' }))
+      ];
 
-  // Para servicios normales o si el embarque no está marcado como flete falso, usar precio base
-  const candidatos = [
-    (tipo as any)?.precio_base,
-    (tipo as any)?.pago_operador,
-    (tipo as any)?.pagoOperador,
-  ];
+      // 4.1. Deduplicar embarques (priorizar normalizados sobre legacy)
+      const embarquesUnicos = new Map();
+      
+      embarquesCombinados.forEach(embarque => {
+        const id = embarque.id;
+        const existing = embarquesUnicos.get(id);
+        
+        if (!existing) {
+          embarquesUnicos.set(id, embarque);
+        } else if (embarque._fuente === 'normalizado' && existing._fuente === 'legacy') {
+          // Priorizar versión normalizada sobre legacy
+          embarquesUnicos.set(id, embarque);
+          console.log(`🔄 Reemplazando ${id} legacy con normalizado`);
+        } else if (embarque._fuente === 'legacy' && existing._fuente === 'normalizado') {
+          // Mantener versión normalizada, ignorar legacy
+          console.log(`⚠️ Ignorando ${id} legacy (ya existe normalizado)`);
+        }
+      });
+      
+  let todosLosEmbarques = Array.from(embarquesUnicos.values());
+      console.log(`🔀 Deduplicación: ${embarquesCombinados.length} → ${todosLosEmbarques.length} embarques únicos`);
 
-  for (const candidato of candidatos) {
-    const parsed = parseMonto(candidato);
-    if (parsed !== undefined) return parsed;
-  }
-
-  return 0;
-};
-
-const DETALLE_TABS_CONFIG = [
-  { value: "general", label: "General" },
-  { value: "direcciones", label: "Direcciones" },
-  { value: "vehiculos", label: "Vehículos" },
-  { value: "facturacion", label: "Facturación" },
-  { value: "contacto", label: "Contacto" },
-  { value: "archivos", label: "Adjuntos" },
-];
-
-const CREAR_TABS_CONFIG = [
-  { value: "basica", label: "Información Básica" },
-  { value: "direcciones", label: "Direcciones" },
-  { value: "vehiculos", label: "Vehículos" },
-  { value: "detalles", label: "Detalles" },
-  { value: "adjuntos", label: "Adjuntos" },
-];
-
-export default function EmbarquesPage() {
-  const router = useRouter();
-  const [embarques, setEmbarques] = useState<Embarque[]>([]);
-  const [clientes, setClientes] = useState<Cliente[]>([]);
-  const [operadores, setOperadores] = useState<Operador[]>([]);
-  const [camiones, setCamiones] = useState<Camion[]>([]);
-  const [remolques, setRemolques] = useState<Remolque[]>([]);
-  const [contactos, setContactos] = useState<ContactoCliente[]>([]);
-  // Estados para optimización de contactos grandes
-  const [busquedaContacto, setBusquedaContacto] = useState("");
-  const [contactosFiltrados, setContactosFiltrados] = useState<ContactoCliente[]>([]);
-  const [mostrarTodosContactos, setMostrarTodosContactos] = useState(false);
-  const [tiposServicio, setTiposServicio] = useState<TipoServicio[]>([]);
-  const [precioGlobalFleteFalso, setPrecioGlobalFleteFalso] = useState(800);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [searchTerm, setSearchTerm] = useState("");
-  // Estados para filtros y búsqueda con persistencia
-  const [filtroEstado, setFiltroEstado] = useState(() => {
-    // 🔧 Cargar filtro desde localStorage o usar "todos" por defecto
-    if (typeof window !== 'undefined') {
-      const savedFilter = localStorage.getItem('embarques-filtro-estado');
-      console.log(`🔧 [FILTRO] Cargando filtro desde localStorage: '${savedFilter}' → usando: '${savedFilter || 'todos'}'`);
-      return savedFilter || "todos";
-    }
-    return "todos";
-  });
-
-  // 🔧 Función para cambiar filtro con persistencia
-  const cambiarFiltroEstado = (nuevoFiltro: string) => {
-    console.log(`🔧 [FILTRO] Cambiando filtro de '${filtroEstado}' → '${nuevoFiltro}'`);
-    setFiltroEstado(nuevoFiltro);
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('embarques-filtro-estado', nuevoFiltro);
-      console.log(`🔧 [FILTRO] Guardado en localStorage: '${nuevoFiltro}'`);
-    }
-  };
-
-  const [showCreateModal, setShowCreateModal] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [embarqueEditando, setEmbarqueEditando] = useState<Embarque | null>(
-    null
-  );
-  const [showDetailModal, setShowDetailModal] = useState(false);
-  // Contacto detallado para el modal (asegura que "puesto" venga de contactos_clientes y permite mostrar notas)
-  const [detalleContacto, setDetalleContacto] = useState<any | null>(null);
-  const [embarqueDetalle, setEmbarqueDetalle] = useState<Embarque | null>(null);
-  const [showServicesModal, setShowServicesModal] = useState(false);
-  const [showArchivosModal, setShowArchivosModal] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
-  
-  // Estados para colapsar secciones en móvil
-  const [embarquesColapsados, setEmbarquesColapsados] = useState<Record<string, boolean>>({});
-  const [aduanasColapsadas, setAduanasColapsadas] = useState<Record<string, boolean>>({});
-  const [unidadesColapsadas, setUnidadesColapsadas] = useState<Record<string, boolean>>({});
-  const [financierosColapsados, setFinancierosColapsados] = useState<Record<string, boolean>>({});
-  const [detallesColapsados, setDetallesColapsados] = useState<Record<string, boolean>>({});
-  
-  const toggleEmbarqueCollapse = (embarqueId: string) => {
-    setEmbarquesColapsados((prev) => {
-      const current = prev[embarqueId] ?? true;
-      return { ...prev, [embarqueId]: !current };
-    });
-  };
-  
-  const toggleAduanaCollapse = (embarqueId: string) => {
-    setAduanasColapsadas((prev) => {
-      const current = prev[embarqueId] ?? true;
-      return { ...prev, [embarqueId]: !current };
-    });
-  };
-  
-  const toggleUnidadCollapse = (embarqueId: string) => {
-    setUnidadesColapsadas((prev) => {
-      const current = prev[embarqueId] ?? true;
-      return { ...prev, [embarqueId]: !current };
-    });
-  };
-  
-  const toggleFinancieroCollapse = (embarqueId: string) => {
-    setFinancierosColapsados((prev) => {
-      const current = prev[embarqueId] ?? true;
-      return { ...prev, [embarqueId]: !current };
-    });
-  };
-  
-  const toggleDetallesCollapse = (embarqueId: string) => {
-    setDetallesColapsados((prev) => {
-      const current = prev[embarqueId] ?? true;
-      return { ...prev, [embarqueId]: !current };
-    });
-  };
-  
+      // 5. Ordenar por fecha de creación
+      todosLosEmbarques.sort((a, b) => {
+  const [embarqueTabWindowStart, setEmbarqueTabWindowStart] = useState(0);
   const [showEliminarArchivadoDialog, setShowEliminarArchivadoDialog] = useState(false);
   const [embarqueAEliminar, setEmbarqueAEliminar] = useState<Embarque | null>(null);
   const [showCancelModal, setShowCancelModal] = useState(false);
   const [cancelingEmbarque, setCancelingEmbarque] = useState<Embarque | null>(
     null
   );
+
+  useEffect(() => {
+    if (!showCreateModal && !showEditModal) {
+      setEmbarqueFormTab("basica");
+      setEmbarqueTabWindowStart(0);
+    }
+  }, [showCreateModal, showEditModal]);
+
+  const mobileVisibleEmbarqueTabs = EMBARQUE_FORM_TABS.slice(
+    embarqueTabWindowStart,
+    embarqueTabWindowStart + EMBARQUE_MOBILE_VISIBLE_TABS
+  );
+  const canSlideEmbarqueTabsLeft = embarqueTabWindowStart > 0;
+  const canSlideEmbarqueTabsRight =
+    embarqueTabWindowStart + EMBARQUE_MOBILE_VISIBLE_TABS <
+    EMBARQUE_FORM_TABS.length;
+
+  const shiftEmbarqueTabWindow = (direction: "left" | "right") => {
+    setEmbarqueTabWindowStart((prev) => {
+      if (direction === "left") {
+        return Math.max(0, prev - 1);
+      }
+      const maxStart = Math.max(
+        0,
+        EMBARQUE_FORM_TABS.length - EMBARQUE_MOBILE_VISIBLE_TABS
+      );
+      return Math.min(maxStart, prev + 1);
+    });
+  };
+
+  useEffect(() => {
+    const currentIndex = EMBARQUE_FORM_TABS.findIndex(
+      (tab) => tab.value === embarqueFormTab
+    );
+    if (currentIndex === -1) return;
+
+    if (currentIndex < embarqueTabWindowStart) {
+      setEmbarqueTabWindowStart(currentIndex);
+    } else if (
+      currentIndex >=
+      embarqueTabWindowStart + EMBARQUE_MOBILE_VISIBLE_TABS
+    ) {
+      setEmbarqueTabWindowStart(
+        Math.max(0, currentIndex - EMBARQUE_MOBILE_VISIBLE_TABS + 1)
+      );
+    }
+  }, [embarqueFormTab, embarqueTabWindowStart]);
   const [showArchivarDialog, setShowArchivarDialog] = useState(false);
   const [embarqueAArchivar, setEmbarqueAArchivar] = useState<Embarque | null>(null);
   const [showCompletarDialog, setShowCompletarDialog] = useState(false);
@@ -304,71 +274,6 @@ export default function EmbarquesPage() {
   const [showImagePreview, setShowImagePreview] = useState(false);
   const [previewImage, setPreviewImage] = useState<{url: string, name: string} | null>(null);
 
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const updateIsMobile = () => setIsMobile(window.innerWidth < 640);
-    updateIsMobile();
-    window.addEventListener("resize", updateIsMobile);
-    return () => window.removeEventListener("resize", updateIsMobile);
-  }, []);
-
-  // Estados para tabs con desplazamiento en modales (versión móvil)
-  const [detalleTab, setDetalleTab] = useState<string>(DETALLE_TABS_CONFIG[0].value);
-  const [detalleTabWindowStart, setDetalleTabWindowStart] = useState(0);
-  const detalleTabsWindowSize = Math.min(3, DETALLE_TABS_CONFIG.length);
-  const detalleVisibleTabs = DETALLE_TABS_CONFIG.slice(
-    detalleTabWindowStart,
-    detalleTabWindowStart + detalleTabsWindowSize
-  );
-  const canSlideDetalleTabsLeft = detalleTabWindowStart > 0;
-  const canSlideDetalleTabsRight =
-    detalleTabWindowStart + detalleTabsWindowSize < DETALLE_TABS_CONFIG.length;
-  const shiftDetalleTabWindow = (direction: "left" | "right") => {
-    if (direction === "left") {
-      setDetalleTabWindowStart((prev) => Math.max(0, prev - 1));
-    } else {
-      setDetalleTabWindowStart((prev) =>
-        Math.min(
-          Math.max(0, DETALLE_TABS_CONFIG.length - detalleTabsWindowSize),
-          prev + 1
-        )
-      );
-    }
-  };
-
-  const [crearTab, setCrearTab] = useState<string>(CREAR_TABS_CONFIG[0].value);
-  const [crearTabWindowStart, setCrearTabWindowStart] = useState(0);
-  const crearTabsWindowSize = Math.min(isMobile ? 2 : 3, CREAR_TABS_CONFIG.length);
-  const crearVisibleTabs = CREAR_TABS_CONFIG.slice(
-    crearTabWindowStart,
-    crearTabWindowStart + crearTabsWindowSize
-  );
-  const canSlideCrearTabsLeft = crearTabWindowStart > 0;
-  const canSlideCrearTabsRight =
-    crearTabWindowStart + crearTabsWindowSize < CREAR_TABS_CONFIG.length;
-
-  useEffect(() => {
-    setCrearTabWindowStart((current) =>
-      Math.min(
-        current,
-        Math.max(0, CREAR_TABS_CONFIG.length - crearTabsWindowSize)
-      )
-    );
-  }, [crearTabsWindowSize]);
-
-  const shiftCrearTabWindow = (direction: "left" | "right") => {
-    if (direction === "left") {
-      setCrearTabWindowStart((prev) => Math.max(0, prev - 1));
-    } else {
-      setCrearTabWindowStart((prev) =>
-        Math.min(
-          Math.max(0, CREAR_TABS_CONFIG.length - crearTabsWindowSize),
-          prev + 1
-        )
-      );
-    }
-  };
-
   // Debug: Monitorear cambios en documentosEmbarque
   useEffect(() => {
     console.log("🔄 Estado documentosEmbarque actualizado:", {
@@ -376,130 +281,6 @@ export default function EmbarquesPage() {
       documentos: documentosEmbarque
     });
   }, [documentosEmbarque]);
-
-  useEffect(() => {
-    const currentIndex = DETALLE_TABS_CONFIG.findIndex((tab) => tab.value === detalleTab);
-    if (currentIndex === -1) return;
-    setDetalleTabWindowStart((current) => {
-      if (currentIndex < current) return currentIndex;
-      if (currentIndex >= current + detalleTabsWindowSize) {
-        return Math.max(0, currentIndex - detalleTabsWindowSize + 1);
-      }
-      return current;
-    });
-  }, [detalleTab, detalleTabsWindowSize]);
-
-  useEffect(() => {
-    if (!showDetailModal) {
-      setDetalleTab(DETALLE_TABS_CONFIG[0].value);
-      setDetalleTabWindowStart(0);
-    }
-  }, [showDetailModal]);
-
-  useEffect(() => {
-    if (embarqueDetalle?.id) {
-      setDetalleTab(DETALLE_TABS_CONFIG[0].value);
-      setDetalleTabWindowStart(0);
-    }
-  }, [embarqueDetalle?.id]);
-
-  const { toast } = useToast();
-
-  const sanitizeFolio = useCallback((valor: string) => {
-    return valor.replace(/\s+/g, " ").trim().toUpperCase();
-  }, []);
-
-  const validarFolioDisponible = useCallback(
-    async (folio: string, excluirId?: string) => {
-      const candidato = sanitizeFolio(folio);
-      if (!candidato) {
-        return "Ingresa un folio válido";
-      }
-
-      try {
-        let builder = supabase
-          .from("embarques")
-          .select("id", { count: "exact", head: true })
-          .eq("folio", candidato);
-
-        if (excluirId) {
-          builder = builder.neq("id", excluirId);
-        }
-
-        const { count, error } = await builder;
-        if (error) {
-          console.error("Error validando folio duplicado:", error);
-          return "No se pudo validar el folio. Intenta nuevamente.";
-        }
-
-        if ((count || 0) > 0) {
-          return "Este folio ya está en uso.";
-        }
-
-        return null;
-      } catch (err) {
-        console.error("Error general validando folio:", err);
-        return "Ocurrió un error al validar el folio.";
-      }
-    },
-    [sanitizeFolio]
-  );
-
-  const actualizarFolioLocal = useCallback(
-    (embarqueId: string, nuevoFolio: string) => {
-      setEmbarques((prev) =>
-        prev.map((embarque) =>
-          embarque.id === embarqueId ? { ...embarque, folio: nuevoFolio } : embarque
-        )
-      );
-      setEmbarqueDetalle((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-      setEmbarqueEditando((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-      setCancelingEmbarque((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-      setEmbarqueAArchivar((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-      setEmbarqueACompletar((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-      setEmbarqueAEliminar((prev) =>
-        prev && prev.id === embarqueId ? { ...prev, folio: nuevoFolio } : prev
-      );
-    },
-    []
-  );
-
-  useEffect(() => {
-    const currentIndex = CREAR_TABS_CONFIG.findIndex((tab) => tab.value === crearTab);
-    if (currentIndex === -1) return;
-    setCrearTabWindowStart((current) => {
-      if (currentIndex < current) return currentIndex;
-      if (currentIndex >= current + crearTabsWindowSize) {
-        return Math.max(0, currentIndex - crearTabsWindowSize + 1);
-      }
-      return current;
-    });
-  }, [crearTab, crearTabsWindowSize]);
-
-  const isCreateOrEditModalOpen = showCreateModal || showEditModal;
-  useEffect(() => {
-    if (!isCreateOrEditModalOpen) {
-      setCrearTab(CREAR_TABS_CONFIG[0].value);
-      setCrearTabWindowStart(0);
-    }
-  }, [isCreateOrEditModalOpen]);
-
-  useEffect(() => {
-    if (isCreateOrEditModalOpen) {
-      setCrearTab(CREAR_TABS_CONFIG[0].value);
-      setCrearTabWindowStart(0);
-    }
-  }, [embarqueEditando?.id, isCreateOrEditModalOpen]);
 
   // Persistencia local (client-side) para marcar embarques que el usuario completó
   // Esto evita que el botón "Completar y Enviar" reaparezca después de recargar
@@ -526,6 +307,8 @@ export default function EmbarquesPage() {
       localStorage.setItem(LOCAL_KEY_COMPLETADOS, JSON.stringify(Array.from(arr)));
     } catch (e) {}
   };
+
+  const { toast } = useToast();
 
   // Parse a date-only string (YYYY-MM-DD) into a local Date at midnight
   const parseDateOnlyLocal = (value?: string | null) => {
@@ -572,66 +355,6 @@ export default function EmbarquesPage() {
     remolque_placa: "",
   // remolque_sello_fiscal removido (no se usa)
   });
-  const [formFolioError, setFormFolioError] = useState<string | null>(null);
-  const [showFolioEditor, setShowFolioEditor] = useState(false);
-  const [folioEditorPrefix, setFolioEditorPrefix] = useState("");
-  const [folioEditorYear, setFolioEditorYear] = useState("");
-  const [folioEditorMonth, setFolioEditorMonth] = useState("");
-  const [folioEditorConsecutivo, setFolioEditorConsecutivo] = useState("");
-  const [folioEditorError, setFolioEditorError] = useState<string | null>(null);
-  const [folioEditorLoading, setFolioEditorLoading] = useState(false);
-
-  const generarFolioEspecifico = async () => {
-    try {
-      const now = new Date();
-      const year = now.getFullYear().toString().slice(-2);
-      const month = (now.getMonth() + 1).toString().padStart(2, "0");
-
-      const baseFormat = `TIM-${year}${month}`;
-
-      // Consultar todos los folios del mes actual en tabla embarques
-      const { data: foliosMes, error: folioError } = await supabase
-        .from("embarques")
-        .select("folio")
-        .like("folio", `${baseFormat}-%`)
-        .order("folio", { ascending: true });
-
-      if (folioError) {
-        console.error("Error consultando folios del mes:", folioError);
-        return `${baseFormat}-001`;
-      }
-
-      let maxConsecutivo = 0;
-      (foliosMes || []).forEach((registro) => {
-        const match = /-(\d{3})$/.exec(registro.folio || "");
-        if (match) {
-          const numero = Number.parseInt(match[1], 10);
-          if (Number.isFinite(numero) && numero > 0) {
-            if (numero > maxConsecutivo) {
-              maxConsecutivo = numero;
-            }
-          }
-        }
-      });
-
-      // Mantener folios de creación en orden creciente respecto al ID
-      const siguiente = String(maxConsecutivo + 1 || 1).padStart(3, "0");
-      return `${baseFormat}-${siguiente}`;
-    } catch (error) {
-      console.error("Error generating folio:", error);
-      return "Error al generar";
-    }
-  };
-
-  const cargarProximoFolio = async () => {
-    try {
-      const folio = await generarFolioEspecifico();
-      setProximoFolio(folio);
-    } catch (error) {
-      console.error("Error generando folio:", error);
-      setProximoFolio("Error al generar");
-    }
-  };
 
   // Validaciones para "Nuevo Embarque"
   const isClienteSelected = !!formData.cliente_id && formData.cliente_id !== "none";
@@ -640,213 +363,6 @@ export default function EmbarquesPage() {
     ? (formData.remolque_numero_economico.trim() !== "" || formData.remolque_placa.trim() !== "")
     : (!!formData.remolque_id && formData.remolque_id !== "none");
   const isNuevoEmbarqueValid = isClienteSelected && isRemolqueValid && isTipoServicioSelected;
-
-  useEffect(() => {
-    if (!isCreateOrEditModalOpen) {
-      setShowFolioEditor(false);
-      setFormFolioError(null);
-      setFolioEditorError(null);
-      setFolioEditorLoading(false);
-      setFolioEditorYear("");
-      setFolioEditorMonth("");
-    }
-  }, [isCreateOrEditModalOpen]);
-
-  const obtenerFolioBase = useCallback(() => {
-    const referencia =
-      (formData.folio && formData.folio.trim()) ||
-      (embarqueEditando?.folio && embarqueEditando.folio) ||
-      proximoFolio ||
-      "";
-    return sanitizeFolio(referencia);
-  }, [embarqueEditando, formData.folio, proximoFolio, sanitizeFolio]);
-
-  const obtenerPartesFolio = useCallback(
-    (folio: string) => {
-      const limpio = sanitizeFolio(folio);
-      if (!limpio) {
-        return { prefix: "", mes: "", consecutivo: "" };
-      }
-
-      const segmentos = limpio.split("-");
-      if (segmentos.length < 3) {
-        return { prefix: limpio, mes: "", consecutivo: "" };
-      }
-
-      const consecutivo = segmentos.pop() || "";
-      const mes = segmentos.pop() || "";
-      const prefix = segmentos.join("-");
-      return { prefix, mes, consecutivo };
-    },
-    [sanitizeFolio]
-  );
-
-  const abrirEditorFolio = useCallback(() => {
-    const base = obtenerFolioBase();
-    if (!base) {
-      toast({
-        title: "Folio no disponible",
-        description: "Aún no hay un folio sugerido para editar.",
-        variant: "destructive",
-      });
-      return;
-    }
-
-    const partes = obtenerPartesFolio(base);
-    setFolioEditorPrefix(partes.prefix);
-    const rawMes = partes.mes || "";
-    const now = new Date();
-    const fallbackYear = String(now.getFullYear()).slice(-2);
-    const fallbackMonth = String(now.getMonth() + 1).padStart(2, "0");
-    const extractedYear = rawMes.length >= 4 ? rawMes.slice(0, 2) : rawMes.slice(0, 2);
-    const extractedMonth = rawMes.length >= 2 ? rawMes.slice(-2) : rawMes;
-    setFolioEditorYear(extractedYear || fallbackYear);
-    setFolioEditorMonth(extractedMonth || fallbackMonth);
-    setFolioEditorConsecutivo(partes.consecutivo);
-    setFolioEditorError(null);
-    setFormFolioError(null);
-    setShowFolioEditor(true);
-  }, [obtenerFolioBase, obtenerPartesFolio, toast]);
-
-  const cerrarEditorFolio = useCallback(() => {
-    setShowFolioEditor(false);
-    setFolioEditorLoading(false);
-    setFolioEditorError(null);
-    setFolioEditorYear("");
-    setFolioEditorMonth("");
-  }, []);
-
-  const restaurarFolioAutomatico = useCallback(() => {
-    if (embarqueEditando) {
-      return;
-    }
-    setFormData((prev) => ({
-      ...prev,
-      folio: "",
-    }));
-    setFormFolioError(null);
-  }, [embarqueEditando]);
-
-  const aplicarFolioEditor = useCallback(async () => {
-    const base = obtenerFolioBase();
-    const partesBase = base ? obtenerPartesFolio(base) : { prefix: "", mes: "", consecutivo: "" };
-    const basePrefix = partesBase.prefix?.trim() || "";
-    const baseYear = (partesBase.mes || "").slice(0, 2);
-
-    const prefix = basePrefix || folioEditorPrefix.trim();
-    const year = baseYear || folioEditorYear.trim();
-    const monthRaw = folioEditorMonth.trim();
-    const consecutivo = folioEditorConsecutivo.trim();
-
-    if (!prefix) {
-      setFolioEditorError("No se pudo determinar el prefijo del folio.");
-      return;
-    }
-
-    if (!year) {
-      setFolioEditorError("No se pudo determinar el año del folio.");
-      return;
-    }
-
-    if (!/^\d{2}$/.test(year)) {
-      setFolioEditorError("El año del folio no es válido.");
-      return;
-    }
-
-    if (baseYear && folioEditorYear.trim() && folioEditorYear.trim() !== baseYear) {
-      setFolioEditorError("El año del folio no se puede modificar.");
-      return;
-    }
-
-    if (basePrefix && folioEditorPrefix.trim() && folioEditorPrefix.trim() !== basePrefix) {
-      setFolioEditorError("El prefijo del folio no se puede modificar.");
-      return;
-    }
-
-    if (!monthRaw) {
-      setFolioEditorError("Ingresa el mes (MM).");
-      return;
-    }
-
-    if (!/^\d{1,2}$/.test(monthRaw)) {
-      setFolioEditorError("El mes solo puede tener hasta 2 dígitos.");
-      return;
-    }
-
-    const monthNumber = Number(monthRaw);
-    if (!Number.isFinite(monthNumber) || monthNumber < 1 || monthNumber > 12) {
-      setFolioEditorError("El mes debe estar entre 1 y 12.");
-      return;
-    }
-
-    if (!consecutivo) {
-      setFolioEditorError("Ingresa el consecutivo de tres dígitos.");
-      return;
-    }
-
-    if (!/^\d{1,3}$/.test(consecutivo)) {
-      setFolioEditorError("El consecutivo solo puede tener hasta 3 dígitos.");
-      return;
-    }
-
-    const consecutivoNormalizado = consecutivo.padStart(3, "0");
-    const mes = `${year}${String(monthNumber).padStart(2, "0")}`;
-    const segmentos = [prefix, mes, consecutivoNormalizado].filter(Boolean);
-    const candidato = sanitizeFolio(segmentos.join("-"));
-
-    if (!candidato) {
-      setFolioEditorError("No se pudo construir un folio válido.");
-      return;
-    }
-
-    try {
-      setFolioEditorLoading(true);
-      setFolioEditorError(null);
-
-      const errorDuplicado = await validarFolioDisponible(candidato, embarqueEditando?.id);
-      if (errorDuplicado) {
-        setFolioEditorError(errorDuplicado);
-        setFolioEditorLoading(false);
-        toast({ title: "No se pudo actualizar", description: errorDuplicado, variant: "destructive" });
-        return;
-      }
-
-      setFormData((prev) => ({
-        ...prev,
-        folio: candidato,
-      }));
-
-      if (embarqueEditando?.id) {
-        actualizarFolioLocal(embarqueEditando.id, candidato);
-      }
-      setFormFolioError(null);
-      cerrarEditorFolio();
-      cargarProximoFolio();
-      toast({
-        title: "Folio actualizado",
-        description: `Nuevo folio: ${candidato}`,
-      });
-    } catch (error) {
-      console.error("Error aplicando folio manual:", error);
-      setFolioEditorError("No se pudo validar el folio. Intenta nuevamente.");
-    } finally {
-      setFolioEditorLoading(false);
-    }
-  }, [
-    cerrarEditorFolio,
-    actualizarFolioLocal,
-    embarqueEditando?.id,
-    folioEditorConsecutivo,
-    folioEditorMonth,
-    folioEditorPrefix,
-    folioEditorYear,
-    cargarProximoFolio,
-    obtenerFolioBase,
-    obtenerPartesFolio,
-    sanitizeFolio,
-    toast,
-    validarFolioDisponible,
-  ]);
 
   // Cargar datos iniciales
   useEffect(() => {
@@ -1255,6 +771,105 @@ export default function EmbarquesPage() {
   };
 
   // Función para rellenar el formulario con datos de ejemplo
+  const rellenarDatosEjemplo = () => {
+    const fechaHoy = new Date().toISOString().split('T')[0];
+    const horaActual = new Date().toTimeString().slice(0, 5);
+    
+    // Obtener el primer cliente, camión, remolque y tipo de servicio disponibles
+    const primerCliente = clientes.length > 0 ? clientes[0].id : '';
+    const primerCamion = camiones.length > 0 ? camiones[0].id : '';
+    const primerRemolque = remolques.length > 0 ? remolques[0].id : '';
+    const primerTipoServicio = tiposServicio.length > 0 ? tiposServicio[0].id : '';
+    
+    setFormData({
+      folio: `TIM-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 999) + 1).padStart(3, '0')}`,
+      cliente_id: primerCliente,
+      camion_id: primerCamion,
+      remolque_id: primerRemolque,
+      contenido: "Carga general - mercancía diversa",
+      peso: "25000",
+      observaciones: "Embarque de ejemplo generado automáticamente para pruebas",
+      recolectas: [
+        { 
+          direccion: "Parque Industrial Norte, Av. Industria 1234, Nuevo León, México", 
+          fecha: fechaHoy, 
+          hora: horaActual 
+        },
+      ],
+      entregas: [
+        { 
+          direccion: "Puerto de Laredo, 1000 World Trade Bridge, Laredo, TX 78045, USA", 
+          fecha: fechaHoy, 
+          hora: "14:00" 
+        }
+      ],
+      load_number: `LD-${Math.floor(Math.random() * 99999)}`,
+      patente_agente_aduanal: "3456",
+      aduana_cruce: "Nuevo Laredo - Laredo",
+      dueno_mercancia: "ACME Manufacturing Corp",
+      representante_cliente: "Juan Pérez - Gerente de Logística",
+      carta_porte: `CP-${new Date().getFullYear()}-${String(Math.floor(Math.random() * 9999) + 1000)}`,
+      tipo_servicio_id: primerTipoServicio,
+      camion_manual: false,
+      camion_numero_economico: "",
+      camion_placa: "",
+      remolque_manual: false,
+      remolque_numero_economico: "",
+      remolque_placa: "",
+    });
+
+    toast({ 
+      title: "Datos de ejemplo cargados", 
+      description: "El formulario se ha rellenado con datos de ejemplo. Puedes modificar cualquier campo antes de guardar.",
+      duration: 3000
+    });
+  };
+
+  const generarFolioEspecifico = async () => {
+    try {
+      const now = new Date();
+      const year = now.getFullYear().toString().slice(-2);
+      const month = (now.getMonth() + 1).toString().padStart(2, "0");
+
+      const baseFormat = `TIM-${year}${month}`;
+
+      // Consultar último folio solo en tabla embarques
+      const { data: ultimoFolio, error: folioError } = await supabase
+        .from("embarques")
+        .select("folio")
+        .like("folio", `${baseFormat}-%`)
+        .order("folio", { ascending: false })
+        .limit(1);
+
+      if (folioError || !ultimoFolio || ultimoFolio.length === 0) {
+        return `${baseFormat}-001`;
+      }
+
+      const ultimoNumero = ultimoFolio[0].folio;
+      
+      // Extraer el número secuencial del folio
+      const match = /-(\d{3})$/.exec(ultimoNumero);
+      const numeroActual = match ? parseInt(match[1], 10) : 0;
+      const siguienteNumero = numeroActual + 1;
+
+      const siguiente = String(siguienteNumero).padStart(3, "0");
+      return `${baseFormat}-${siguiente}`;
+    } catch (error) {
+      console.error("Error generating folio:", error);
+      return "Error al generar";
+    }
+  };
+
+  const cargarProximoFolio = async () => {
+    try {
+      const folio = await generarFolioEspecifico();
+      setProximoFolio(folio);
+    } catch (error) {
+      console.error("Error generando folio:", error);
+      setProximoFolio("Error al generar");
+    }
+  };
+
   const cargarContactos = async (clienteId: string) => {
     if (!clienteId || clienteId === "none") {
       setContactos([]);
@@ -1611,14 +1226,6 @@ export default function EmbarquesPage() {
     setEmbarqueEditando(null);
     setContactos([]);
     setDocumentosEmbarque([]);
-    setFormFolioError(null);
-    setShowFolioEditor(false);
-    setFolioEditorPrefix("");
-    setFolioEditorYear("");
-    setFolioEditorMonth("");
-    setFolioEditorConsecutivo("");
-    setFolioEditorError(null);
-    setFolioEditorLoading(false);
     if (!embarqueEditando) {
       cargarProximoFolio();
     }
@@ -1705,7 +1312,7 @@ export default function EmbarquesPage() {
 
   // Función helper para detectar si un embarque es flete falso (contingencia FF)
   const embarqueEsFleteFalso = (embarque: any) => {
-    // Solo mostrar F.F. cuando el embarque tiene estado modificado FF (contingencia)
+    // Solo mostrar F. Falso cuando el embarque tiene estado modificado FF (contingencia)
     return embarque?.estado?.includes('_contingencia_FF') || false;
   };
 
@@ -2095,39 +1702,14 @@ export default function EmbarquesPage() {
       return;
     }
 
-    let folio = sanitizeFolio(formData.folio);
-
-    if (!embarqueEditando) {
-      if (folio) {
-        const errorManual = await validarFolioDisponible(folio);
-        if (errorManual) {
-          setFormFolioError(errorManual);
-          toast({ title: "No se pudo guardar", description: errorManual, variant: "destructive" });
-          return;
-        }
-      } else {
-        folio = sanitizeFolio(await generarFolioEspecifico());
-      }
-    } else {
-      const folioOriginal = sanitizeFolio(embarqueEditando.folio || "");
-      if (!folio) {
-        folio = folioOriginal;
-      } else if (folio !== folioOriginal) {
-        const errorManual = await validarFolioDisponible(folio, embarqueEditando.id);
-        if (errorManual) {
-          setFormFolioError(errorManual);
-          toast({ title: "No se pudo guardar", description: errorManual, variant: "destructive" });
-          return;
-        }
-      }
-    }
-
-    setFormFolioError(null);
-
     try {
       setSaving(true);
 
-      setFormData((prev) => ({ ...prev, folio }));
+      let folio = formData.folio;
+
+      if (!embarqueEditando) {
+        folio = await generarFolioEspecifico();
+      }
 
       let infoContacto = null;
       let representanteId = null;
@@ -2308,13 +1890,7 @@ export default function EmbarquesPage() {
           toast({ title: "Error al actualizar embarque", description: (error as any)?.message || (error as any)?.details || "Revisa la consola para más detalles", variant: "destructive" });
           return;
         }
-
-        const updatedId = updateData?.[0]?.id || embarqueEditando.id;
-        if (updatedId) {
-          actualizarFolioLocal(updatedId, folio);
-        }
         try { agregarAuditLog("ACTUALIZAR", "Embarques", `Folio: ${folio} | Usuario: ${getCurrentUser()?.nombre || ''}`); } catch {}
-        await cargarProximoFolio();
       } else {
         // ✅ CREAR EMBARQUE SOLO EN TABLA EMBARQUES LEGACY
         console.log("🔧 Creando embarque en tabla embarques...", {folio, embarqueData});
@@ -2763,7 +2339,6 @@ export default function EmbarquesPage() {
         setShowCreateModal(false);
         setShowEditModal(false);
         await loadEmbarques();
-        await cargarProximoFolio();
       } else {
         toast({ title: "Embarque creado exitosamente", description: `Embarque registrado correctamente`, variant: "success" });
         
@@ -2807,7 +2382,6 @@ export default function EmbarquesPage() {
                   variant: 'destructive'
                 });
                 await loadEmbarques();
-                await cargarProximoFolio();
                 return;
               }
               
@@ -2821,7 +2395,6 @@ export default function EmbarquesPage() {
                 variant: 'destructive'
               });
               await loadEmbarques();
-              await cargarProximoFolio();
               return;
             }
             
@@ -2863,7 +2436,6 @@ export default function EmbarquesPage() {
         }
         
         await loadEmbarques();
-        await cargarProximoFolio();
       }
     } catch (error) {
       console.error("Error guardando embarque:", error);
@@ -3930,17 +3502,6 @@ export default function EmbarquesPage() {
     "folio" | "cliente" | "load" | "estatus" | "tipo" | "fecha"
   >("fecha");
   const [archivosSortDir, setArchivosSortDir] = useState<"asc" | "desc">("desc");
-  useEffect(() => {
-    if (!isMobile) return;
-    if (["ultimos_3", "ultimos_6", "este_anio"].includes(archivosPeriodo)) {
-      setArchivosPeriodo("todo");
-    }
-  }, [isMobile, archivosPeriodo]);
-  const mobileArchivadosHasQuery =
-    !isMobile ||
-    archivosSearch.trim() !== "" ||
-    archivosTipoServicio !== "todos" ||
-    archivosPeriodo !== "todo";
   const embarquesArchivados = embarques.filter(
     (embarque) => embarque.estado === "archivado"
   )
@@ -3998,8 +3559,7 @@ export default function EmbarquesPage() {
       hasta = null;
   }
 
-  const embarquesArchivadosFiltrados = mobileArchivadosHasQuery
-    ? embarquesArchivados.filter((embarque) => {
+  const embarquesArchivadosFiltrados = embarquesArchivados.filter((embarque) => {
     const coincideBusqueda =
       archivosSearch.trim() === "" ||
       embarque.folio.toLowerCase().includes(archivosSearch.toLowerCase()) ||
@@ -4024,9 +3584,8 @@ export default function EmbarquesPage() {
         if (hasta && fc > hasta) coincidePeriodo = false;
       }
     }
-      return coincideBusqueda && coincideTipo && coincidePeriodo;
-    })
-    : [];
+    return coincideBusqueda && coincideTipo && coincidePeriodo;
+  });
 
   // Ordenamiento
   const valueForSort = (e: Embarque, key: typeof archivosSortKey): string | number => {
@@ -4480,7 +4039,7 @@ export default function EmbarquesPage() {
     const estados = {
       "listo-para-asignar": {
         color: "bg-green-100 text-green-800",
-        label: "Asignar",
+        label: "Listo para Asignar",
       },
       asignado: { color: "bg-yellow-100 text-yellow-800", label: "Asignado" },
       "en-transito": {
@@ -4501,7 +4060,7 @@ export default function EmbarquesPage() {
     console.log(`🎯 [BADGE] ${embarque?.folio || 'unknown'}: Mostrando badge '${estadoInfo.label}' con color '${estadoInfo.color}'`);
 
     return (
-      <Badge className={estadoInfo.color}>
+      <Badge className={`${estadoInfo.color} hover:${estadoInfo.color}`}>
         {estadoInfo.label}
       </Badge>
     );
@@ -4571,29 +4130,29 @@ export default function EmbarquesPage() {
 
   return (
     <MainLayout>
-      <div className="space-y-3 px-2 sm:space-y-6 sm:px-0">
-        <div className="flex justify-between items-center">
+      <div className="space-y-6">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">
+            <h1 className="text-3xl font-bold text-gray-900">
               Crear Embarques
             </h1>
-            <p className="text-sm sm:text-base text-gray-600 mt-1 sm:mt-2">
+            <p className="text-gray-600 mt-2">
               Administrar embarques y asignaciones
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2 justify-start sm:justify-end">
             {/* Botón Archivos blanco y negro (outline clásico) */}
             <Button
               variant="outline"
-              className="hidden sm:inline-flex border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+              className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
               onClick={() => setShowArchivosModal(true)}
             >
               <Package className="h-4 w-4 mr-2" />
               Archivos
             </Button>
-            {/* Botón Exportar (activos no archivados) - Oculto en móvil */}
-            <Button 
-              variant="outline" 
+            {/* Botón Exportar (activos no archivados) */}
+            <Button
+              variant="outline"
               onClick={exportarEmbarquesActivosAExcel}
               className="hidden sm:inline-flex"
             >
@@ -4603,11 +4162,10 @@ export default function EmbarquesPage() {
             {/* Botón Nuevo Embarque en verde */}
             <Button
               onClick={handleCreate}
-              className="hidden sm:inline-flex bg-green-600 hover:bg-green-700 text-white"
-              size="sm"
+              className="bg-green-600 hover:bg-green-700 text-white"
             >
-              <Plus className="h-4 w-4 sm:mr-2" />
-              <span className="hidden sm:inline">Nuevo Embarque</span>
+              <Plus className="h-4 w-4 mr-2" />
+              Nuevo Embarque
             </Button>
           </div>
         </div>
@@ -4677,66 +4235,56 @@ export default function EmbarquesPage() {
               >
                 Mes anterior
               </Button>
-              {!isMobile && (
-                <Button
-                  variant={archivosPeriodo === "ultimos_3" ? "default" : "outline"}
-                  size="sm"
-                  className={archivosPeriodo === "ultimos_3" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
-                  onClick={() => setArchivosPeriodo("ultimos_3")}
-                >
-                  Últ. 3 meses
-                </Button>
-              )}
-              {!isMobile && (
-                <Button
-                  variant={archivosPeriodo === "ultimos_6" ? "default" : "outline"}
-                  size="sm"
-                  className={archivosPeriodo === "ultimos_6" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
-                  onClick={() => setArchivosPeriodo("ultimos_6")}
-                >
-                  Últ. 6 meses
-                </Button>
-              )}
-              {!isMobile && (
-                <Button
-                  variant={archivosPeriodo === "este_anio" ? "default" : "outline"}
-                  size="sm"
-                  className={archivosPeriodo === "este_anio" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
-                  onClick={() => setArchivosPeriodo("este_anio")}
-                >
-                  Este año
-                </Button>
-              )}
+              <Button
+                variant={archivosPeriodo === "ultimos_3" ? "default" : "outline"}
+                size="sm"
+                className={archivosPeriodo === "ultimos_3" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
+                onClick={() => setArchivosPeriodo("ultimos_3")}
+              >
+                Últ. 3 meses
+              </Button>
+              <Button
+                variant={archivosPeriodo === "ultimos_6" ? "default" : "outline"}
+                size="sm"
+                className={archivosPeriodo === "ultimos_6" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
+                onClick={() => setArchivosPeriodo("ultimos_6")}
+              >
+                Últ. 6 meses
+              </Button>
+              <Button
+                variant={archivosPeriodo === "este_anio" ? "default" : "outline"}
+                size="sm"
+                className={archivosPeriodo === "este_anio" ? "bg-blue-600 hover:bg-blue-700 text-white" : ""}
+                onClick={() => setArchivosPeriodo("este_anio")}
+              >
+                Este año
+              </Button>
             </div>
 
-            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              {!isMobile && (
-                <div className="text-sm text-gray-600">
-                  Mostrando {totalArchivadosFiltrados === 0 ? 0 : firstIdx + 1}
-                  –{lastIdx} de {totalArchivadosFiltrados}
+            <div className="mb-3 flex items-center justify-between gap-2">
+              <div className="text-sm text-gray-600">
+                Mostrando {totalArchivadosFiltrados === 0 ? 0 : firstIdx + 1}
+                –{lastIdx} de {totalArchivadosFiltrados}
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-2 text-sm">
+                  <span>Tamaño página</span>
+                  <Select
+                    value={String(archivosPageSize)}
+                    onValueChange={(v) => setArchivosPageSize(Number(v))}
+                  >
+                    <SelectTrigger className="w-24">
+                      <SelectValue placeholder="25" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="10">10</SelectItem>
+                      <SelectItem value="25">25</SelectItem>
+                      <SelectItem value="50">50</SelectItem>
+                      <SelectItem value="100">100</SelectItem>
+                    </SelectContent>
+                  </Select>
                 </div>
-              )}
-              <div className={`flex items-center gap-2 ${isMobile ? "justify-end" : ""}`}>
-                {!isMobile && (
-                  <div className="flex items-center gap-2 text-sm">
-                    <span>Tamaño página</span>
-                    <Select
-                      value={String(archivosPageSize)}
-                      onValueChange={(v) => setArchivosPageSize(Number(v))}
-                    >
-                      <SelectTrigger className="w-24">
-                        <SelectValue placeholder="25" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="10">10</SelectItem>
-                        <SelectItem value="25">25</SelectItem>
-                        <SelectItem value="50">50</SelectItem>
-                        <SelectItem value="100">100</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-                <div className={`flex items-center gap-2 ${isMobile ? "w-full justify-between" : ""}`}>
+                <div className="flex items-center gap-2">
                   {totalArchivadosPaginas > 1 && (
                     <div className="flex items-center gap-1">
                       {/* Botón Primera página */}
@@ -4841,15 +4389,13 @@ export default function EmbarquesPage() {
                       </Button>
                     </div>
                   )}
-                  {!isMobile && (
-                    <Button
-                      variant="outline"
-                      className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
-                      onClick={exportarArchivadosAExcel}
-                    >
-                      Descargar Excel
-                    </Button>
-                  )}
+                  <Button
+                    variant="outline"
+                    className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                    onClick={exportarArchivadosAExcel}
+                  >
+                    Descargar Excel
+                  </Button>
                 </div>
               </div>
             </div>
@@ -4879,9 +4425,7 @@ export default function EmbarquesPage() {
                         className="text-center py-8 text-gray-500"
                       >
                         <Package className="h-10 w-10 mx-auto mb-2 text-purple-400" />
-                        {isMobile && !mobileArchivadosHasQuery
-                          ? "Ingresa un criterio de búsqueda para consultar embarques archivados"
-                          : "No hay embarques archivados que coincidan"}
+                        No hay embarques archivados que coincidan
                       </td>
                     </tr>
                   ) : (
@@ -4923,6 +4467,7 @@ export default function EmbarquesPage() {
                             <Button
                               variant="outline"
                               size="sm"
+                              className="w-full sm:w-auto justify-center"
                               onClick={() => handleViewDetails(embarque)}
                               aria-label="Ver detalles"
                             >
@@ -5015,125 +4560,140 @@ export default function EmbarquesPage() {
         </Dialog>
 
   {/* Estadísticas */}
-    <div className="grid grid-cols-2 gap-2 px-1 pb-1 place-items-start sm:grid-cols-2 sm:gap-3 sm:px-0 sm:pb-0 md:grid-cols-5 md:gap-4 md:place-items-stretch">
+  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           {/* Embarques creados en el año */}
-      <Card className="w-[167.9px] min-h-[79px] justify-self-start sm:w-full sm:min-h-[140px] md:w-full md:justify-self-stretch md:min-h-[86px]">
-        <CardContent className="flex h-full flex-col justify-between gap-2 md:gap-1 pt-3 pb-3 md:pt-2 md:pb-2 px-3 md:px-2.5 md:items-center md:justify-center">
-          <div className="text-center sm:text-left md:text-center">
-                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
-                  Creados este año
-                </p>
-                <p className="text-lg sm:text-xl md:text-2xl font-bold">
-                  {
-                    embarques.filter(
-                      (e) =>
-                        new Date(e.fecha_creacion).getFullYear() ===
-                        new Date().getFullYear()
-                    ).length
-                  }
-                </p>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-medium text-gray-700">
+                    Creados este año
+                  </p>
+                  <p className="text-2xl font-bold">
+                    {
+                      embarques.filter(
+                        (e) =>
+                          new Date(e.fecha_creacion).getFullYear() ===
+                          new Date().getFullYear()
+                      ).length
+                    }
+                  </p>
+                  <p className="text-xs text-gray-500 mt-2">Total del año en curso</p>
+                </div>
+                <Truck className="h-8 w-8 text-blue-600" />
               </div>
-              <Truck className="hidden md:block h-8 w-8 text-blue-600 self-end md:self-center" />
             </CardContent>
           </Card>
           {/* Listos para completar y enviar */}
-          <Card className="w-[167.9px] min-h-[79px] justify-self-start sm:w-full sm:min-h-[140px] md:w-full md:justify-self-stretch md:min-h-[86px]">
-            <CardContent className="flex h-full flex-col justify-between gap-2 md:gap-1 pt-3 pb-3 md:pt-2 md:pb-2 px-3 md:px-2.5 md:items-center md:justify-center">
-              <div className="text-center sm:text-left md:text-center">
-                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
-                  Listos para completar
-                </p>
-                <p className="text-lg sm:text-xl md:text-2xl font-bold text-orange-600">
-                  {embarques.filter((e) => e.estado === "creado").length}
-                </p>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-medium text-gray-700">
+                    Listos para completar y enviar
+                  </p>
+                  <p className="text-2xl font-bold text-orange-600">
+                    {embarques.filter((e) => e.estado === "creado").length}
+                  </p>
+                  <p className="text-xs text-gray-500">Con botón "Completar y Enviar"</p>
+                </div>
+                <RefreshCw className="h-8 w-8 text-orange-600" />
               </div>
-              <RefreshCw className="hidden md:block h-8 w-8 text-orange-600 self-end md:self-center" />
             </CardContent>
           </Card>
           {/* (removido) Tarjeta de embarques cancelados, no es necesaria */}
           {/* Top cliente del año */}
-          <Card className="w-[167.9px] min-h-[79px] justify-self-start sm:w-full sm:min-h-[140px] md:w-full md:justify-self-stretch md:min-h-[86px]">
-            <CardContent className="flex h-full flex-col justify-between gap-2 md:gap-1 pt-3 pb-3 md:pt-2 md:pb-2 px-3 md:px-2.5 md:items-center md:justify-center">
-              <div className="text-center sm:text-left md:text-center">
-                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
-                  Top cliente (año)
-                </p>
-                <p className="text-sm sm:text-lg md:text-lg font-bold text-purple-600 break-words">
-                  {(() => {
-                    const currentYear = new Date().getFullYear();
-                    const counts: Record<string, number> = {};
-                    embarques.forEach((e) => {
-                      if (
-                        e.cliente?.nombre &&
-                        new Date(e.fecha_creacion).getFullYear() ===
-                          currentYear
-                      ) {
-                        counts[e.cliente.nombre] =
-                          (counts[e.cliente.nombre] || 0) + 1;
-                      }
-                    });
-                    const top = Object.entries(counts).sort(
-                      (a, b) => b[1] - a[1]
-                    )[0];
-                    return top ? `${top[0]} (${top[1]})` : "Sin datos";
-                  })()}
-                </p>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-medium text-gray-700">
+                    Top cliente (año)
+                  </p>
+                  <p className="text-sm font-bold text-purple-600 break-words">
+                    {(() => {
+                      const currentYear = new Date().getFullYear();
+                      const counts: Record<string, number> = {};
+                      embarques.forEach((e) => {
+                        if (
+                          e.cliente?.nombre &&
+                          new Date(e.fecha_creacion).getFullYear() ===
+                            currentYear
+                        ) {
+                          counts[e.cliente.nombre] =
+                            (counts[e.cliente.nombre] || 0) + 1;
+                        }
+                      });
+                      const top = Object.entries(counts).sort(
+                        (a, b) => b[1] - a[1]
+                      )[0];
+                      return top ? `${top[0]} (${top[1]})` : "Sin datos";
+                    })()}
+                  </p>
+                  <p className="text-xs text-gray-500">Cliente con más embarques</p>
+                </div>
+                <Package className="h-8 w-8 text-purple-600" />
               </div>
-              <Package className="hidden md:block h-8 w-8 text-purple-600 self-end md:self-center" />
             </CardContent>
           </Card>
           {/* Servicio más solicitado */}
-          <Card className="w-[167.9px] min-h-[79px] justify-self-start sm:w-full sm:min-h-[140px] md:w-full md:justify-self-stretch md:min-h-[86px]">
-            <CardContent className="flex h-full flex-col justify-between gap-2 md:gap-1 pt-3 pb-3 md:pt-2 md:pb-2 px-3 md:px-2.5 md:items-center md:justify-center">
-              <div className="text-center sm:text-left md:text-center">
-                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
-                  Servicio más solicitado
-                </p>
-                <p className="text-sm sm:text-lg md:text-lg font-bold text-green-600 break-words">
-                  {(() => {
-                    const currentYear = new Date().getFullYear();
-                    const counts: Record<string, number> = {};
-                    embarques.forEach((e) => {
-                      if (
-                        e.tipo_servicio_id &&
-                        new Date(e.fecha_creacion).getFullYear() ===
-                          currentYear
-                      ) {
-                        counts[e.tipo_servicio_id] =
-                          (counts[e.tipo_servicio_id] || 0) + 1;
-                      }
-                    });
-                    const top = Object.entries(counts).sort(
-                      (a, b) => b[1] - a[1]
-                    )[0];
-                    return top
-                      ? getServiceDisplayName(top[0]) + ` (${top[1]})`
-                      : "Sin datos";
-                  })()}
-                </p>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-medium text-gray-700">
+                    Servicio más solicitado (año)
+                  </p>
+                  <p className="text-sm font-bold text-green-600 break-words">
+                    {(() => {
+                      const currentYear = new Date().getFullYear();
+                      const counts: Record<string, number> = {};
+                      embarques.forEach((e) => {
+                        if (
+                          e.tipo_servicio_id &&
+                          new Date(e.fecha_creacion).getFullYear() ===
+                            currentYear
+                        ) {
+                          counts[e.tipo_servicio_id] =
+                            (counts[e.tipo_servicio_id] || 0) + 1;
+                        }
+                      });
+                      const top = Object.entries(counts).sort(
+                        (a, b) => b[1] - a[1]
+                      )[0];
+                      return top
+                        ? getServiceDisplayName(top[0]) + ` (${top[1]})`
+                        : "Sin datos";
+                    })()}
+                  </p>
+                  <p className="text-xs text-gray-500">Tipo de servicio más frecuente</p>
+                </div>
+                <Package className="h-8 w-8 text-green-600" />
               </div>
-              <Package className="hidden md:block h-8 w-8 text-green-600 self-end md:self-center" />
             </CardContent>
           </Card>
           {/* Total de clientes activos */}
-          <Card className="w-[167.9px] min-h-[79px] justify-self-start sm:w-full sm:min-h-[140px] md:w-full md:justify-self-stretch md:min-h-[86px]">
-            <CardContent className="flex h-full flex-col justify-between gap-2 md:gap-1 pt-3 pb-3 md:pt-2 md:pb-2 px-3 md:px-2.5 md:items-center md:justify-center">
-              <div className="text-center sm:text-left md:text-center">
-                <p className="text-xs leading-tight md:text-sm font-medium text-gray-600 truncate">
-                  Clientes totales
-                </p>
-                <p className="text-lg sm:text-xl md:text-2xl font-bold text-blue-600">
-                  {clientes.length}
-                </p>
+          <Card>
+            <CardContent className="pt-6">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-base font-medium text-gray-700">
+                    Clientes totales
+                  </p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {clientes.length}
+                  </p>
+                  <p className="text-xs text-gray-500">Total de clientes</p>
+                </div>
+                <Calendar className="h-8 w-8 text-blue-600" />
               </div>
-              <Calendar className="hidden md:block h-8 w-8 text-blue-600 self-end md:self-center" />
             </CardContent>
           </Card>
         </div>
 
         {/* Filtros y paginación superior */}
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="w-full sm:flex-1 sm:max-w-2xl">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex-1 max-w-xl md:max-w-2xl">
             <div className="relative">
               <Search className="absolute left-2 top-2.5 h-4 w-4 text-gray-400" />
               <Input
@@ -5147,424 +4707,433 @@ export default function EmbarquesPage() {
               />
             </div>
           </div>
-          <div className="w-full sm:w-auto flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-3 sm:ml-auto">
-            <div className="flex w-full items-center justify-center gap-2 sm:w-auto sm:justify-end">
-              <span className="hidden sm:inline text-sm text-gray-700">
-                Página {listaPage} de {totalListaPages}
-              </span>
-              <div className="flex items-center gap-1">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setListaPage((p) => Math.max(1, p - 1))}
-                  disabled={listaPage <= 1}
-                >
-                  Anterior
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setListaPage((p) => Math.min(totalListaPages, p + 1))}
-                  disabled={listaPage >= totalListaPages}
-                >
-                  Siguiente
-                </Button>
-              </div>
-            </div>
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-2 sm:justify-end">
-              <div className="flex items-center gap-2 w-full sm:w-auto">
-                <span className="hidden sm:inline text-sm text-gray-700">Por página:</span>
-                <Select
-                  value={String(listaPageSize)}
-                  onValueChange={(v) => {
-                    const newSize = Number.parseInt(v, 10);
-                    setListaPageSize(newSize);
-                    setListaPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full sm:w-[140px]">
-                    <SelectValue placeholder="Por página" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="6">6 por página</SelectItem>
-                    <SelectItem value="12">12 por página</SelectItem>
-                    <SelectItem value="18">18 por página</SelectItem>
-                    <SelectItem value="24">24 por página</SelectItem>
-                    <SelectItem value="48">48 por página</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
-              <div className="w-full sm:w-auto">
-                <Select
-                  value={filtroEstado}
-                  onValueChange={(v) => {
-                    cambiarFiltroEstado(v);
-                    setListaPage(1);
-                  }}
-                >
-                  <SelectTrigger className="w-full sm:w-[200px]">
-                    <SelectValue placeholder="Filtrar por estado" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="todos">Todos</SelectItem>
-                    <SelectItem value="creado">Por completar y enviar</SelectItem>
-                    <SelectItem value="listo-para-asignar">Listos para asignar</SelectItem>
-                    <SelectItem value="asignado">Asignados</SelectItem>
-                    <SelectItem value="finalizado">Finalizados</SelectItem>
-                    <SelectItem value="cancelado">Cancelados</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className="sm:hidden flex flex-col gap-2">
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-sm text-gray-700">
+              Página {listaPage} de {totalListaPages}
+            </span>
+            <div className="flex items-center gap-1">
               <Button
-                onClick={handleCreate}
-                className="bg-green-600 hover:bg-green-700 text-white"
+                variant="outline"
                 size="sm"
+                onClick={() => setListaPage((p) => Math.max(1, p - 1))}
+                disabled={listaPage <= 1}
               >
-                <Plus className="h-4 w-4 mr-2" />
-                Crear Embarque
+                Anterior
               </Button>
               <Button
                 variant="outline"
-                onClick={() => setShowArchivosModal(true)}
-                className="border-gray-400 text-gray-900"
                 size="sm"
+                onClick={() => setListaPage((p) => Math.min(totalListaPages, p + 1))}
+                disabled={listaPage >= totalListaPages}
               >
-                <Archive className="h-4 w-4 mr-2" />
-                Archivados
+                Siguiente
               </Button>
+            </div>
+            <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-gray-700">Por página:</span>
+              <Select
+                value={String(listaPageSize)}
+                onValueChange={(v) => {
+                  const newSize = Number.parseInt(v, 10);
+                  setListaPageSize(newSize);
+                  setListaPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[140px]">
+                  <SelectValue placeholder="Por página" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="6">6 por página</SelectItem>
+                  <SelectItem value="12">12 por página</SelectItem>
+                  <SelectItem value="18">18 por página</SelectItem>
+                  <SelectItem value="24">24 por página</SelectItem>
+                  <SelectItem value="48">48 por página</SelectItem>
+                </SelectContent>
+              </Select>
+              <div className="hidden sm:block h-5 w-px bg-gray-200 mx-1" />
+              <Select
+                value={filtroEstado}
+                onValueChange={(v) => {
+                  cambiarFiltroEstado(v);
+                  setListaPage(1);
+                }}
+              >
+                <SelectTrigger className="w-[200px]">
+                  <SelectValue placeholder="Filtrar por estado" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="todos">Todos</SelectItem>
+                  <SelectItem value="creado">Por completar y enviar</SelectItem>
+                  <SelectItem value="listo-para-asignar">Listos para asignar</SelectItem>
+                  <SelectItem value="asignado">Asignados</SelectItem>
+                  <SelectItem value="finalizado">Finalizados</SelectItem>
+                  <SelectItem value="cancelado">Cancelados</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
           </div>
         </div>
 
         {/* Lista de embarques */}
         <div className="grid grid-cols-1 gap-4">
-          {embarquesPaginados.map((embarque) => {
-            const isEmbarqueCollapsed = embarquesColapsados[embarque.id] ?? true;
-            const isUnidadCollapsed = unidadesColapsadas[embarque.id] ?? true;
-            const isFinancieroCollapsed = financierosColapsados[embarque.id] ?? true;
-            const isDetallesCollapsed = detallesColapsados[embarque.id] ?? true;
-            const isAduanaCollapsed = aduanasColapsadas[embarque.id] ?? true;
-
-            const renderDireccionesMultiplesBadge = (() => {
-              const editandoEsteEmbarque = embarqueEditando?.id === embarque.id;
-              let recolectasArray;
-              let entregasArray;
-
-              if (editandoEsteEmbarque) {
-                recolectasArray = formData.recolectas;
-                entregasArray = formData.entregas;
-              } else {
-                try {
-                  recolectasArray = (embarque as any).recolectas_json ? JSON.parse((embarque as any).recolectas_json) : [];
-                  entregasArray = (embarque as any).entregas_json ? JSON.parse((embarque as any).entregas_json) : [];
-                } catch (jsonError) {
-                  recolectasArray = [];
-                  entregasArray = [];
-                }
-
-                if (recolectasArray.length === 0 && entregasArray.length === 0) {
-                  const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
-                  recolectasArray = recolectas.length > 0 ? recolectas : [{ direccion: embarque.direccion_recolecta }];
-                  entregasArray = entregas.length > 0 ? entregas : [{ direccion: embarque.direccion_entrega }];
-                } else {
-                  if (recolectasArray.length === 0) recolectasArray = [{ direccion: embarque.direccion_recolecta }];
-                  if (entregasArray.length === 0) entregasArray = [{ direccion: embarque.direccion_entrega }];
-                }
-              }
-
-              if (tieneMultiplesDirecciones(recolectasArray, entregasArray)) {
-                return (
-                  <span
-                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
-                    title="Este embarque tiene múltiples direcciones de recolección o entrega"
-                  >
-                    <span className="sm:hidden">Dire.</span>
-                    <span className="hidden sm:inline">Direcciones mult.</span>
-                  </span>
-                );
-              }
-              return null;
-            })();
-
-            const esFleteFalso = embarqueEsFleteFalso(embarque);
-            const esContingencia = embarque.estado === "contingencia";
-
-            const fleteFalsoBadge = esFleteFalso ? (
-              <span
-                className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
-                title="Este embarque está marcado como flete en falso (contingencia)"
-              >
-                F.F.
-              </span>
-            ) : null;
-
-            const contingenciaBadgeMobile = (esContingencia || esFleteFalso) ? (
-              <span className="inline-flex sm:hidden items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-semibold shadow-lg">
-                {esFleteFalso ? "Cont.FF" : "Cont."}
-              </span>
-            ) : null;
-
-            const contingenciaBadgeDesktop = (esContingencia || esFleteFalso) ? (
-              <div className="hidden sm:flex relative group items-center">
-                <span className="bg-red-100 text-red-800 border border-red-300 rounded px-2 py-1 text-xs font-semibold mr-2 cursor-pointer">
-                  {esFleteFalso ? "Cont.FF" : "Cont."}
-                </span>
-                <span className="absolute left-0 -top-7 z-10 px-2 py-1 text-xs rounded bg-red-700 text-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
-                  {esFleteFalso
-                    ? "Este embarque fue marcado como contingencia y flete falso; requiere atención especial."
-                    : "Este embarque fue marcado como contingencia en asignación y requiere atención especial."}
-                </span>
-              </div>
-            ) : null;
-
-            const completarEnviarButton = (() => {
-              console.log(`🎯 [RENDER] ${embarque.folio}: estado='${embarque.estado}' → ${
-                embarque.estado === "creado"
-                  ? "Botón Completar y Enviar"
-                  : embarque.estado === "listo-para-asignar"
-                  ? "Badge Verde + Botón Archivar"
-                  : embarque.estado === "cancelado"
-                  ? "Badge Rojo + Botón Archivar"
-                  : "Otro estado: " + embarque.estado
-              }`);
-
-              if (embarque.estado === "creado" && !(embarque as any)._completadoLocal) {
-                return (
-                  <Button
-                    variant="default"
-                    size="sm"
-                    className="bg-blue-600 hover:bg-blue-700 text-white sm:px-3"
-                    onClick={() => marcarComoCompletado(embarque)}
-                    disabled={saving || (embarque as any)._completadoLocal}
-                    title="Completar y Enviar"
-                  >
-                    <Package className="h-4 w-4" />
-                    <span className="ml-1 sm:hidden">Enviar</span>
-                    <span className="hidden sm:inline ml-1">Completar y Enviar</span>
-                  </Button>
-                );
-              }
-
-              return null;
-            })();
-
-            const mostrarBotonArchivar = (() => {
-              if (!embarque) return false;
-              if (embarque.estado === "archivado") return false;
-
-              if (
-                embarque.estado === "finalizado" ||
-                embarque.estado === "cancelado" ||
-                embarque.estado === "listo-para-asignar" ||
-                embarque.estado === "asignado"
-              ) {
-                return true;
-              }
-
-              return false;
-            })();
-
-            const archivarButton = (() => {
-              if (!mostrarBotonArchivar) return null;
-
-              console.log(
-                `🎯 [RENDER] ${embarque.folio}: Botón Archivar visible para estado ${embarque.estado}`
-              );
-
-              return (
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    setEmbarqueAArchivar(embarque);
-                    setShowArchivarDialog(true);
-                  }}
-                  className="sm:px-3"
-                  title="Archivar"
-                >
-                  <Archive className="h-4 w-4" />
-                  <span className="hidden sm:inline ml-1">
-                    Archivar
-                  </span>
-                </Button>
-              );
-            })();
-
-            return (
-              <Card
-                key={`${(embarque as any)._fuente || 'unknown'}-${embarque.id}`}
-                className={`border rounded-lg p-3 sm:p-4 hover:bg-gray-50 transition-colors ${
-                  embarque.estado === "contingencia"
-                    ? "border-red-500 bg-red-50"
-                    : ""
-                }`}
-              >
-                <CardHeader>
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between md:gap-1.5">
-                    <div className="flex-1 space-y-2 md:space-y-0.5">
-                      <CardTitle className="text-base sm:text-lg">
-                                <div className="flex flex-col gap-1 md:gap-0">
-                                  <div className="flex items-center gap-2">
-                                    <Package className="h-4 w-4 text-blue-600" />
-                                    <span className="text-sm sm:text-base md:text-xl font-semibold text-blue-600">
-                                      Folio
-                                    </span>
-                                    <span className="text-sm sm:text-base md:text-xl font-normal md:font-semibold text-blue-600">
-                                      {embarque.folio}
-                                    </span>
-                                  </div>
-                                  <div className="flex flex-col gap-1 sm:gap-1 md:gap-0">
-                                    {embarque.load_number && (
-                                      <div className="flex items-baseline gap-1 text-gray-700">
-                                        <span className="text-sm sm:text-base font-semibold">Load</span>
-                                        <span className="text-sm sm:text-base font-normal">
-                                          {embarque.load_number}
-                                        </span>
-                                      </div>
-                                    )}
-                                    {embarque.cliente?.nombre && (
-                                      <div className="flex items-baseline gap-1 text-gray-700">
-                                        <span className="text-sm sm:text-base font-semibold">Cliente</span>
-                                        <span className="text-sm sm:text-base font-normal">
-                                          {embarque.cliente.nombre}
-                                        </span>
-                                      </div>
-                                    )}
-                                  </div>
-                                </div>
-                      </CardTitle>
-                      <CardDescription>
-                        <div className="flex flex-col gap-1 md:gap-0 text-xs sm:text-sm text-gray-600 sm:flex-row sm:flex-wrap sm:items-center">
-                          {embarque.operador && (
-                            <span>
-                              Operador: {embarque.operador.nombre} {embarque.operador.apellidos}
+          {embarquesPaginados.map((embarque) => (
+            <Card
+              key={`${(embarque as any)._fuente || 'unknown'}-${embarque.id}`}
+              className={`border rounded-lg p-4 hover:bg-gray-50 transition-colors ${
+                embarque.estado === "contingencia"
+                  ? "border-red-500 bg-red-50"
+                  : ""
+              }`}
+            >
+              <CardHeader>
+                <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="space-y-2 min-w-0">
+                    <div className="flex items-center">
+                      <CardTitle className="text-lg">
+                        <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                          <span className="inline-flex items-center text-blue-600">
+                            <Package className="h-5 w-5 text-blue-600 mr-1" />
+                            Folio: {embarque.folio}
+                          </span>
+                          {embarque.load_number && (
+                            <span className="text-sm font-semibold text-gray-600">
+                              Load: {embarque.load_number}
                             </span>
                           )}
-                          {embarque.info_representante && (
-                            <span>
-                              Representante: {embarque.info_representante.nombre} {embarque.info_representante.apellidos || ""}
+                          {embarque.estado === "contingencia" && (
+                            <span
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-red-600 text-white text-xs font-semibold shadow-lg"
+                              title="Contingencia"
+                            >
+                              Contingencia
                             </span>
                           )}
                         </div>
-                      </CardDescription>
+                      </CardTitle>
                     </div>
-                    <div className="flex flex-col gap-2 sm:items-end w-full sm:w-auto">
+                    <CardDescription>
+                      {embarque.cliente?.nombre &&
+                        `Cliente: ${embarque.cliente.nombre}`}
+                      {embarque.operador &&
+                        ` • Operador: ${embarque.operador.nombre} ${embarque.operador.apellidos}`}
+                      {embarque.info_representante &&
+                        ` • Representante: ${
+                          embarque.info_representante.nombre
+                        } ${embarque.info_representante.apellidos || ""}`}
+                    </CardDescription>
+                  </div>
+                  <div className="flex flex-col gap-3 w-full sm:w-auto">
+                    <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end w-full">
+                      {getEstadoBadge(embarque.estado, embarque)}
+                      {embarque.estado === "contingencia" && (
+                        <div className="relative group flex items-center">
+                          <span className="bg-red-100 text-red-800 border border-red-300 rounded px-2 py-1 text-xs font-semibold mr-2 cursor-pointer">
+                            Contingencia
+                          </span>
+                          <span className="absolute left-0 -top-7 z-10 px-2 py-1 text-xs rounded bg-red-700 text-white shadow-lg opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none">
+                            Este embarque fue marcado como contingencia en
+                            asignación y requiere atención especial.
+                          </span>
+                        </div>
+                      )}
+                    </div>
                       <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end">
-                        {getEstadoBadge(embarque.estado, embarque)}
-                        {renderDireccionesMultiplesBadge}
-                        {fleteFalsoBadge}
-                        {contingenciaBadgeMobile}
-                        {contingenciaBadgeDesktop}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleViewDetails(embarque)}
-                          className="sm:px-3"
-                          title={embarque.estado === "archivado" ? "Ver Archivo" : "Ver Detalles"}
+                      {(() => {
+                        // Detectar múltiples direcciones para mostrar globo a la izquierda de "Ver detalles"
+                        const editandoEsteEmbarque = embarqueEditando?.id === embarque.id;
+                        let recolectasArray, entregasArray;
+                        
+                        if (editandoEsteEmbarque) {
+                          recolectasArray = formData.recolectas;
+                          entregasArray = formData.entregas;
+                        } else {
+                          // Prioridad 1: Obtener desde campos JSON
+                          try {
+                            recolectasArray = (embarque as any).recolectas_json ? JSON.parse((embarque as any).recolectas_json) : [];
+                            entregasArray = (embarque as any).entregas_json ? JSON.parse((embarque as any).entregas_json) : [];
+                          } catch (jsonError) {
+                            recolectasArray = [];
+                            entregasArray = [];
+                          }
+                          
+                          // Prioridad 2: Si no hay datos JSON, extraer de observaciones (fallback)
+                          if (recolectasArray.length === 0 && entregasArray.length === 0) {
+                            const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                            recolectasArray = recolectas.length > 0 ? recolectas : [{ direccion: embarque.direccion_recolecta }];
+                            entregasArray = entregas.length > 0 ? entregas : [{ direccion: embarque.direccion_entrega }];
+                          } else {
+                            // Si tenemos datos JSON pero están vacíos, usar datos principales
+                            if (recolectasArray.length === 0) recolectasArray = [{ direccion: embarque.direccion_recolecta }];
+                            if (entregasArray.length === 0) entregasArray = [{ direccion: embarque.direccion_entrega }];
+                          }
+                        }
+                        
+                        if (tieneMultiplesDirecciones(recolectasArray, entregasArray)) {
+                          return (
+                            <span 
+                              className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                              title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                            >
+                              D. Múltiples
+                            </span>
+                          );
+                        }
+                        return null;
+                      })()}
+
+                      {/* Badge F. Falso */}
+                      {embarqueEsFleteFalso(embarque) && (
+                        <span 
+                          className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                          title="Este embarque está marcado como flete en falso (contingencia)"
                         >
-                          <Eye className="h-4 w-4" />
-                          <span className="hidden sm:inline ml-1">
-                            {embarque.estado === "archivado"
-                              ? "Ver Archivo"
-                              : "Ver Detalles"}
-                          </span>
-                        </Button>
+                          F. Falso
+                        </span>
+                      )}
+                      
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto justify-center"
+                        onClick={() => handleViewDetails(embarque)}
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        {embarque.estado === "archivado"
+                          ? "Ver Archivo"
+                          : "Ver Detalles"}
+                      </Button>
 
-                        {/* Botón Reporte de Embarque: mostrar liga pública existente */}
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={async () => {
-                            if (!embarque.id) {
-                              toast({ title: "ID no disponible", description: "No se pudo obtener el ID del embarque.", variant: "destructive" });
-                              return;
-                            }
-
-                            try {
-                              const resp = await fetch('/api/public-link', {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({ embarqueId: embarque.id }),
+                      {/* Botón Reporte de Embarque: mostrar liga pública existente */}
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full sm:w-auto justify-center"
+                        onClick={async () => {
+                          if (!embarque.id) {
+                            toast({ title: "ID no disponible", description: "No se pudo obtener el ID del embarque.", variant: "destructive" });
+                            return;
+                          }
+                          
+                          // Obtener la liga existente para este embarque
+                          try {
+                            const resp = await fetch('/api/public-link', {
+                              method: 'POST',
+                              headers: { 'Content-Type': 'application/json' },
+                              body: JSON.stringify({ embarqueId: embarque.id }),
+                            });
+                            const json = await resp.json();
+                            
+                            if (resp.ok && !json.error) {
+                              const fullLink = `${window.location.origin}${json.url}`;
+                              setPublicGeneratedLink(fullLink);
+                              setPublicLinkExpiresAt(json.expiresAt || null);
+                              setPublicForEmbarqueId(embarque.id);
+                              setShowPublicLinkModal(true);
+                            } else {
+                              toast({ 
+                                title: 'Error', 
+                                description: 'No se pudo obtener la liga pública del embarque', 
+                                variant: 'destructive' 
                               });
-                              const json = await resp.json();
+                            }
+                          } catch (e) {
+                            console.error('Error obteniendo public link:', e);
+                            toast({ 
+                              title: 'Error', 
+                              description: 'Error al obtener la liga pública', 
+                              variant: 'destructive' 
+                            });
+                          }
+                        }}
+                        disabled={saving}
+                        title="Ver liga pública del embarque"
+                      >
+                        <Link className="h-4 w-4 mr-1" />
+                        Reporte de Embarque
+                      </Button>
 
-                              if (resp.ok && !json.error) {
-                                const fullLink = `${window.location.origin}${json.url}`;
-                                setPublicGeneratedLink(fullLink);
-                                setPublicLinkExpiresAt(json.expiresAt || null);
-                                setPublicForEmbarqueId(embarque.id);
-                                setShowPublicLinkModal(true);
-                              } else {
-                                toast({
-                                  title: 'Error',
-                                  description: 'No se pudo obtener la liga pública del embarque',
-                                  variant: 'destructive'
-                                });
+                      {/* 🔧 Renderizado condicional de botones según estado */}
+                      {(() => {
+                        // Debug logging para diagnosticar renderizado
+                        console.log(`🎯 [RENDER] ${embarque.folio}: estado='${embarque.estado}' → ${
+                          embarque.estado === "creado" ? "Botón Completar y Enviar" :
+                          embarque.estado === "listo-para-asignar" ? "Badge Verde + Botón Archivar" :
+                          embarque.estado === "cancelado" ? "Badge Rojo + Botón Archivar" :
+                          "Otro estado: " + embarque.estado
+                        }`);
+                        
+                        if (embarque.estado === "creado" && !(embarque as any)._completadoLocal) {
+                          return (
+                            <Button
+                              variant="default"
+                              size="sm"
+                              className="bg-blue-600 hover:bg-blue-700 text-white w-full sm:w-auto justify-center"
+                              onClick={() => marcarComoCompletado(embarque)}
+                              disabled={saving || (embarque as any)._completadoLocal}
+                            >
+                              <Package className="h-4 w-4 mr-1" />
+                              Completar y Enviar
+                            </Button>
+                          );
+                        }
+                        
+                        return null;
+                      })()}
+
+                      {/* Embarques listos para asignar (incluyendo los cancelados en esta fase) */}
+                      {(embarque.estado === "listo-para-asignar" || 
+                        (embarque.estado === "cancelado" && (embarque.cancelado_por || embarque.motivo_cancelacion || embarque.fecha_cancelacion))) && (() => {
+                        console.log(`🎯 [RENDER] ${embarque.folio}: Renderizando estado ${embarque.estado} en sección de asignación`);
+                        
+                        const esCancelado = embarque.estado === "cancelado" || 
+                                           embarque.cancelado_por || 
+                                           embarque.motivo_cancelacion || 
+                                           embarque.fecha_cancelacion;
+                        
+                        return (
+                          <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end w-full">
+                            {/* Badge D. Múltiples para embarques listos para asignar */}
+                            {(() => {
+                              const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                              
+                              if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                                return (
+                                  <span 
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                    title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                  >
+                                    D. Múltiples
+                                  </span>
+                                );
                               }
-                            } catch (e) {
-                              console.error('Error obteniendo public link:', e);
-                              toast({
-                                title: 'Error',
-                                description: 'Error al obtener la liga pública',
-                                variant: 'destructive'
-                              });
-                            }
-                          }}
-                          disabled={saving}
-                          title="Reporte de Embarque"
-                          className="sm:px-3"
-                        >
-                          <Link className="h-4 w-4" />
-                          <span className="hidden sm:inline ml-1">
-                            Reporte de Embarque
-                          </span>
-                        </Button>
+                              return null;
+                            })()}
 
-                        {archivarButton}
-                        {embarque.estado !== "cancelado" && (
+                            {/* Badge F. Falso para embarques listos para asignar */}
+                            {embarqueEsFleteFalso(embarque) && (
+                              <span 
+                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                title="Este embarque está marcado como flete en falso (contingencia)"
+                              >
+                                F. Falso
+                              </span>
+                            )}
+                            
+                            {/* Botón Archivar para embarques cancelados */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full sm:w-auto justify-center"
+                              onClick={() => {
+                                setEmbarqueAArchivar(embarque);
+                                setShowArchivarDialog(true);
+                              }}
+                            >
+                              Archivar
+                            </Button>
+                          </div>
+                        );
+                      })()}
+                      {/* Embarques asignados (incluyendo los cancelados en esta fase) */}
+                      {(embarque.estado === "asignado" || 
+                        (embarque.estado === "cancelado" && (embarque.cancelado_por || embarque.motivo_cancelacion) && (embarque.operador_id || embarque.camion_id))) && (() => {
+                        
+                        const esCancelado = embarque.estado === "cancelado" || 
+                                           embarque.cancelado_por || 
+                                           embarque.motivo_cancelacion || 
+                                           embarque.fecha_cancelacion;
+                        
+                        return (
+                          <div className="flex flex-wrap items-center gap-2 justify-start sm:justify-end w-full">
+                            {/* Badge D. Múltiples para embarques asignados */}
+                            {(() => {
+                              const { recolectas, entregas } = extraerDireccionesMultiples(embarque.observaciones || null);
+                              
+                              if (tieneMultiplesDirecciones(recolectas, entregas)) {
+                                return (
+                                  <span 
+                                    className="inline-flex items-center px-2 py-0.5 rounded-full bg-blue-100 text-blue-800 text-xs font-semibold cursor-help"
+                                    title="Este embarque tiene múltiples direcciones de recolección o entrega"
+                                  >
+                                    D. Múltiples
+                                  </span>
+                                );
+                              }
+                              return null;
+                            })()}
+
+                            {/* Badge F. Falso para embarques asignados */}
+                            {embarqueEsFleteFalso(embarque) && (
+                              <span 
+                                className="inline-flex items-center px-2 py-0.5 rounded-full bg-orange-100 text-orange-800 text-xs font-semibold cursor-help"
+                                title="Este embarque está marcado como flete en falso (contingencia)"
+                              >
+                                F. Falso
+                              </span>
+                            )}
+                            
+                            {/* Botón Archivar para embarques asignados cancelados */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full sm:w-auto justify-center"
+                              onClick={() => {
+                                setEmbarqueAArchivar(embarque);
+                                setShowArchivarDialog(true);
+                              }}
+                            >
+                              Archivar
+                            </Button>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Botón Enviar Link oculto por requerimiento */}
+
+                      {(embarque.estado === "finalizado" ||
+                        embarque.estado === "cancelado") && (() => {
+                        console.log(`🎯 [RENDER] ${embarque.folio}: Renderizando botón Archivar para estado ${embarque.estado}`);
+                        return (
+                          <div className="w-full flex justify-start sm:justify-end">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full sm:w-auto justify-center"
+                              onClick={() => {
+                                setEmbarqueAArchivar(embarque);
+                                setShowArchivarDialog(true);
+                              }}
+                            >
+                              Archivar
+                            </Button>
+                          </div>
+                        );
+                      })()}
+
+                      {/* Botón Cancelar: oculto si el embarque ya fue cancelado */}
+                      {embarque.estado !== "cancelado" && (
+                        <div className="w-full flex justify-start sm:justify-end">
                           <Button
                             variant="outline"
                             size="sm"
+                            className="w-full sm:w-auto justify-center"
                             onClick={() => {
                               setCancelingEmbarque(embarque);
                               setShowCancelModal(true);
                             }}
                             disabled={embarque.estado === "listo-para-asignar"}
-                            className="sm:px-3"
-                            title="Cancelar embarque"
                           >
-                            <Trash2 className="h-4 w-4" />
-                            <span className="hidden sm:inline ml-1">
-                              Cancelar
-                            </span>
+                            Cancelar
                           </Button>
-                        )}
-
-                        {completarEnviarButton}
-                      </div>
+                        </div>
+                      )}
                     </div>
                   </div>
-                </CardHeader>
-              <CardContent className="space-y-3 sm:space-y-4">
-                {/* Botón colapsable Embarque (solo móvil) */}
-                <button
-                  onClick={() => toggleEmbarqueCollapse(embarque.id)}
-                  className="sm:hidden w-full flex items-center justify-between py-2 px-3 bg-blue-50 rounded-lg text-sm font-medium text-blue-700 hover:bg-blue-100"
-                >
-                  <span>Embarque</span>
-                  {isEmbarqueCollapsed ? (
-                    <ChevronDown className="h-4 w-4" />
-                  ) : (
-                    <ChevronUp className="h-4 w-4" />
-                  )}
-                </button>
-                
-                {/* Contenido de Embarque - colapsable en móvil */}
-                <div className={`${isEmbarqueCollapsed ? 'hidden' : 'block'} sm:block`}>
-                <div className="grid grid-cols-2 gap-2 sm:gap-4 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
                   <div className="flex items-center space-x-2">
                     <MapPin className="h-4 w-4 text-gray-400" />
                     <div className="flex-1">
@@ -5572,11 +5141,8 @@ export default function EmbarquesPage() {
                         <p className="font-medium">Recolecta</p>
                       </div>
                       {embarque.direccion_recolecta && (
-                        <p className="text-xs text-gray-500 whitespace-pre-line break-words leading-snug">
-                          {String(embarque.direccion_recolecta ?? "")
-                            .split(",")
-                            .map((segmento) => segmento.trim())
-                            .join("\n")}
+                        <p className="text-xs text-gray-500">
+                          {embarque.direccion_recolecta}
                         </p>
                       )}
                     </div>
@@ -5586,9 +5152,9 @@ export default function EmbarquesPage() {
                       <Calendar className="h-4 w-4 text-gray-400" />
                       <div>
                         <p className="font-medium">Fecha Recolecta</p>
-                        <p className="text-gray-600 whitespace-pre-line break-words leading-snug">
+                        <p className="text-gray-600">
                           {formatDateMatamoros(normalizeDate(embarque.fecha_recolecta) || embarque.fecha_recolecta)}
-                          {embarque.hora_recolecta && `\n${embarque.hora_recolecta}`}
+                          {embarque.hora_recolecta && ` ${embarque.hora_recolecta}`}
                         </p>
                       </div>
                     </div>
@@ -5598,11 +5164,8 @@ export default function EmbarquesPage() {
                     <div>
                       <p className="font-medium">Entrega</p>
                       {embarque.direccion_entrega && (
-                        <p className="text-xs text-gray-500 whitespace-pre-line break-words leading-snug">
-                          {String(embarque.direccion_entrega ?? "")
-                            .split(",")
-                            .map((segmento) => segmento.trim())
-                            .join("\n")}
+                        <p className="text-xs text-gray-500">
+                          {embarque.direccion_entrega}
                         </p>
                       )}
                     </div>
@@ -5612,142 +5175,97 @@ export default function EmbarquesPage() {
                       <Calendar className="h-4 w-4 text-gray-400" />
                       <div>
                         <p className="font-medium">Fecha Entrega</p>
-                        <p className="text-gray-600 whitespace-pre-line break-words leading-snug">
+                        <p className="text-gray-600">
                           {formatDateMatamoros(normalizeDate(embarque.fecha_entrega) || embarque.fecha_entrega)}
-                          {embarque.hora_entrega && `\n${embarque.hora_entrega}`}
+                          {embarque.hora_entrega && ` ${embarque.hora_entrega}`}
                         </p>
                       </div>
                     </div>
                   )}
                 </div>
 
-                {/* Grupo Unidad - Colapsable en móvil, contraído por default */}
-                {(embarque.camion || getRemolqueTexto(embarque)) && (
-                  <>
-                    <button
-                      onClick={() => toggleUnidadCollapse(embarque.id)}
-                      className="sm:hidden w-full flex items-center justify-between py-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 mt-3"
-                    >
-                      <span>Unidad</span>
-                      {isUnidadCollapsed ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronUp className="h-4 w-4" />
-                      )}
-                    </button>
-                    
-                    <div className={`${isUnidadCollapsed ? 'hidden' : 'block'} sm:block`}>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm border border-gray-200 rounded-lg p-3 md:rounded-none md:p-0 md:border-t md:border-gray-200 md:border-x-0 md:border-b-0 md:pt-3 md:mt-0">
-                        {embarque.camion && (
-                          <div className="flex items-center space-x-2">
-                            <Truck className="h-4 w-4 text-gray-400" />
-                            <div>
-                              <p className="font-medium">Camión</p>
-                              <p className="text-xs text-gray-500">
-                                {embarque.camion.numero_economico}
-                              </p>
-                            </div>
-                          </div>
-                        )}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 text-sm border-t pt-3">
+                  {embarque.camion && (
+                    <div className="flex items-center space-x-2">
+                      <Truck className="h-4 w-4 text-gray-400" />
+                      <div>
+                        <p className="font-medium">Camión</p>
+                        <p className="text-xs text-gray-500">
+                          {embarque.camion.numero_economico}
+                        </p>
+                      </div>
+                    </div>
+                  )}
 
-                        {getRemolqueTexto(embarque) && (
-                          <div className="flex items-center space-x-2">
-                            <Truck className="h-4 w-4 text-gray-400" />
-                            <div>
-                              <p className="font-medium">Remolque</p>
-                              {embarque.remolque ? (
-                                <div className="text-xs text-gray-600">
-                                  <div>
-                                    {embarque.remolque.numero_economico || "-"}
-                                    {embarque.remolque.marca ? ` • ${embarque.remolque.marca}` : ''}
-                                  </div>
-                                  <div>{embarque.remolque.placas ? `Placas: ${embarque.remolque.placas}` : ''}</div>
+                  {(embarque.tipo_servicio_id ||
+                    (embarque.cliente &&
+                      ((embarque.cliente as any).divisa_pago ||
+                        (embarque.cliente as any).moneda_preferida))) && (
+                    <div className="flex flex-col md:flex-row md:space-x-8 space-y-3 md:space-y-0 lg:col-span-3">
+                      {embarque.tipo_servicio_id && (
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
+                          <Package className="h-5 w-5 text-gray-400 mt-1" />
+                          <div>
+                            <p className="font-medium">Tipo de Servicio</p>
+                            <p className="text-xs text-gray-600">
+                              {getServiceDisplayName(embarque.tipo_servicio_id)}
+                            </p>
+                            <p className="text-xs text-gray-500">
+                              {(() => {
+                                const t = tiposServicio.find((x) => x.id === (embarque.tipo_servicio_id as any));
+                                if (!t) return null;
+                                const monto = obtenerMontoTipoServicio(t, precioGlobalFleteFalso, embarque);
+                                
+                                // Mostrar contexto adicional si es flete falso
+                                const esFleteFalso = embarque?.flete_falso === true;
+                                const sufijo = esFleteFalso ? " (flete falso)" : "";
+                                
+                                return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sufijo}`;
+                              })()}
+                            </p>
+                          </div>
+                        </div>
+                      )}
+
+                      {getRemolqueTexto(embarque) && (
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
+                          <Truck className="h-5 w-5 text-gray-400 mt-1" />
+                          <div>
+                            <p className="font-medium">Remolque</p>
+                            {embarque.remolque ? (
+                              <div className="text-xs text-gray-600">
+                                <div>
+                                  {embarque.remolque.numero_economico || "-"}
+                                  {embarque.remolque.marca ? ` • ${embarque.remolque.marca}` : ''}
                                 </div>
-                              ) : (
-                                <p className="text-xs text-gray-600">{(embarque as any).remolque_numero_economico || (embarque as any).remolque_placa || getRemolqueTexto(embarque)}</p>
-                              )}
-                            </div>
+                                {/* modelo y año removidos por requerimiento de UI */}
+                                <div>{embarque.remolque.placas ? `Placas: ${embarque.remolque.placas}` : ''}</div>
+                              </div>
+                            ) : (
+                              <p className="text-xs text-gray-600">{(embarque as any).remolque_numero_economico || (embarque as any).remolque_placa || getRemolqueTexto(embarque)}</p>
+                            )}
                           </div>
-                        )}
-                      </div>
-                    </div>
-                  </>
-                )}
-
-                {/* Grupo Financiero - Colapsable en móvil, contraído por default */}
-                {(embarque.tipo_servicio_id || (embarque.cliente && (((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida)))) && (
-                  <>
-                    <button
-                      onClick={() => toggleFinancieroCollapse(embarque.id)}
-                      className="sm:hidden w-full flex items-center justify-between py-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 mt-3"
-                    >
-                      <span>Financiero</span>
-                      {isFinancieroCollapsed ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronUp className="h-4 w-4" />
+                        </div>
                       )}
-                    </button>
-                    
-                    <div className={`${isFinancieroCollapsed ? 'hidden' : 'block'} sm:block`}>
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm border border-gray-200 rounded-lg p-3 md:rounded-none md:p-0 md:border-t md:border-gray-200 md:border-x-0 md:border-b-0 md:pt-3 md:mt-0">
-                        {embarque.tipo_servicio_id && (
-                          <div className="flex items-start space-x-2">
-                            <Package className="h-4 w-4 text-gray-400 mt-1" />
-                            <div className="flex-1">
-                              <p className="font-medium">Tipo de Servicio</p>
-                              <p className="text-xs text-gray-600">
-                                {getServiceDisplayName(embarque.tipo_servicio_id)}
-                              </p>
-                              <p className="text-xs text-gray-500">
-                                {(() => {
-                                  const t = tiposServicio.find((x) => x.id === (embarque.tipo_servicio_id as any));
-                                  if (!t) return null;
-                                  const monto = obtenerMontoTipoServicio(t, precioGlobalFleteFalso, embarque);
-                                  const esFleteFalso = embarque?.flete_falso === true;
-                                  const sufijo = esFleteFalso ? " (flete falso)" : "";
-                                  return `Pago operador: $${monto.toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}${sufijo}`;
-                                })()}
-                              </p>
-                            </div>
-                          </div>
-                        )}
 
-                        {(embarque.cliente && (((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida))) && (
-                          <div className="flex items-start space-x-2">
-                            <span className="font-medium">Divisa de Pago:</span>
-                            <span className="text-xs text-gray-500">
-                              {((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida)}
-                            </span>
-                          </div>
-                        )}
-                      </div>
+                      {(embarque.cliente && (((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida))) && (
+                        <div className="flex-1 min-w-0 flex items-start space-x-3">
+                          <span className="font-medium">Divisa de Pago:</span>
+                          <span className="text-xs text-gray-500">
+                            {((embarque.cliente as any).divisa_pago || (embarque.cliente as any).moneda_preferida)}
+                          </span>
+                        </div>
+                      )}
                     </div>
-                  </>
-                )}
+                  )}
                   
                 </div>
-                {/* Fin contenido Embarque */}
 
-                {/* Sección Aduana con botón colapsable */}
                 {(embarque.load_number ||
                   embarque.patente_agente_aduanal ||
                   embarque.aduana_cruce ||
                   embarque.dueno_mercancia) && (
-                  <>
-                    <button
-                      onClick={() => toggleAduanaCollapse(embarque.id)}
-                      className="sm:hidden w-full flex items-center justify-between py-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      <span>Aduana</span>
-                      {isAduanaCollapsed ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronUp className="h-4 w-4" />
-                      )}
-                    </button>
-                    
-                    <div className={`${isAduanaCollapsed ? 'hidden' : 'block'} sm:block border border-gray-200 rounded-lg p-3 bg-white`}>
+                  <div className="bg-gray-100 p-3 rounded-lg">
                     <h4 className="font-medium text-sm mb-2 text-gray-700">
                       Información Aduanal
                     </h4>
@@ -5778,35 +5296,19 @@ export default function EmbarquesPage() {
                       )}
                     </div>
                   </div>
-                  </>
                 )}
 
-                {/* Grupo Detalles (Contenido y Observaciones) - Colapsable en móvil, contraído por default */}
                 {(embarque.contenido || embarque.observaciones) && (
-                  <>
-                    <button
-                      onClick={() => toggleDetallesCollapse(embarque.id)}
-                      className="sm:hidden w-full flex items-center justify-between py-2 px-3 bg-white border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50"
-                    >
-                      <span>Detalles</span>
-                      {isDetallesCollapsed ? (
-                        <ChevronDown className="h-4 w-4" />
-                      ) : (
-                        <ChevronUp className="h-4 w-4" />
-                      )}
-                    </button>
-                    
-                    <div className={`${isDetallesCollapsed ? 'hidden' : 'block'} sm:block`}>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {embarque.contenido && (
-                      <div className="border border-gray-200 bg-white p-3 rounded-lg">
+                      <div className="bg-gray-100 p-3 rounded-lg">
                         <p className="text-sm text-gray-600">
                           <strong>Contenido:</strong> {embarque.contenido}
                         </p>
                       </div>
                     )}
                     {embarque.observaciones && (
-                      <div className="border border-gray-200 bg-white p-3 rounded-lg">
+                      <div className="bg-gray-100 p-3 rounded-lg">
                         <p className="text-sm text-gray-600">
                           <strong>Observaciones:</strong>{" "}
                           {embarque.observaciones}
@@ -5814,8 +5316,6 @@ export default function EmbarquesPage() {
                       </div>
                     )}
                   </div>
-                    </div>
-                  </>
                 )}
 
                 <div className="text-xs text-gray-500">
@@ -5824,8 +5324,7 @@ export default function EmbarquesPage() {
                 </div>
               </CardContent>
             </Card>
-            );
-          })}
+          ))}
         </div>
 
         {embarquesFiltrados.length === 0 && (
@@ -5842,14 +5341,14 @@ export default function EmbarquesPage() {
           </Card>
         )}
 
-        {/* Controles de paginación inferior (lista de embarques) - Oculto en móvil */}
+        {/* Controles de paginación inferior (lista de embarques) */}
         {embarquesFiltrados.length > 0 && (
-          <div className="hidden sm:flex items-center justify-between gap-2 flex-wrap">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
             <div className="text-sm text-gray-600">
               Mostrando {embarquesPaginados.length} de {embarquesFiltrados.length}
             </div>
             <div className="flex items-center gap-2 ml-auto">
-              <span className="hidden sm:inline text-sm text-gray-700">
+              <span className="text-sm text-gray-700">
                 Página {listaPage} de {totalListaPages}
               </span>
               <div className="flex items-center gap-1">
@@ -5929,7 +5428,7 @@ export default function EmbarquesPage() {
             }
           }}
         >
-          <DialogContent className="create-modal-content w-full max-w-[95vw] sm:max-w-6xl max-h-[90vh] overflow-y-auto overflow-x-hidden">
+          <DialogContent className="max-w-6xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <div className="flex items-center justify-between">
                 <div>
@@ -5940,107 +5439,55 @@ export default function EmbarquesPage() {
                     Completa la información del embarque
                   </DialogDescription>
                 </div>
+                {!embarqueEditando && (
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={rellenarDatosEjemplo}
+                    className="flex items-center gap-2 text-blue-600 border-blue-300 hover:bg-blue-50"
+                  >
+                    <Wand2 className="h-4 w-4" />
+                    Rellenar datos de ejemplo
+                  </Button>
+                )}
               </div>
             </DialogHeader>
 
-            <div className="space-y-4 sm:space-y-6">
-              <Card className="border-0 shadow-none sm:border sm:shadow-sm">
-                <CardHeader className="px-0 pt-0 pb-2 sm:px-6 sm:py-4">
-                    <CardTitle className="text-base sm:text-lg">Información Básica</CardTitle>
+            <div className="space-y-6">
+              <Card>
+                <CardHeader>
+                    <CardTitle className="text-lg">Información Básica</CardTitle>
                 </CardHeader>
-                <CardContent className="space-y-4 px-0 sm:px-6 sm:pb-6">
-                  <Tabs value={crearTab} onValueChange={setCrearTab} className="w-full">
-                    <div className="border-b border-gray-200 pb-2">
-                      <div className="flex items-center gap-2 sm:hidden">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => shiftCrearTabWindow("left")}
-                          disabled={!canSlideCrearTabsLeft}
-                          aria-label="Ver pestañas anteriores"
-                        >
-                          <ChevronLeft className="h-4 w-4" />
-                        </Button>
-                        <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
-                          {crearVisibleTabs.map((tab) => (
-                            <TabsTrigger
-                              key={tab.value}
-                              value={tab.value}
-                              className="flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
-                            >
-                              {tab.label}
-                            </TabsTrigger>
-                          ))}
-                        </TabsList>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          onClick={() => shiftCrearTabWindow("right")}
-                          disabled={!canSlideCrearTabsRight}
-                          aria-label="Ver pestañas siguientes"
-                        >
-                          <ChevronRight className="h-4 w-4" />
-                        </Button>
-                      </div>
-                      <TabsList className="hidden sm:grid w-full grid-cols-5 gap-2">
-                        {CREAR_TABS_CONFIG.map((tab) => (
-                          <TabsTrigger key={tab.value} value={tab.value} className="flex items-center justify-center gap-1">
-                            {tab.label}
-                          </TabsTrigger>
-                        ))}
-                      </TabsList>
-                    </div>
+                <CardContent className="space-y-4">
+                  <Tabs defaultValue="basica" className="w-full">
+                    <TabsList className="grid w-full grid-cols-5">
+                      <TabsTrigger value="basica">
+                        Información Básica
+                      </TabsTrigger>
+                      <TabsTrigger value="direcciones">Direcciones</TabsTrigger>
+                      <TabsTrigger value="vehiculos">Vehículos</TabsTrigger>
+                      <TabsTrigger value="detalles">Detalles</TabsTrigger>
+                      <TabsTrigger value="adjuntos">Adjuntos</TabsTrigger>
+                    </TabsList>
 
                     <TabsContent value="basica" className="space-y-4 mt-6">
                       {/* Row 1: Folio and Cliente */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-2">
                           <Label htmlFor="folio">Folio</Label>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-mono font-medium text-gray-900">
-                              {embarqueEditando || formData.folio
-                                ? formData.folio || "SIN FOLIO"
-                                : proximoFolio || "Generando..."}
-                            </span>
-                            {embarqueEditando && (
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                onClick={abrirEditorFolio}
-                                aria-label="Editar folio"
-                                disabled={
-                                  !(
-                                    (formData.folio && formData.folio.trim()) ||
-                                    embarqueEditando?.folio ||
-                                    proximoFolio
-                                  )
-                                }
-                              >
-                                <Pencil className="h-4 w-4" />
-                              </Button>
-                            )}
-                            {!embarqueEditando && formData.folio && (
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                className="text-xs px-2"
-                                onClick={restaurarFolioAutomatico}
-                              >
-                                Usar sugerido
-                              </Button>
-                            )}
-                          </div>
-                          {formFolioError && (
-                            <p className="text-xs text-red-600">{formFolioError}</p>
-                          )}
+                          <Input
+                            id="folio"
+                            value={
+                              embarqueEditando ? formData.folio : proximoFolio
+                            }
+                            disabled
+                            className="bg-gray-50 font-mono"
+                            placeholder="Generando folio..."
+                          />
                           <p className="text-xs text-gray-500">
                             {embarqueEditando
-                              ? "Puedes ajustar el folio si es necesario. Evita duplicados."
-                              : formData.folio
-                              ? "Folio manual establecido para este embarque."
-                              : "Folio que se asignará automáticamente al guardar"}
+                              ? "Folio asignado"
+                              : "Folio que se asignará automáticamente"}
                           </p>
                         </div>
                         <div className="space-y-2">
@@ -6871,7 +6318,7 @@ export default function EmbarquesPage() {
                 </CardContent>
               </Card>
 
-        <div className="w-full flex flex-row flex-wrap items-center justify-start gap-2 sm:flex-nowrap">
+        <div className="w-full flex flex-row items-center justify-start gap-2">
           <Button
             variant="outline"
             className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
@@ -6884,6 +6331,13 @@ export default function EmbarquesPage() {
             disabled={saving}
           >
             Cerrar
+          </Button>
+          <Button
+            variant="outline"
+            className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+            onClick={imprimirFormulario}
+          >
+            Imprimir
           </Button>
           <Button
             type="button"
@@ -6903,119 +6357,9 @@ export default function EmbarquesPage() {
             )}
           </Button>
         </div>
-            <style jsx global>{`
-              @media (max-width: 639px) {
-                .create-modal-content input,
-                .create-modal-content textarea,
-                .create-modal-content button[role='combobox'] {
-                  min-height: 2.25rem;
-                  height: 2.25rem;
-                  padding-top: 0.25rem;
-                  padding-bottom: 0.25rem;
-                }
-                .create-modal-content textarea {
-                  min-height: 4.25rem;
-                }
-              }
-            `}</style>
             </div>
           </DialogContent>
         </Dialog>
-
-          <Dialog
-            open={showFolioEditor}
-            onOpenChange={(open) => {
-              if (!open) {
-                cerrarEditorFolio();
-              }
-            }}
-          >
-            <DialogContent className="max-w-md">
-              <DialogHeader>
-                <DialogTitle>Editar folio</DialogTitle>
-                <DialogDescription>
-                  Ajusta únicamente el mes y el consecutivo. El prefijo y el año permanecen sin cambios.
-                </DialogDescription>
-              </DialogHeader>
-
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="folio-prefijo">Prefijo</Label>
-                  <div
-                    id="folio-prefijo"
-                    className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600"
-                  >
-                    {folioEditorPrefix || "Prefijo no disponible"}
-                  </div>
-                </div>
-                <div className="space-y-3">
-                  <div className="space-y-2">
-                    <Label htmlFor="folio-anio">Año</Label>
-                    <div
-                      id="folio-anio"
-                      className="rounded-md border border-gray-200 bg-gray-50 px-3 py-2 font-mono text-sm text-gray-600"
-                    >
-                      {folioEditorYear || "Año no disponible"}
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="space-y-2">
-                      <Label htmlFor="folio-mes">Mes (MM)</Label>
-                      <Input
-                        id="folio-mes"
-                        value={folioEditorMonth}
-                        onChange={(event) => {
-                          const raw = event.target.value.replace(/[^0-9]/g, "");
-                          setFolioEditorMonth(raw.slice(0, 2));
-                          setFolioEditorError(null);
-                        }}
-                        inputMode="numeric"
-                        maxLength={2}
-                        className="font-mono"
-                        placeholder="04"
-                        autoFocus
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="folio-consecutivo">Consecutivo</Label>
-                      <Input
-                        id="folio-consecutivo"
-                        value={folioEditorConsecutivo}
-                        onChange={(event) => {
-                          const raw = event.target.value.replace(/[^0-9]/g, "");
-                          setFolioEditorConsecutivo(raw.slice(0, 3));
-                          setFolioEditorError(null);
-                        }}
-                        inputMode="numeric"
-                        maxLength={3}
-                        className="font-mono"
-                        placeholder="001"
-                      />
-                      <p className="text-xs text-gray-500">
-                        Se completa automáticamente con ceros a la izquierda.
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                {folioEditorError && (
-                  <p className="text-sm text-red-600">{folioEditorError}</p>
-                )}
-              </div>
-
-              <DialogFooter>
-                <Button
-                  variant="outline"
-                  onClick={cerrarEditorFolio}
-                  disabled={folioEditorLoading}
-                >
-                  Cancelar
-                </Button>
-                <Button onClick={aplicarFolioEditor} disabled={folioEditorLoading}>
-                  {folioEditorLoading ? "Validando..." : "Guardar cambios"}
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
 
         {/* Modal para cancelar embarque */}
         <Dialog open={showCancelModal} onOpenChange={setShowCancelModal}>
@@ -7078,7 +6422,7 @@ export default function EmbarquesPage() {
 
         {/* Modal de detalles */}
         <Dialog open={showDetailModal} onOpenChange={setShowDetailModal}>
-          <DialogContent className="w-full max-w-[95vw] sm:max-w-7xl max-h-[95vh] overflow-y-auto overflow-x-hidden">
+          <DialogContent className="max-w-7xl max-h-[95vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
                 Detalles del Embarque {embarqueDetalle?.folio}
@@ -7090,49 +6434,19 @@ export default function EmbarquesPage() {
 
             {embarqueDetalle && (
               <div className="space-y-6">
-                <Tabs value={detalleTab} onValueChange={setDetalleTab} className="w-full">
-                  <div className="border-b border-gray-200 pb-2">
-                    <div className="flex items-center gap-2 sm:hidden">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => shiftDetalleTabWindow("left")}
-                        disabled={!canSlideDetalleTabsLeft}
-                        aria-label="Ver pestañas anteriores"
-                      >
-                        <ChevronLeft className="h-4 w-4" />
-                      </Button>
-                      <TabsList className="flex flex-1 gap-2 bg-transparent p-0 h-auto">
-                        {detalleVisibleTabs.map((tab) => (
-                          <TabsTrigger
-                            key={tab.value}
-                            value={tab.value}
-                            className="flex-1 whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-medium data-[state=active]:bg-blue-600 data-[state=active]:text-white"
-                          >
-                            {tab.label}
-                          </TabsTrigger>
-                        ))}
-                      </TabsList>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => shiftDetalleTabWindow("right")}
-                        disabled={!canSlideDetalleTabsRight}
-                        aria-label="Ver pestañas siguientes"
-                      >
-                        <ChevronRight className="h-4 w-4" />
-                      </Button>
-                    </div>
-                    <TabsList className="hidden sm:grid w-full grid-cols-6 gap-2">
-                      {DETALLE_TABS_CONFIG.map((tab) => (
-                        <TabsTrigger key={tab.value} value={tab.value} className="flex items-center justify-center gap-1">
-                          {tab.label}
-                        </TabsTrigger>
-                      ))}
-                    </TabsList>
-                  </div>
+                <Tabs defaultValue="general" className="w-full">
+                  <TabsList className="grid w-full grid-cols-6">
+                    <TabsTrigger value="general">General</TabsTrigger>
+                    <TabsTrigger value="direcciones">
+                      Direcciones y Fechas
+                    </TabsTrigger>
+                    <TabsTrigger value="vehiculos">Vehículos</TabsTrigger>
+                    <TabsTrigger value="facturacion">Facturación</TabsTrigger>
+                    <TabsTrigger value="contacto">
+                      Contacto del Cliente
+                    </TabsTrigger>
+                    <TabsTrigger value="archivos">Adjuntos</TabsTrigger>
+                  </TabsList>
 
                   <TabsContent value="general" className="space-y-4 mt-6">
                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -7140,11 +6454,9 @@ export default function EmbarquesPage() {
                         <Label className="text-sm font-medium text-gray-700">
                           Folio
                         </Label>
-                        <div className="mt-1">
-                          <span className="text-sm font-mono font-medium text-gray-900">
-                            {embarqueDetalle.folio}
-                          </span>
-                        </div>
+                        <p className="text-sm text-gray-900 bg-gray-50 p-2 rounded mt-1">
+                          {embarqueDetalle.folio}
+                        </p>
                       </div>
                       <div>
                         <Label className="text-sm font-medium text-gray-700">
@@ -7939,7 +7251,7 @@ export default function EmbarquesPage() {
               </div>
             )}
 
-            <DialogFooter className="w-full flex flex-row flex-wrap items-center justify-start gap-2 sm:flex-nowrap sm:justify-start sm:space-x-2">
+            <DialogFooter className="w-full flex flex-row items-center justify-start sm:justify-start gap-2 sm:space-x-2">
               <Button
                 variant="outline"
                 className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
@@ -7950,7 +7262,7 @@ export default function EmbarquesPage() {
               {embarqueDetalle && (
                 <Button
                   variant="outline"
-                  className="hidden sm:inline-flex border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                  className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                   onClick={imprimirDetalle}
                 >
                   Imprimir
@@ -7959,7 +7271,7 @@ export default function EmbarquesPage() {
               {embarqueDetalle && (
                 <Button
                   variant="outline"
-                  className="hidden sm:inline-flex border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
+                  className="border-gray-400 text-black bg-white hover:bg-gray-100 hover:text-black"
                   onClick={() => exportarDetalleAExcel(embarqueDetalle)}
                 >
                   Descargar Excel
